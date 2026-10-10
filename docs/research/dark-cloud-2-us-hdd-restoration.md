@@ -96,6 +96,14 @@ The Japanese archive includes `HDDPhase` at `0026EDE4`, `HDDConfirmType` at `002
 
 BSim propagation was run **between the Japanese and US Ghidra databases in both directions**. **No additional labels were created in either database**, per the observed result. Match counts, confidence/similarity thresholds, ignored/conflicting matches, and the exact set of correspondences have not yet been exported or verified. Do not infer that no functions matched or that the binaries are structurally identical: both databases already contain extensive Metrowerks-mangled function symbols. Next targeted investigation remains the decompiled title/HDD conditional checks rather than another broad propagation pass.
 
+
+## JP/US Ghidra v2 audit failure (2026-10-10)
+
+Both `DC2_JP_HDD_CrossRegion_Audit_20261010_v2.txt` and `DC2_US_HDD_CrossRegion_Audit_20261010_v2.txt` report **matched=0, mismatches=37, comments_checked=0**; their additional JP globals and the US `TitleHDDCheckFlag` are also mismatched. **No decompilation or executable comparison occurred; no database changes were made.** The v2 script's `getPrimarySymbol(addr)`/exact mangled-name check is insufficient to distinguish non-primary symbols, displayed/demangled names, and incorrect addresses.
+
+**Previous JP/US address mappings are provisional and must not be applied as trusted ground truth until independently verified in live Ghidra.** A new **read-only** `DC2_HDD_CrossRegion_DiagnoseAndExport_20261010_v3.java` script was prepared locally (not Ghidra-tested). It checks every symbol at each claimed address, the function at/containing the address, memory mapping, candidates found by symbol name, and exports references/decompilations for independently resolved matches. Any unresolved/ambiguous states are listed at the end. Run it once in JP and once in US, then use its actual-address reports to correct the cross-region map and inspect title-screen gating. Do not repeat BSim propagation or patch any address based only on v2 maps.
+
+
 ## Resume plan (smallest useful next steps)
 
 1. Run the **read-only** Ghidra audit script from this investigation (`DC2_US_HDD_Decompile_Audit_20261010_v1.py`) on the supplied US `SCUS_972.13.gzf` and retain the full decompilation/reference report. The script was prepared but **not verified by execution inside Ghidra**.
