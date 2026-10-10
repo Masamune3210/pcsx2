@@ -401,6 +401,22 @@ Generated **`DC2_US_HDD_Partition_Capacity_Patch_Builder_20261010_v1.java`** for
 **Next checkpoint:** user runs new Ghidra builder, confirms the two exact instruction addresses and .pnach output. Only then, after ensuring the HDD image backup is intact, remove **only the failed US partial** `PP.SCUS-97213.APP.DARKCHRO` (do not touch JP or other partitions) using normal wLaunchELF/HDD manager facilities, and run a fresh native install with **the single new merged patch**. Keep original retail memory limits, guard against disk writes mid-copy. Verify PFS free space, final `Ver0.309` marker, cold-boot installed file routing. Avoid deleting the partition merely to collect more logs; Ghidra instrumentation or a persistent PCSX2 console file can be addressed separately if failure recurs.
 
 
+### Capacity builder v1: verified US instruction addresses (2026-10-10)
+
+User **ran** `DC2_US_HDD_Partition_Capacity_Patch_Builder_20261010_v1.java` in the live US `SCUS_972.13` database; **two unique matches, zero unresolved/invalid states, and no Ghidra/executable modifications**. Output:
+```text
+InstallLoop @ 0x0031C270, body 0x0031C270..0x0031C933
+sceIoctl2 call @ 0x0031C48C; sceFormat call @ 0x0031C524
+0x0031C4BC 2A42000B slti v0,s2,0xB -> 2A42000C slti v0,s2,0xC
+CheckInstallSpace @ 0x0031BE60, body 0x0031BE60..0x0031BF5B
+0x0031BF40 2A220600 slti v0,s1,0x600 -> 2A220680 slti v0,s1,0x680
+patch=0,EE,0031C4BC,word,2A42000C
+patch=0,EE,0031BF40,word,2A220680
+```
+New expected partition allocation: one 128-MiB main plus **12** 128-MiB additions = **1664 MiB** (instead of 1536 MiB). The builder merged these two boot-only edits into the existing experimental four-driver-loader .pnach and emitted `C:\Users\Johnny\Downloads\exp.pnach`, reporting `PATCH_COMMANDS_ADDED=2; original driver-loader commands kept unchanged`. The builder did not runtime-test the merged patch. Preserve the existing menu-gate and loader instructions; only the merged .pnach should be activated for the game's CRC, `SCUS-97213_1DF41F33.pnach`.
+
+**Next controlled runtime test:** ensure the 40-GB HDD image backup is verified; use the partition manager to delete **only** incomplete `PP.SCUS-97213.APP.DARKCHRO`, preserving JP `PP.SCPS-15033.APP.DARKCHRO` and all other partitions. Cold boot with merged patch, confirm PCSX2 lists the four-driver-loader group plus both capacity edits, then reinstall at retail EE=32 MiB/IOP=2 MiB. One extra 128-MiB subpartition is a plausible fix to the observed 1536-MiB full/0-MiB free late failure, **not** proven sufficient until completion. Verify installation marker `Ver0.309\0`, resulting PFS size/free space, cold restart and actual HDD-file asset loading. In any repeat failure, capture worker `RetCode` or file log before reset and avoid interrupting filesystem writes.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
