@@ -177,7 +177,18 @@ JP `SCPS_150.33` contains `LoadHddModule__Fv` at **`0x0015BD00`**, which does th
 
 The module loader's calls loop on **negative loader return values**; then the `result == 1` check leads to error `-1`. This behavior and the exact argument bytes should be verified before porting. JP also has `PowerOffThread` (including `pfs:` and `hdd:` paths). The US v5 report has neither the four disc driver path strings nor `LoadHddModule` as a discovered symbol, and has **no game-side direct calls to `sceSifLoadStartModule`** other than the common wrapper. The regular US `init__Fv` ends after ten controller/memory-card/audio module loads and `InitCDFile`. `HddConectCheck` in both builds only checks for a resident module named `hdd`, then issues `sceDevctl("hdd:",0x4807,...)`; it does not load drivers.
 
-**Important open question:** The v5 report did not enumerate *incoming references to* the JP `LoadHddModule` function or export the full JP `init__Fv`, owing to its 18-function decompilation cap. We cannot yet say when or whether that loader runs during Japanese normal startup. The next narrow investigation is the read-only **`DC2HddBootReachabilityAuditV6.java`**, prepared locally, which enumerates inbound references and callers for `LoadHddModule`, `PreparePowerOff` and `init`, and prints the JP argument constant bytes. Run it on JP and US. This script has **not** been executed in Ghidra yet.
+**Caller now established from live JP Ghidra listing:** `LoadHddModule__Fv @ 0x0015BD00` has a direct call XREF from `init__Fv @ 0x0015BC4C`. This proves the loader is reachable from the game's startup *call graph*, but not whether a preceding branch conditions execution at runtime. The narrow next step is JP disassembly/decompilation surrounding **`0x0015BC4C`**, with US `init__Fv` around/after `0x0015C364` for comparison. V6 can still export caller context and raw constant bytes, but no longer needs to rediscover the callsite. The JP loader has deliberate register returns `0` on the completed path and `-1` on module startup failures, so its function datatype should be `int LoadHddModule__Fv(void)` (Ghidra function editor, no semicolon).
+
+### JP loader assembly: call and driver startup options (2026-10-10)
+
+The JP `LoadHddModule__Fv` listing at `0x0015BD00` confirms `sceSifLoadStartModule` calls at `0x0015BD58` (DEV9), `0x0015BD90` (ATAD), `0x0015BDC8` (HDD), `0x0015BE00` (PFS). The loader retries if its direct call result is negative and returns `-1` if the module's `result` output equals 1. On success it calls `PreparePowerOff @ 0x0015BE28` followed by `sceFsInit @ 0x0015BE30`, logs a negative FS initialization return but ultimately returns 0. JP disassembly supplies a direct `init__Fv:0x0015BC4C` inbound call reference. This *closes the symbol-reachability uncertainty* from v5 but does not prove unconditional execution.
+
+The packed little-endian initialization constants appear to encode NUL-separated startup arguments:
+
+- HDD (0x0B bytes): `-o\0 2\0 -n\0 20\0` (hex `2D 6F 00 32 00 2D 6E 00 32 30 00`).
+- PFS (0x11 bytes): `-m\0 2\0 -o\0 16\0 -n\0 40\0` (hex `2D 6D 00 32 00 2D 6F 00 31 36 00 2D 6E 00 34 30 00`).
+
+The displayed listing did not disclose the final byte values at `DAT_0032CD4A` / `DAT_0032CD60`; these NUL terminators are **strongly inferred** but should be checked in Ghidra's byte view or v6 export before calling the argument arrays byte-verified. This is another reason not to assume reboot-image preloading with defaults is equivalent to the JP post-reboot loader.
 
 ### ROMIMG alternative under consideration
 
