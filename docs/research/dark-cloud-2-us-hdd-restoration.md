@@ -474,6 +474,21 @@ Prepared an independent, read-only **`DC2_US_HDD_OSD_Metadata_Inspector_20261010
 
 **Safety:** no need to reinstall or rewrite the existing 1664-MiB game partition to inspect the localized header; avoid operating on an actively written HDD image and preserve backup. Altering metadata requires a separate, checksum-preserving OSD resource injection workflow, not byte replacement in-place without verifying descriptor lengths.
 
+### Known-good v4 cleanup package (2026-10-10)
+
+User requested to **clean up the HDD restoration implementation**, explicitly deferring any HDD OSD icon/title translation. The user pasted the exact 212-line `.pnach` presently in use, confirming the same three working patch groups and known-good v1 driver-loader diagnostic header. Preserving runtime bytes and existing PCSX2 group names is deliberate: all **189 EE word writes** in the cleaned **`DC2_US_HDD_Restoration_Clean_20261010_v4.pnach`** are **identical** to the cold-boot verified v3 package and the exact user-pasted patch. Names `Existing HDD Title Menu Gate`, `EXPERIMENTAL HDD Driver Loader`, and `US HDD Installer 1664 MiB Capacity Test` retain PCSX2 saved enablement identity; the names are now explained as legacy compatibility labels, not indicators of an untested installer. No actual loader or capacity behavior changed.
+
+Artifacts bundled in **`DC2_US_HDD_Restoration_Cleanup_Repo_20261010_v4.patch`** (a five-file git patch supplied to user, **not directly committed to this repository**, because the aggregate content is 35.7 KB and project instructions prefer a git patch for potentially large connector writes):
+- `patches/dark-cloud-2-us-hdd/DC2_US_HDD_Restoration_Clean_20261010_v4.pnach`
+- `patches/dark-cloud-2-us-hdd/DC2_US_HDD_Loader_KnownGood_20261010_v4.S`
+- `patches/dark-cloud-2-us-hdd/DC2_US_HDD_Restoration_Packager_20261010_v4.py`
+- `patches/dark-cloud-2-us-hdd/DC2_US_HDD_Restoration_Tests_20261010_v4.py`
+- `patches/dark-cloud-2-us-hdd/README.md`
+
+Patch SHA-256: **`46d50ae80185d60c11d49ba4b25332aaea0f7f910fa2ff474ebccaf2ccb327e3`**. `git apply --check` succeeded in a new git repository, `git apply` succeeded, and all five resulting files matched the source artifacts byte-for-byte. The v4 .pnach also **rebuilt byte-for-byte** from MIPS .S using clang, ld.lld and llvm-objcopy, preserving loader SHA-256 `b8f2bf8a1a974c6bcc505ac9fbaafbc9f396a665628c47925354c80af4861ef1` (736 bytes). Running `--audit ...v4.pnach --verify-log 'Pasted text(20261010-211105).txt'` confirmed **189/189 exact known-good EE writes**. `python -m unittest ...v4.py` passed **11/11 tests**, including duplicate, wrong immediate, changed group name, unsupported/unknown directive, missing command and conflicting activation-log negative tests. The v4 packager explicitly rejects unrecognized/malformed `.pnach` directives instead of silently skipping them.
+
+**Pending work:** Apply the git patch to the existing research branch using `git apply --check FILE`, `git apply FILE` and commit only these five files. Perform a **new v4 PCSX2 cold boot** (v4 executable entries same as v3, so this is packaging regression only); already recorded successful v3 gameplay remains authoritative. Validate memory-lifetime/soft-reset, no-HDD fallback, title return, and repeated cold boots before claiming hardware/universal safety. Do not reinstall the functional 1664-MiB partition just for cleanup. No OSD metadata localization changes.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
