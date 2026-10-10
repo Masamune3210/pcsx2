@@ -379,6 +379,10 @@ Offline check on existing `DC2_US_HDD_NativeLoader_Stage2_20261010_v2.S` confirm
 Next: if possible breakpoint **EE execute `0x01FE8000`** and confirm `ra=0x0015C37C`, then evaluate temporary range writes for whole intended `0x01FE8000..0x01FE82DF` region and test existing **v2** HDD driver loader only on the backed-up disk/retail 2 MiB IOP. The US disc IRX file inventory remains unverified; failure of path lookup is a plausible failure independent of trampoline. Avoid requesting new US .gzf or repeating known Ghidra switch repair. `Fast CDVD` is still enabled and should be disabled for later filesystem correctness tests.
 
 
+### US HDD installer visibly progressing (2026-10-10)
+
+User supplied PCSX2 game-window screenshot (2026-10-10 19:44) showing the **native English US Dark Cloud 2 installer** with `Now installing.` progress bar approximately **45%** and warning `Please do not turn off the unit or open the CD tray. You may cancel the installation by pressing O.` This is **visibly active installation**, a stronger runtime milestone than the earlier menu exposure and EE smoke tests. **The screenshot does not identify which .pnach was active**, nor show final completion, module-return diagnostics, IOP free memory, the persisted `Ver0.309` marker, or post-install HDD resource routing. Do not assume the earlier **smoke-only** patch could load modules, nor credit experimental native-loader v2 without confirming the user's active patch/log. No evidence of installation completion or successful re-launch yet. Next verify actual .pnach variant and full log after allowing the installation to finish; inspect native installation final state, marker, exit, clean reboot and HDD-backed asset reads on backed-up disk. **Never interrupt a working installation just to take debug measurements.**
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
