@@ -273,6 +273,12 @@ New local scripts prepared (not yet executed in Ghidra):
 Dependency order for patching: confirm US source archive/partition strings and resolve installer jump table/body; select a safe EE payload location or other implementation before creating game patch bytes. Do not expand the 8-byte gap at `0x0015C398..C39C` into a driver loader: it is far too small. Do not bypass `HDDINFO`. Continue from provided report instead of repeating the earlier audit or requesting the already-provided US Ghidra archive.
 
 
+### Phase-4 Ghidra decode guard (2026-10-10)
+
+The user ran `DC2_US_HDD_Installer_Switch_Repair_20261010_v1.java` on US Ghidra. Its exact 11 installed jump-table destinations were: phase 0 `002A45EC`, 1 `002A430C`, 2 `002A4000`, 3 `002A4114`, **4 `002A4334`**, 5 `002A43E0`, 6 `002A44B8`, 7 `002A4500`, 8 `002A4548`, 9 `002A455C`, 10 `002A4008`. Ten targets were recognized as instructions; **phase 4 target `0x002A4334` lacks a Ghidra instruction**. Version 1 intentionally refused with `NO_INSTRUCTION_AT_TARGET phase=4 target=002A4334`, resulting in `CHANGES (0)` and **no database modification**. This is a *disassembly/analysis gap*, not evidence that the phase is absent from the native image.
+
+Generated `DC2_US_HDD_Installer_Switch_Repair_20261010_v2.java` in the current conversation (not yet run in Ghidra). It binds the exact eleven verified target addresses and checks `Ver0.309\\0`; at the *single known missing* entry, prints four raw bytes and existing code-unit type, refuses if defined data/instruction overlap or wrong memory permissions, then uses Ghidra 12.1.3 `DisassembleCommand` restricted to **four bytes**, `followFlow=false`. On success and only after decoding, restores function-body ownership, adds the computed jump refs and labels, and verifies every table target is an owned instruction. The entire sequence is transactional and rolls back on conflicts, preserving existing data/instructions and all executable bytes. Do **not** assume it compiled or committed yet; if it fails, use its end-of-log `UNRESOLVED / INVALID STATES` and raw bytes to decide the smallest next repair rather than clearing any data blindly.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
