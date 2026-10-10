@@ -1,43 +1,41 @@
-# Dark Cloud 2 US HDD restoration: known-good patch
+# Dark Cloud 2 (USA) native HDD support
 
-**Target:** *Dark Cloud 2* USA v2.00, `SCUS_972.13`, executable CRC `1DF41F33`. The patch acts on game EE RAM; it neither modifies PCSX2 nor contains game assets or Sony system files.
+**Target:** `SCUS_972.13`, USA v2.00, CRC `1DF41F33` (original disc). This is a reversible PCSX2 `.pnach` game patch. It does not include copyrighted game assets or change the PCSX2 emulator.
 
-## Status and boundaries
+## Production candidate
 
-The actual US installer completed with the modified 1664 MiB PFS allocation; its partition was measured as 1553 MiB used, 111 MiB free. A cold game boot loaded DEV9/ATAD/HDD/PFS, detected `hdd` by module name, entered gameplay, and continued HDD reads with visibly faster loading. This is **operationally confirmed in PCSX2**, not proven on physical PS2 hardware or every emulator configuration.
+**`DC2_US_HDD_Production_20261010_v5.pnach`** is the clean patch to test. It contains one **Dark Cloud 2 - HDD Support** group, 127 word writes, and a 488-byte EE boot loader. Four game-shipped IRX modules are started in order: DEV9, ATAD, HDD, PFS, followed by `sceFsInit`; the original `InitCDFile` runs afterward whether module startup succeeded or failed. The fifth title menu entry is restored without forging HDD detection, and the installer capacity is raised to 1,664 MiB using two verified instruction edits.
 
-The working loader resides temporarily at EE physical address `0x01FE8000` (736 bytes), after a short `0x0015C398` trampoline from the original `0x0015C374` call site. Its lifetime is *not* proved safe against all heap/stack layouts or soft resets. It initializes each IOP driver once, calls `sceFsInit`, and always calls the original `InitCDFile`. The game retains normal retail 32 MiB EE and 2 MiB IOP RAM visibility. **Do not substitute a different scratch address or alter IRX startup parameters without a full boot and gameplay regression.**
+The previous verified experimental patch was 736 bytes / 189 EE writes. The 248-byte reduction eliminates per-module status storage, failure and stage counters, the completion flag, and the `DC2HDDv1` diagnostic marker. The production candidate **changes loader instructions and data layout**. It passes static rebuilding, control-flow/API/argument checks and regression tests, **but is not yet runtime verified**. Do not discard your verified v4 patch or HDD backup until v5 passes cold boot and gameplay.
 
-## Contents
+**Unchanged critical entry points:**
+- Title gate `0x0029F2EC`: `00000000` (patch mode 1).
+- Original init call at `0x0015C374`: `0C0570E6` -> padding trampoline `0x0015C398` (`087FA000`) -> loader at `0x01FE8000` (mode 0).
+- Installer loop at `0x0031C4BC`: `2A42000C` (12 subpartitions).
+- Installation space check at `0x0031BF40`: `2A220680` (1664 MiB).
 
-- `DC2_US_HDD_Restoration_Clean_20261010_v4.pnach`: 189 EE word writes, **byte-for-byte equivalent to the validated v3 `.pnach`**. Only explanatory comments differ. Original three group names remain untouched so existing PCSX2 group toggles are not accidentally changed.
-- `DC2_US_HDD_Loader_KnownGood_20261010_v4.S`: MIPS source, changes limited to comments. Rebuild output SHA-256: `b8f2bf8a1a974c6bcc505ac9fbaafbc9f396a665628c47925354c80af4861ef1` (736 bytes).
-- `DC2_US_HDD_Restoration_Packager_20261010_v4.py`: standalone fail-closed packager. Checks every directive instead of silently ignoring malformed `.pnach` commands, verifies the exact payload SHA-256, all hook/capacity writes and per-command patch mode, refuses overwrite on fresh builds, and can compare PCSX2 patch-activation logs.
-- `DC2_US_HDD_Restoration_Tests_20261010_v4.py`: standard-library `unittest` regression suite, including deliberately corrupted/duplicate/missing patch directives.
+**Important:** `0x01FE8000` is still a temporary EE address not proven universally safe over arbitrary heap layouts, resets, or physical PS2 hardware. The release must not claim this lifetime issue is solved by removing diagnostics. The tested setup preserves retail 32 MiB EE / 2 MiB IOP memory.
 
-## Installation / migration
+## Using it
 
-Place **one** active restoration `.pnach` for the exact CRC under PCSX2's patches directory (rename a copy to `1DF41F33.pnach` where appropriate). Disable/remove other copies of this restoration, including the earlier standalone driver loader or capacity test, rather than enabling duplicate writes. Preserve any unrelated patches only if their EE writes do not conflict. Do **not** delete or reinstall a working HDD partition for this update. Back up your PS2 HDD image before changing patches or testing new flows.
+Make a backup of the PCSX2 HDD image. Replace the old three-group HDD restoration with **only** the new production `.pnach` contents (do not append both loaders). The new single-group name is intentional and may require enabling **Dark Cloud 2 - HDD Support** in PCSX2's patch controls after the switch. Existing unrelated widescreen or cheat groups may remain separately enabled.
 
-**Important:** The group titles still include `EXPERIMENTAL` / `Capacity Test` for compatibility with PCSX2's existing saved enabled-group settings. They are historical labels, not a claim that installation or normal HDD-backed gameplay remain untested. Enable all three groups. On a proper cold boot, the game-side IRX driver initialization should run once. Disable unsafe `Fast CDVD` if diagnosing disc-read timing.
+**The successful 1664 MiB US installation does not require reinstalling**: first test an existing save and existing installed game data. Verify a *cold boot* (not save-state reload), title menu, startup of the four HDD drivers, correct HDD detection, actual gameplay loading, return to title, repeated launch and no-HDD fallback. Retain the v4 patch if v5 fails any of these.
 
-## Verification
+## Rebuild and audit
 
-Run these commands from the directory containing the four files:
+From the patch directory, on a system with Python 3, `clang`, `ld.lld` and `llvm-objcopy` installed:
 
 ```powershell
-python .\DC2_US_HDD_Restoration_Packager_20261010_v4.py --audit .\DC2_US_HDD_Restoration_Clean_20261010_v4.pnach
-python .\DC2_US_HDD_Restoration_Packager_20261010_v4.py --verify-log .\pcsx2-boot-log.txt
-python .\DC2_US_HDD_Restoration_Packager_20261010_v4.py --build --output .\DC2_US_HDD_Restoration_Rebuilt_20261010_v5.pnach
-python -m unittest -v .\DC2_US_HDD_Restoration_Tests_20261010_v4.py
+python .\DC2_US_HDD_Build_Production_20261010_v5.py --audit .\DC2_US_HDD_Production_20261010_v5.pnach
+python -m unittest -v .\DC2_US_HDD_Production_Tests_20261010_v5.py
+python .\DC2_US_HDD_Build_Production_20261010_v5.py --build --output .\DC2_US_HDD_Production_Rebuilt_20261010_v5.pnach
 ```
 
-The `--build` path requires Clang MIPS target, `ld.lld`, and `llvm-objcopy`. Pure audit/tests require only Python 3.10+. Build refuses to overwrite the output; choose a new suffix per run.
+Build refuses to overwrite an existing output. The audit rejects unexpected instructions and modified startup code, malformed/unknown directives, duplicate addresses, wrong group arrangement, changed capacity instructions, or changed original hook. The 488-byte code is SHA-256 `bea8b5981c092fa501acee8884db834c1605b52fe0110a5b13250963efda48d4` and contains no diagnostic state table.
 
-**Executable changes:** `0x0015C374` and `0x0015C398` trampoline; `0x0029F2EC` menu visibility without bypassing HDD detection; `0x0031C4BC` `0x2A42000B` -> `0x2A42000C` (12 APA additions); `0x0031BF40` `0x2A220600` -> `0x2A220680` (1664 MiB preflight).
+## Preservation and research
 
-## Still requiring runtime validation
+The v4 known-good files remain retrievable from the **`70948ffc24d9258888a73bc69cd3c42bd3983f7e`** Git commit; they are intentionally not part of the current patch directory. That tested loader completed the US native installation and HDD-backed gameplay with the two capacity edits. **This v5 file has not been boot-tested**, and the original v4 remains the fallback.
 
-Before a universal release, check consecutive cold boots, a soft reset/return to title, disc fallback when no HDD is available, loading saves, and installation/uninstallation on a **disposable backup** image. Consider a memory-access/allocator watchpoint audit while the temporary EE loader runs. The v4 package does **not** change the underlying runtime loader or attempt a speculative safety fix.
-
-OSD title/icon localization is explicitly out of scope for this cleanup.
+Research findings and verified evidence are recorded in `docs/research/dark-cloud-2-us-hdd-restoration.md`. HDD OSD title/icon localization is explicitly out of scope.
