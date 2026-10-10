@@ -137,7 +137,17 @@ Original little-endian bytes at `0x0029F2EC`: `60 84 80 A3`, instruction word `A
 patch=1,EE,0029F2EC,word,00000000
 ```
 
-Standalone local test artifact: `DC2_US_HDD_Menu_Exposure_20261010_v1.pnach` (rename/merge to `1DF41F33.pnach` in the PCSX2 patch location as appropriate; **do not overwrite existing widescreen or other game patches**). This was produced from verified Ghidra listing but **has not been tested in PCSX2**. No executable patch has been applied to the repository.
+**2026-10-10 loader correction:** The initial file `DC2_US_HDD_Menu_Exposure_20261010_v1.pnach` contained an **unlabelled** `patch=` line, which is not shown as a selectable GUI patch. In this fork's `pcsx2/Patch.cpp`, `PatchStringHasUnlabelledPatch()` also causes `EnumeratePnachFiles()` to **suppress bundled `resources/patches.zip` entries** for that game to prevent conflicts. This matches the user's observation that adding the test file made existing bundled game patches disappear. The file name should follow `<Serial>_<CRC>.pnach`. This is distinct from compatibility patch lines in `GameIndex.yaml`.
+
+**Corrected local replacement artifact (not committed to repo): `SCUS-97213_1DF41F33.pnach`**. Remove the older unlabeled file from the `patches` directory rather than keeping both. Contents:
+
+```ini
+[Dark Cloud 2 - Native HDD Menu (Experimental)]
+description=Expose the fifth title-menu entry in the US v2.00 release. Does not load HDD IOP drivers; use a backup HDD image.
+patch=1,EE,0029F2EC,word,00000000
+```
+
+The section label makes the patch individually toggleable in Game Properties > Patches and allows `EnumeratePnachFiles()` to load bundled ZIP patches as well. PCSX2 must rescan/reload the game after replacement. **Not yet runtime-tested.** The `cheats` directory is a valid alternative but needs cheats enabled and appears in the Cheats UI. No emulator or ELF change has been committed.
 
 **Expected effect:** US `TitleInit` performs the title HDD detection block; `TitleModeKey` accepts selection index 4 instead of clamping to 3; `TitleModeDraw` draws five instead of four options. This is the complete identified menu gate. The JP title makes the HDD check unconditionally (`jal HddConectCheck` at `0x0029ABD0`) and always permits five entries.
 
