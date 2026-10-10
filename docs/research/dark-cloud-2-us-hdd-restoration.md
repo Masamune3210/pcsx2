@@ -329,6 +329,27 @@ patch=0,EE,0015C374,word,0C0570E6
 
 **After smoke test passes:** identify a finite-lifetime EE payload slot that is safe *during the four blocking module loads* (or choose an alternative controllable loader location, not devkit-only memory). Keep memory exposed at standard 32 MiB EE/2 MiB IOP, capture free + largest contiguous IOP memory before/after each real IRX load; compare against JP. Only then build the full US DEV9/ATAD/HDD/PFS + `sceFsInit` trampoline, preserving US `DATA.HD3`, `PP.SCUS-97213.APP.DARKCHRO` and `Ver0.309`. Do not implement or force runtime HDDINFO fallback before actual driver success.
 
+## US one-shot trampoline smoke test: PCSX2 log (2026-10-10)
+
+User supplied full 3,454-line PCSX2 v2.9.115 log from running `SCUS-97213` v2.00 CRC `1DF41F33` with the experimental patch. At log ~69.095s, PCSX2 explicitly lists the enabled patches:
+```text
+Enabled patch: Enable HDD Install Menu
+  1,EE,word,0029f2ec,0
+Enabled patch: Dark Cloud 2 - One-Shot Startup Trampoline Smoke Test
+  0,EE,word,0015c398,80523dc
+  0,EE,word,0015c374,c0570e6
+Enabled patch: Widescreen 16:9
+  1,EE,word,00138d78,3f023f40
+```
+The US game then loaded ten standard IOP IRX modules with IDs 25..34, reached title and FMV playback, then resumed a Chapter 2 save at Sindain Station. No fatal EE crash or VM failure shown; log ends at normal VM pause/shutdown (~133s). **This confirms patch registration + successful game startup, NOT yet actual execution of the injected instruction at `0x0015C398`**; requested EE breakpoint `0x0015C398` / `ra=0x0015C37C` is still not reported and remains the exact next smoke validation.
+
+The log demonstrates two **different IOP generations**: HDDOSD-enabled BIOS **earlier** loads HDD-capable `dev9/atad/hdd/pfs` from `loadbuffer` at ~53.13-53.80s and uses the HDD image, including `pfs0:/osd100/hosdsys.elf`. BIOS then transfers to the game with IOP reboots at ~69.23-69.40s, destroying those BIOS-resident driver instances. Game boot afterward loads only ten ordinary modules; its `searchbyname: module name hdd` returns `-202` at ~77.385s and ~119.245s and `Unknown device 'hdd'`. **Never mistake BIOS initialization logs for successful Dark Cloud 2 HDD restoration**.
+
+PCSX2 boot explicitly reports `IOP mode, 2MB` and `Total accessible memory size: 32 MB`; original retail memory limits honored. Three active game patches included an unrelated widescreen one; the log also warns `Fast CDVD is enabled`, which is an independent unsafe setting worth disabling during later disc/HDD correctness tests. Numerous `sceMidi_MidiPlaySwitch Error Not Stop` messages occur after module startup and did not prevent normal gameplay; not evidence of HDD-specific regression without baseline comparison.
+
+**No new injection address has been authorized or proven.** Do not bypass HDD detection, load four IRXs, overwrite unmeasured EE memory, or claim the tiny 8-byte trampoline proves free memory. Next obtain debugger break at `0x0015C398`, examine `ra` and PC control flow, then select/prove a temporary EE loader memory range and test IOP driver residency within 2 MiB. No Ghidra changes are required for this smoke-test stage.
+
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
