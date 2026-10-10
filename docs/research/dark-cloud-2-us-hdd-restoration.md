@@ -249,6 +249,8 @@ Important open questions before proposing an ELF patch:
 2. Actual US partition ID, version marker, and source archive/resource path bytes. Earlier US `InstallLoop` references raw address `0x00372E20` for nine-byte marker and `0x00372ED0` for a loaded header resource, but contents not yet exported. Do not claim they match JP without byte check.
 3. Repair the US installer function extent/11-phase dispatch independently. JP Codex fixed `0x0029E6E0..0x0029F277`; US `0x002A3FF8` has computed dispatch, and old US report associates nearby references with no function owner.
 
+**Audit script compile fix (2026-10-10):** Ghidra 12.1.3 rejected v2 because the `references`, `instructions`, and `constants` helpers call `monitor.checkCancelled()` without declaring checked `ghidra.util.exception.CancelledException`. New local output `DC2_US_HDD_Startup_And_Installer_Audit_20261010_v3.java` imports that type, declares `throws CancelledException` on all three helpers, and matches the public Java class name to the new basename. No logic or database behavior changed. **Not yet executed in Ghidra**. The follow-on “class not found” error was caused by the preceding compile failures.
+
 No new PCSX2 code or US executable patch, beyond the already runtime-proven menu-only NOP, was made. Continue by reviewing targeted US audit output, not by another broad propagation or requesting existing archives.
 
 ### US transfer strategy
