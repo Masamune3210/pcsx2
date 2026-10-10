@@ -228,6 +228,12 @@ The saved JP program repaired three function extents (installer UI `0029E6E0..00
 
 The source report's local verification outputs (`verify.c`, `verify-native.txt`, `verify-index.json`, datatype manifest, `module-hashes.json`, and `verified.json`) were referenced but **not uploaded in this turn**. Do not claim independent verification of those auxiliary outputs. The supplied JP archive contains saved annotations and updated Ghidra metadata; it is the starting point on resume, not the older JP program snapshot. Do **not** rerun the original Codex baseline/preview/apply process on the already annotated program.
 
+### US baseline availability and preliminary direct comparison (2026-10-10)
+
+The original US `SCUS_972.13.gzf` **already exists in conversation files** alongside the US v3 decompilation report, v4 gate instruction audit, and v5 IOP loader audit. **Do not ask for another US Ghidra export solely because the newest Japanese annotations were saved.** The minor US metadata application script (if run) does not alter original executable instructions, so the old US decompilation and loader reports remain a valid behavioral baseline. An attempted `files.materialize` call for the old US archive reported a staged path but the current container did not expose it; use the already present US reports for analysis until raw archive bytes are actually accessible, and do not assert byte-level verification from them.
+
+A direct parser comparison of the 27 earlier JP/US v3 function decompilations showed **16 textually identical function bodies**: `TitleDraw`, `CheckAppInstallForTitle`, `CheckHDDInstall`, `InitHDDMenu`, `HddConectCheck`, `CheckAppInstall`, `MountHDDFileSystem`, `UmountHDDFileSystem`, `CheckInstallSpace`, `CreateInstallThread`, `StepInstallThread`, `GetInstallProgress`, `DeleteInstallThread`, `InstallPause`, `InstallCancel`, and `GetMainFileDev`. `InstallLoop` had near-identical textual output, with relocated data references. The JP Codex new type annotations require separate verification before applying any US ABI change. Decompiler-text identity alone is **not proof of byte-identity or runtime parity**.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
