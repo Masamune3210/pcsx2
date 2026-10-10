@@ -91,6 +91,11 @@ The Japanese archive includes `HDDPhase` at `0026EDE4`, `HDDConfirmType` at `002
 
 
 
+
+## BSim propagation baseline (2026-10-10)
+
+BSim propagation was run **between the Japanese and US Ghidra databases in both directions**. **No additional labels were created in either database**, per the observed result. Match counts, confidence/similarity thresholds, ignored/conflicting matches, and the exact set of correspondences have not yet been exported or verified. Do not infer that no functions matched or that the binaries are structurally identical: both databases already contain extensive Metrowerks-mangled function symbols. Next targeted investigation remains the decompiled title/HDD conditional checks rather than another broad propagation pass.
+
 ## Resume plan (smallest useful next steps)
 
 1. Run the **read-only** Ghidra audit script from this investigation (`DC2_US_HDD_Decompile_Audit_20261010_v1.py`) on the supplied US `SCUS_972.13.gzf` and retain the full decompilation/reference report. The script was prepared but **not verified by execution inside Ghidra**.
