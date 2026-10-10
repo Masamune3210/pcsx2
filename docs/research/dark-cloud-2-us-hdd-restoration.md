@@ -207,6 +207,36 @@ Before modifying an image: (a) hash-compare JP and US IOPRP images, (b) `ROMIMG 
 Technical references: https://sites.google.com/view/ysai187/home/projects/romimg ; https://psi-rockin.github.io/ps2tek/ (IOPBTCONF and ROMDIR formats). No emulator source changes requested or required on this track.
 
 
+## Fully annotated JP HDD flow (Codex handoff, 2026-10-10)
+
+Supplied updated `SCPS_150.33(2).gzf` and `2026-10-10-1252-dc2jp-hdd-saved-annotations.md`. The archive is a valid Ghidra Java-serialization stream with an embedded ZIP payload and the expected `Dc2Hdd_LoadModules`, `Dc2File_SwitchToHdd`, `Dc2Hdd_InstallerThread`, and datatype-category names were **independently found in its decompressed payload**. The report says the saved JP program has 153 annotated functions (147 fully contracted), 73 descriptive renames with original aliases retained, 56 typed globals, 15 structures, 10 enums, three callback definitions, 18 typed stack locals, two corrected local leaf conventions, and 43 newly disassembled instructions. All 153 decompilations reportedly passed Codex's fresh-save verification. This is Ghidra/database verification, **not a running HDD install or US code verification**.
+
+### Newly established Japanese runtime contract
+
+- Startup `0x0015B9E0 Dc2System_Initialize` calls `0x0015BD00 Dc2Hdd_LoadModules` as previously found; the corrected **signed integer return type** resolves a stale decompiler check. Loader calls DEV9, ATAD, HDD (11 argument bytes), PFS (17 bytes), prepares power-off, and initializes the EE filesystem.
+- Install partition `PP.SCPS-15033.APP.DARKCHRO`: **one 128 MiB main partition + eleven 128 MiB subpartitions** (1536 MiB allocated). Format PFS with 8192-byte zone. **Check whether US source retains the Japanese ID or substitutes `SCUS` before porting.** Preserve JP partition identity during comparative tracing.
+- Source archive is **`DATA.HD3`, not `DATA.HD2`**; the independently analyzed JP archive contains 6389 records, of which 6356 are eligible for copying (1,493,293,621 payload bytes). Large transfer arena `0x700000` bytes, with installer stack `0x19000` at aligned beginning.
+- Install header file `etc/hdd_head.hed` incorporates `SYSTEM.CNF` according to header offsets. JP SYSTEM.CNF advertises `HDDUNITPOWER=NICHDD`.
+- The install marker is `Ver0.208\0` (nine bytes), written **only after** the complete file iteration. Validation checks main partition and marker rather than independently checksumming copied files. Error codes `-1000` missing version, `-1001` mismatch. A mount-busy `-16` is accepted without unmounting another owner's mount; resource mounts are read-only.
+- Pause **changes worker priority from 10 to 11**, not thread suspension; cancellation is polled between eligible completed files, so unbounded CD retry loops can delay cancellation. The worker does not consume deletion's separate `EndFlag`.
+- Ordinary file loading supports CD/PFS backends through path/device selection. **Movies explicitly force disc access.** Fatal I/O callback loops permanently for `-5` or `-65541`, without falling back to disc. Background slots: 32 × `0x120`; cache slots: 16 × `0x40`.
+- Separate priority-1 HDD shutdown worker closes PFS handles, retries HDD/DEV9 shutdown and CD power-off; ordinary main exit does **not** run that sequence. Do not omit power-button handling in an end-to-end implementation.
+
+### Database and analysis caveats
+
+The saved JP program repaired three function extents (installer UI `0029E6E0..0029F277`, lowercase loops `001492A0..001492EB` and `003152A0..003152EB`) and removed two false interior functions. It also restored an 11-phase jump table at `00365B20` by adding computed refs and a jump-table override at `0029EC58`. It preserved original bytes and instructions. The report notes preexisting AU-Sound data overlap at uncached `2036960F`, and an R5900 p-code unsigned DIVU issue, neither to be silently rewritten.
+
+The source report's local verification outputs (`verify.c`, `verify-native.txt`, `verify-index.json`, datatype manifest, `module-hashes.json`, and `verified.json`) were referenced but **not uploaded in this turn**. Do not claim independent verification of those auxiliary outputs. The supplied JP archive contains saved annotations and updated Ghidra metadata; it is the starting point on resume, not the older JP program snapshot. Do **not** rerun the original Codex baseline/preview/apply process on the already annotated program.
+
+### US transfer strategy
+
+1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
+2. Compare the JP init/driver-loader call path against US `init__Fv @ 0x0015C160`; the US title menu is already confirmed exposed by the one-word patch, but the HDD option was greyed out without a resident IOP `hdd` module.
+3. Inspect US `DATA.HD3`, `SYSTEM.CNF`, version-marker/partition path constants, native filesystem lifecycle, and English installer assets. The installer's logical compatibility depends on these, not just on four successful IRX loads.
+4. Investigate a minimal, reversible way to load DEV9/ATAD/HDD/PFS with the verified JP startup argument bytes and to initialize EE filesystem callbacks before enabling real install actions. **Do not bypass `HDDINFO` checks or write to a non-backed-up HDD image.**
+5. Independent experimental artifact `DC2_US_HDD_Confirmed_Metadata_Apply_20261010_v1.java`: strict read-only-binary Ghidra script, guarded against wrong program/image-base/stock-gate bytes. Adds ten **non-primary** alias labels, contextual comments and three nonconflicting four-byte status globals in US Ghidra, without changing function signatures, existing defined data, or executable bytes. Prepared in this chat but **not runtime-tested in Ghidra**. Report unresolved states at the end; never blindly transfer JP structs to US.
+
+
 ## BSim propagation baseline (2026-10-10)
 
 BSim propagation was run **between the Japanese and US Ghidra databases in both directions**. **No additional labels were created in either database**, per the observed result. Match counts, confidence/similarity thresholds, ignored/conflicting matches, and the exact set of correspondences have not yet been exported or verified. Do not infer that no functions matched or that the binaries are structurally identical: both databases already contain extensive Metrowerks-mangled function symbols. Next targeted investigation remains the decompiled title/HDD conditional checks rather than another broad propagation pass.
