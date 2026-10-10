@@ -48,7 +48,7 @@ Source: complete PCSX2 boot log from the investigation, `Pasted text (3).txt` (3
 
 ## Japanese reference imported into Ghidra (2026-10-10)
 
-The Japanese main executable `SCPS_150.33` has now been analyzed in **Ghidra 12.1.3** using `r5900:LE:32:default (1.4)`, image base `0x100000`. This is a **metadata-only milestone**; the Japanese `.gzf`/decompilation has not yet been supplied or compared function-by-function.
+The Japanese main executable `SCPS_150.33` has now been analyzed in **Ghidra 12.1.3** using `r5900:LE:32:default (1.4)`, image base `0x100000`. The Japanese `.gzf` archive has now been supplied and its stored HDD symbols extracted. **This is a symbol/address comparison, not a verified machine-code or behavioral comparison.**
 
 - Japanese ELF MD5: `483996783678ccf04ead7eeff6c51e66`
 - Japanese ELF SHA-256: `05985e62f09e9a2fb6d818323f422932b78c6dc1bc41d3757f18cade7451aa06`
@@ -57,14 +57,46 @@ The Japanese main executable `SCPS_150.33` has now been analyzed in **Ghidra 12.
 - Earlier US analysis: **7,809 functions**, **548,645 instructions**, **32,768 symbols**, **44,691 defined data items**, **251 datatypes**, **114,173,295 indexed bytes**.
 - Differences are analysis counts, **not proof of removed or added code**. Both programs use the same Ghidra processor language and original image base, easing decompilation/structural matching.
 
-Next comparative step once the Japanese archive is available: resolve Japanese addresses/bodies/callers of `TitleHDDInstallInit`, `TitleHDDInstallKey`, `TitleHDDInstallDraw`, `TitleHDDCheckFlag`, the HDD module-load path, and the active file-device switch. Check whether the Japanese title screen actually enters these functions and identify corresponding US decisions before attempting a binary patch.
+## Japanese vs US HDD symbol comparison (2026-10-10)
+
+Analyzed the embedded Java-serialization/GZIP ZIP payload from `SCPS_150.33(1).gzf` without requiring Ghidra at extraction time; the first `FOLDER_ITEM` stream is a raw-deflate local ZIP entry, and symbol records store names and address metadata. **38 matching HDD-related function/global symbols** were mapped to the earlier US reference list; no function byte-for-byte comparison or branch-condition comparison has yet been performed.
+
+| JP address | US address | Named symbol |
+| --- | --- | --- |
+| `0019E260` | `001A3630` | `TitleHDDInstallInit` |
+| `0019E6E0` | `001A3A80` | `TitleHDDInstallKey` |
+| `0019F550` | `001A48F0` | `TitleHDDInstallDraw` |
+| `0019F910` | `001A4D00` | `CheckAppInstallForTitle` |
+| `0019F950` | `001A4D40` | `CheckHDDInstall` |
+| `00214AD0` | `0021B0C0` | `InitHDDMenu` |
+| `00214B20` | `0021B110` | `HDDMenuLoop` |
+| `00215450` | `0021BA40` | `HddConectCheck` |
+| `002155D0` | `0021BBC0` | `CheckAppInstall` |
+| `00215760` | `0021BD50` | `MountHDDFileSystem` |
+| `00215A00` | `0021BFF0` | `CreateInstallThread` |
+| `00215C80` | `0021C270` | `InstallLoop` |
+| `0026D418` | `00276518` | `DefaultFileDev` |
+| `0026EE10` | `00277F28` | `HDDModeSelect` |
+| `0026F748` | `00278890` | `AppInstall` |
+
+An especially useful alignment: `InitHDDMenu` through `InstallLoop` and the intervening installer routines all have a **constant US-JP address delta of `+0x65F0`**. The title-screen handlers have different deltas around `+0x53A0` to `+0x53F0`, so **do not globally rebase one executable into the other**.
+
+The Japanese archive includes `HDDPhase` at `0026EDE4`, `HDDConfirmType` at `0026EDE8`, `HddConnect` at `0026F744`, and `HDDImage` at `01DEF7B0`. The US archive's `TitleHDDCheckFlag` at `00276950` has **no literal symbol-name match in the JP archive**. This does not establish whether the actual corresponding variable or logic exists under a different name.
+
+### Ready for the next comparison
+
+- Locally generated `DC2_JP_US_HDD_Address_Comparison_20261010_v2.tsv`: 38 recovered address mappings.
+- Locally generated `DC2_HDD_CrossRegion_AnnotateAndExport_20261010_v2.java`: standalone Ghidra Java script for Ghidra 12.1.3; run against each archive to check matching symbols, add non-destructive cross-region comments, and export incoming references and decompilations. **Not yet tested within Ghidra.**
+- Next: compare `TitleInit`, `TitleModeKey`, `TitleModeDraw`, the title case dispatchers, and especially US reads/writes of `TitleHDDCheckFlag`. Compare JP and US decompiler output, then examine region checks and possible menu accessibility; do not patch until actual conditions are resolved.
+
+
 
 ## Resume plan (smallest useful next steps)
 
 1. Run the **read-only** Ghidra audit script from this investigation (`DC2_US_HDD_Decompile_Audit_20261010_v1.py`) on the supplied US `SCUS_972.13.gzf` and retain the full decompilation/reference report. The script was prepared but **not verified by execution inside Ghidra**.
 2. Audit `TitleInit`, `TitleModeKey`, `TitleModeDraw`, title dispatcher cases, and **every write/read of `TitleHDDCheckFlag`**. Identify the precise condition controlling the HDD menu and any regional switch.
 3. Trace `TitleHDDInstallInit/Key/Draw` through `HddConectCheck`, `CheckAppInstall`, `CheckInstallSpace`, `CreateInstallThread`, `InstallLoop`, mount/unmount and asset-source switches. Check for stubs and failure paths.
-4. Compare the **Japanese and US main ELFs**, associated menu assets, file layouts, and module hashes. Confirm any differences that matter to the installer and HDD-backed loading.
+4. Compare the **Japanese and US main ELF machine code and branches**, associated menu assets, file layouts, and module hashes. Symbol-address matching is complete, but implementation parity is unverified. Confirm any differences that matter to the installer and HDD-backed loading.
 5. If supported by analysis, make the **smallest reversible game-side patch** on a separate experimental artifact and check for new *game-side* HDD IRX loads and PFS activity. A visible menu is only a first milestone; validate installation, loading and fallback independently.
 
 ### Safety / verification
