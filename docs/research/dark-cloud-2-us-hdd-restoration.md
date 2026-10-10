@@ -59,7 +59,7 @@ The Japanese main executable `SCPS_150.33` has now been analyzed in **Ghidra 12.
 
 ## Japanese vs US HDD symbol comparison (2026-10-10)
 
-Analyzed the embedded Java-serialization/GZIP ZIP payload from `SCPS_150.33(1).gzf` without requiring Ghidra at extraction time; the first `FOLDER_ITEM` stream is a raw-deflate local ZIP entry, and symbol records store names and address metadata. **38 matching HDD-related function/global symbols** were mapped to the earlier US reference list; no function byte-for-byte comparison or branch-condition comparison has yet been performed.
+Analyzed the embedded Java-serialization/GZIP ZIP payload from `SCPS_150.33(1).gzf` without requiring Ghidra at extraction time; the first `FOLDER_ITEM` stream is a raw-deflate local ZIP entry, and symbol records store names and address metadata. **37 matching HDD-related function/global symbols** were mapped to the earlier US reference list; no function byte-for-byte comparison or branch-condition comparison has yet been performed.
 
 | JP address | US address | Named symbol |
 | --- | --- | --- |
