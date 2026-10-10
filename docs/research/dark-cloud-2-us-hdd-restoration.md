@@ -458,7 +458,7 @@ Generated deliverables (all uniquely named in the current chat):
 
 Validation output: compiled MIPS payload length **736**, SHA-256 **`b8f2bf8a1a974c6bcc505ac9fbaafbc9f396a665628c47925354c80af4861ef1`**, exact byte match against the earlier v1 assembler binary and **189/189 expected active writes** in the user's October 10 post-install PCSX2 log. Negative tests verified verifier rejects duplicate-address writes, missing capacity fix, and changed `DC2HDDv1` bytes. The git patch has been tested using `git apply --check`, `git apply`, and byte-for-byte comparison of four resulting files in a temporary local repository. **No change to working loader instructions** was made for packaging.
 
-**Open next step:** apply repository patch to `research/dark-cloud-2-us-hdd-restoration` and commit once possible; the branch handoff records release readiness but the files are not yet present in the remote branch. On the user's machine, verify consolidated `v3.pnach` with one additional cold boot and existing installed partition (no reinstall) if transitioning off the previously tested merged `exp.pnach`. Scratch-slot lifetime under arbitrary resets and real hardware remains unverified. Existing save/load, source-selection and menu-return regressions remain to run. Do not conflate successful package static audit with a newly performed runtime regression.
+**PFS cache warnings observed in cold-boot excerpt:** Seven `pfs: warning: null buffer returned` messages are visible in the user's 8986-line PCSX2 excerpt: one during HDD-OSD before game launch (~1315.6842s), and six during the game's HDD-active period (~1353.2878-1353.3655s). The warnings are not accompanied by a reported crash or user-visible gameplay failure. Their presence under the preceding OSD PFS driver means they cannot automatically be attributed to this loader, but their later occurrence with the game driver merits focused follow-up if stability problems occur. Do not claim a PFS buffer leak or corruption from this text alone. The game driver at startup uses the known Japanese arguments and printed its actual buffer configuration in the log.\n\n**Open next step:** apply repository patch to `research/dark-cloud-2-us-hdd-restoration` and commit once possible; the branch handoff records release readiness but the files are not yet present in the remote branch. On the user's machine, verify consolidated `v3.pnach` with one additional cold boot and existing installed partition (no reinstall) if transitioning off the previously tested merged `exp.pnach`. Scratch-slot lifetime under arbitrary resets and real hardware remains unverified. Existing save/load, source-selection and menu-return regressions remain to run. Do not conflate successful package static audit with a newly performed runtime regression.
 
 ### US transfer strategy
 
@@ -478,7 +478,7 @@ BSim propagation was run **between the Japanese and US Ghidra databases in both 
 
 V2 required exact primary symbol at addresses extracted incorrectly without the image base and thus reported zero matches. V3 searched by name, recovered the real locations (`+0x100000`), and exported 27 function decompilations per region. Both versions were read-only. Use corrected v4 address list and instruction audit; do not rerun v2.
 
-## Resume plan (smallest useful next steps)
+## Historical initial resume plan (superseded by completed native HDD restoration above)
 
 1. **Completed:** v3 diagnostic exported 27 decompiled functions per region. Next: run the read-only v4 instruction-byte audit at the verified US title HDD flag references.
 2. **Completed at decompiler level:** the US gate is `TitleHDDCheckFlag = LanguageCode < 1`, read during initial HDD checks, title selection and rendering. Still verify exact raw machine instructions before patching.
@@ -491,7 +491,7 @@ V2 required exact primary symbol at addresses extracted incorrectly without the 
 - Work on **copies** of the PCSX2 HDD image and disc/ELF; both `UninstallApp` and installation code may mutate partitions.
 - Avoid committing proprietary PS2 executable, IRX files, HDD image or Ghidra database to this public repository. Keep exported analysis reports locally.
 - Don't conflate host DEV9 initialization, BIOS/OSD module loads and the game's own IOP environment.
-- No code changes or test results are claimed on this branch as of this handoff.
+- Historical pre-restoration note. Superseded: native US installation and HDD-backed gameplay are now user-verified. The verified v3 source, packager and .pnach have been provided as a tested four-file git patch, pending repository application.
 
 ### Local research artifacts from the original investigation
 
