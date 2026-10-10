@@ -115,6 +115,37 @@ Metadata applicable to Ghidra:
 
 Obtain the v4 instruction listing for US flag writer and HDD-check call sequence, then prepare a minimal, reversible **game patch** to test menu exposure. Independently determine how JP loads the HDD stack, then test install/mount/file-source behavior under PCSX2. The findings concern the game executable; no PCSX2 emulator changes have been made.
 
+## V4 instruction listing and reversible menu-exposure test (2026-10-10)
+
+Both supplied live-Ghidra instruction audits completed with **0 unresolved states** and made no DB or executable changes:
+- `DC2_US_HDD_Gate_Instruction_Audit_20261010_v4.txt`
+- `DC2_JP_HDD_Gate_Instruction_Audit_20261010_v4.txt`
+
+**Confirmed US code at the real EE execution address**:
+
+```text
+0x0029F2DC  lw    v0,-0x7530(gp)     ; LanguageCode
+0x0029F2E0  li    v1,1
+0x0029F2E4  blez  v0,0x0029F2F0
+0x0029F2E8  _sb   v1,-0x7ba0(gp)     ; delay slot always sets TitleHDDCheckFlag=1
+0x0029F2EC  sb    zero,-0x7ba0(gp)   ; clears flag only for positive LanguageCode
+```
+
+Original little-endian bytes at `0x0029F2EC`: `60 84 80 A3`, instruction word `A3808460`. A **single 32-bit NOP** (`00000000`) at that address should leave the flag enabled for every language while preserving other `LanguageCode` effects. Experimental PCSX2 `.pnach` line for **SCUS_972.13 US v2.00 / CRC 1DF41F33**:
+
+```ini
+patch=1,EE,0029F2EC,word,00000000
+```
+
+Standalone local test artifact: `DC2_US_HDD_Menu_Exposure_20261010_v1.pnach` (rename/merge to `1DF41F33.pnach` in the PCSX2 patch location as appropriate; **do not overwrite existing widescreen or other game patches**). This was produced from verified Ghidra listing but **has not been tested in PCSX2**. No executable patch has been applied to the repository.
+
+**Expected effect:** US `TitleInit` performs the title HDD detection block; `TitleModeKey` accepts selection index 4 instead of clamping to 3; `TitleModeDraw` draws five instead of four options. This is the complete identified menu gate. The JP title makes the HDD check unconditionally (`jal HddConectCheck` at `0x0029ABD0`) and always permits five entries.
+
+**Important independent blocker:** `TitleModeKey` at US `0x002A17F0` loads `HDDINFO` and refuses entry into the installer if `HDDINFO <= 0`; it is stored at `0x01F062D0` (heap, no initialized bytes available in Ghidra). `HddConectCheck` calls `sceSifSearchModuleByName("hdd")` and returns zero if the IOP module is absent. The unmodified US boot log already showed a failed `hdd` module lookup. **Do not force `HDDINFO=1`**: that would bypass the actual driver check and risks unsafe HDD operations. Determine JP and US game-side module-load sequence separately.
+
+Next test: on a **copy of the HDD image**, apply only the `.pnach` menu-gate line, verify whether the fifth title item draws, capture game-side IOP module loads/module lookups, and report whether the fifth item is enabled. If still greyed out, trace JP `DEV9/ATAD/HDD/PFS` initialization and equivalent US functions. An exposed item alone is not proof of a functional installer.
+
+
 ## BSim propagation baseline (2026-10-10)
 
 BSim propagation was run **between the Japanese and US Ghidra databases in both directions**. **No additional labels were created in either database**, per the observed result. Match counts, confidence/similarity thresholds, ignored/conflicting matches, and the exact set of correspondences have not yet been exported or verified. Do not infer that no functions matched or that the binaries are structurally identical: both databases already contain extensive Metrowerks-mangled function symbols. Next targeted investigation remains the decompiled title/HDD conditional checks rather than another broad propagation pass.
