@@ -430,6 +430,12 @@ patch=0,EE,0031BF40,word,2A220680  # CheckInstallSpace: slti v0,s1,0x680, 1664 M
 
 **Next test sequence:** after clean emulator shutdown, inspect the US partition identity **`PP.SCUS-97213.APP.DARKCHRO`** in wLaunchELF and note its PFS size/free space. Cold boot US game with **same merged .pnach**, confirm title detects installation and/or use native HDD file-source selection, enter actual gameplay and change scenes to exercise PFS-backed asset reads. If possible collect PCSX2 log evidence of game-side IOP module loads, PFS mounts/reads, or native `DefaultFileDev` transitions. Preserve backed-up HDD image and avoid reinstall unless needed. Consider collecting loader-status data only at startup before disposable EE memory can be reused.
 
+### Post-install US PFS capacity verified: 1664/1553/111 MiB (2026-10-10)
+
+User supplied a **wLaunchELF HDD manager screenshot after the native US HDD installer displayed `Application data installed.`**, reporting **`PFS SIZE: 1664 MB`, `PFS USED: 1553 MB`, `PFS FREE: 111 MB`, `6% FREE`** for the completed installation. The expanded APA/PFS allocation therefore **actually took effect**, not just the code comparison patches. Assuming wLaunchELF's MB measurements in its customary binary-MiB units, final used capacity exceeds the old **1536 MiB** limit by **17 MiB**, strongly corroborating the earlier near-end capacity exhaustion at 1536/1536 MB, 0 free. The +128-MiB subpartition leaves **111 MiB** free (~6.7%); no additional allocation is currently justified. `DATA.HD3` index file byte-size comparison did not by itself quantify archive payload. Treat the UI fields as rounded partition-level numbers, not exact payload bytes.
+
+**Next unresolved milestone:** cold boot the US title with the **same merged experimental four-IRX loader + 1664-MiB patch** and confirm the game recognizes the installed `Ver0.309` marker and **actually loads assets through the HDD-backed PFS path**. Capture `DefaultFileDev` state or PCSX2 game-side PFS reads if unclear. Do not reinstall or adjust memory solely for this test. Protect working HDD-image backup, keep partial vs installed US/JP partition identities distinct.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
