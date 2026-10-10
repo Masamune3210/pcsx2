@@ -436,6 +436,14 @@ User supplied a **wLaunchELF HDD manager screenshot after the native US HDD inst
 
 **Next unresolved milestone:** cold boot the US title with the **same merged experimental four-IRX loader + 1664-MiB patch** and confirm the game recognizes the installed `Ver0.309` marker and **actually loads assets through the HDD-backed PFS path**. Capture `DefaultFileDev` state or PCSX2 game-side PFS reads if unclear. Do not reinstall or adjust memory solely for this test. Protect working HDD-image backup, keep partial vs installed US/JP partition identities distinct.
 
+### Runtime HDD-backed gameplay observed after cold boot (2026-10-10)
+
+**Functional runtime milestone confirmed by user:** after successful native US HDD installation with the merged four-driver loader and 1664-MiB partition patch, the user cold-booted the game and played into **Chapter 2, Sindain Station**. The supplied PCSX2 log snippet showed **game-side DEV9/ATAD/HDD/PFS modules loaded successfully**, with HDD module **id 37, ret 0**, and `sceSifSearchModuleByName("hdd")` resolving **37** repeatedly rather than the unmodified US game's **-202**. HDD DMA reads continued into live gameplay and scene transitions. The user independently reported a **marked increase in loading snappiness**, consistent with actual PFS-backed gameplay asset loading. Together these are strong practical evidence that the restored US game uses its installed HDD data, not just a mounted but inactive partition. No instruction-level `DefaultFileDev` trace or per-asset PFS file-open trace has yet been captured, so reserve that narrower claim for instrumentation if ever necessary.
+
+**Validated restoration scope:** (a) title menu exposed, (b) native EE initialization of four game-side IOP drivers via boot-only disposable loader, (c) genuine native HDD install succeeds after additional 128 MiB APA subpartition, (d) completed US installation uses **1553/1664 MiB, 111 MiB free**, and (e) game detects HDD and exhibits ongoing HDD reads plus improved load times during gameplay after cold reboot. This is sufficient to treat **HDD-backed gameplay operational**; remaining work is robustness/polish, not proof that basic install works. Maintain user's backed-up image and original 32-MiB EE / 2-MiB IOP memory limits.
+
+**Outstanding if later requested:** investigate sustained use of high EE temporary loader slot, reliability across game resets/reboots, startup failures, patch packaging, any region-specific in-game issues, and potentially `DefaultFileDev`/PFS call tracing for formal source attribution. Do not require tracing solely to repeat an already established functional gameplay observation.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
