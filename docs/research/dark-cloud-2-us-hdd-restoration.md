@@ -234,6 +234,23 @@ The original US `SCUS_972.13.gzf` **already exists in conversation files** along
 
 A direct parser comparison of the 27 earlier JP/US v3 function decompilations showed **16 textually identical function bodies**: `TitleDraw`, `CheckAppInstallForTitle`, `CheckHDDInstall`, `InitHDDMenu`, `HddConectCheck`, `CheckAppInstall`, `MountHDDFileSystem`, `UmountHDDFileSystem`, `CheckInstallSpace`, `CreateInstallThread`, `StepInstallThread`, `GetInstallProgress`, `DeleteInstallThread`, `InstallPause`, `InstallCancel`, and `GetMainFileDev`. `InstallLoop` had near-identical textual output, with relocated data references. The JP Codex new type annotations require separate verification before applying any US ABI change. Decompiler-text identity alone is **not proof of byte-identity or runtime parity**.
 
+### Direct 27-function JP-to-US comparison (2026-10-10)
+
+Continued without requesting a redundant US export: both original region-specific v3 decompilation reports were parsed by symbol and compared. There are **27 verified paired functions, 16 exactly identical exported C bodies**, and 11 different: title-init/selection/drawing regional gates, title-loop/installer UI and localization/controller/data relocations, debug text addresses, near-identical installer worker with **three relocated data references**, and `TopDir` expression/declaration differences in the two device-switching helpers. Decompiler-text identity is not machine-code identity and does not validate the full JP Codex annotation transfer. The existing US archive is indexed in conversation files; no need to upload it again just to continue.
+
+Prepared local standalone artifacts (verified present as files, *not executed in Ghidra*):
+
+- `DC2_JP_US_HDD_Lifecycle_Comparison_20261010_v5.tsv`: full 27-function pairing, classification, and next-check notes;
+- `DC2_JP_US_HDD_Restoration_Decisions_20261010_v5.md`: detailed comparator result, Ghidra-function-editor-compatible **partial US signature refinements** for functions whose exported C bodies are identical, and prioritized implementation blockers;
+- `DC2_US_HDD_Startup_And_Installer_Audit_20261010_v2.java`: read-only focused Ghidra script for the **already-existing** US database. Checks `init @0x0015C160` tail around `0x0015C328..0x0015C3A8`, incoming references to module-loader APIs, `TitleHDDInstallKey @0x002A3A80` coverage across possible jump-table/body truncation, and reads US raw marker/asset bytes and source string symbol locations. Invalid states printed at bottom. **Not run or Ghidra-verified**.
+
+Important open questions before proposing an ELF patch:
+1. Where to insert/hook the missing US game-side DEV9/ATAD/HDD/PFS startup sequence **without overwriting valid code**; JP uses 11- and 17-byte arguments and filesystem/power-off initialization.
+2. Actual US partition ID, version marker, and source archive/resource path bytes. Earlier US `InstallLoop` references raw address `0x00372E20` for nine-byte marker and `0x00372ED0` for a loaded header resource, but contents not yet exported. Do not claim they match JP without byte check.
+3. Repair the US installer function extent/11-phase dispatch independently. JP Codex fixed `0x0029E6E0..0x0029F277`; US `0x002A3FF8` has computed dispatch, and old US report associates nearby references with no function owner.
+
+No new PCSX2 code or US executable patch, beyond the already runtime-proven menu-only NOP, was made. Continue by reviewing targeted US audit output, not by another broad propagation or requesting existing archives.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
