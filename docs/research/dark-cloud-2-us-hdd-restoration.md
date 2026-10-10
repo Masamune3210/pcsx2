@@ -444,6 +444,22 @@ User supplied a **wLaunchELF HDD manager screenshot after the native US HDD inst
 
 **Outstanding if later requested:** investigate sustained use of high EE temporary loader slot, reliability across game resets/reboots, startup failures, patch packaging, any region-specific in-game issues, and potentially `DefaultFileDev`/PFS call tracing for formal source attribution. Do not require tracing solely to repeat an already established functional gameplay observation.
 
+### Known-good v1 loader packaged and log-audited (2026-10-10)
+
+**Implementation and release packaging completed offline (not yet merged to GitHub tree):** `DC2_US_HDD_Restoration_20261010_v3.pnach` is a consolidated, byte-for-byte verified reproduction of the **actual working** runtime patch: v1 temporary EE loader at `0x01FE8000` (`0x2E0` bytes) + US title gate + two unique Ghidra-verified 1664-MiB capacity edits. **Do not silently replace this with v2**: the supplied successful boot/gameplay PCSX2 log explicitly activates `0x01FE82BC=0x31764444` (`DC2HDDv1`), and v1 branch delay-slot words at `0x01FE8084/80D8/8130/8188` are zero. V2 differs at those words and only changes failure-code diagnostics, so successful gameplay has confirmed v1, not v2.
+
+Generated deliverables (all uniquely named in the current chat):
+
+- `DC2_US_HDD_Restoration_20261010_v3.pnach` (189 unique EE writes; all match active patch commands in user's `Pasted text(20261010-203803).txt` including both capacity words).
+- `DC2_US_HDD_Loader_KnownGood_20261010_v3.S` (original successful v1 loader assembly, no semantic modifications).
+- `DC2_US_HDD_Restoration_Packager_20261010_v3.py` (rebuild from MIPS `.S` via clang/ld.lld/llvm-objcopy, fail-closed SHA check, static patch audit and PCSX2 activation-log audit).
+- `DC2_US_HDD_Restoration_Release_Notes_20261010_v3.md` (usage, verified evidence, limits and next regression tasks).
+- `DC2_US_HDD_Restoration_Repo_20261010_v3.patch` (unified **git apply** patch adding the four artifacts under `patches/dark-cloud-2-us-hdd/`; user can apply to this research branch; no copyrighted game, IRX, BIOS or HDD bytes).
+
+Validation output: compiled MIPS payload length **736**, SHA-256 **`b8f2bf8a1a974c6bcc505ac9fbaafbc9f396a665628c47925354c80af4861ef1`**, exact byte match against the earlier v1 assembler binary and **189/189 expected active writes** in the user's October 10 post-install PCSX2 log. Negative tests verified verifier rejects duplicate-address writes, missing capacity fix, and changed `DC2HDDv1` bytes. The git patch has been tested using `git apply --check`, `git apply`, and byte-for-byte comparison of four resulting files in a temporary local repository. **No change to working loader instructions** was made for packaging.
+
+**Open next step:** apply repository patch to `research/dark-cloud-2-us-hdd-restoration` and commit once possible; the branch handoff records release readiness but the files are not yet present in the remote branch. On the user's machine, verify consolidated `v3.pnach` with one additional cold boot and existing installed partition (no reinstall) if transitioning off the previously tested merged `exp.pnach`. Scratch-slot lifetime under arbitrary resets and real hardware remains unverified. Existing save/load, source-selection and menu-return regressions remain to run. Do not conflate successful package static audit with a newly performed runtime regression.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
