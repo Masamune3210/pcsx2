@@ -162,6 +162,32 @@ User screenshot of *Dark Cloud 2* US in PCSX2 after applying corrected, labelled
 
 The reported disabled appearance agrees with the decompiled `TitleModeDraw` grey-out condition `index == 4 && HDDINFO == 0`, and `TitleModeKey` refuses to enter when `HDDINFO < 1`. Prioritize obtaining the actual return value from `HddConectCheck`, then trace why the game's IOP does not have a suitable `hdd` module when queried, comparing JP driver setup and US setup. Do **not** force `HDDINFO > 0` as a shortcut. The screenshot alone does not establish precise runtime register values or distinguish missing module from other detection failures.
 
+
+## V5 IOP driver loader comparison and ROMIMG possibility (2026-10-10)
+
+The JP and US **read-only Ghidra v5 reports have completed with zero unresolved states**. The US install menu is now proven visible via the existing `.pnach`, but greyed out when `HDDINFO` indicates no driver connection.
+
+JP `SCPS_150.33` contains `LoadHddModule__Fv` at **`0x0015BD00`**, which does the following, in strict order:
+
+1. `sceSifLoadStartModule("cdrom0:\\MODULES\\DEV9.IRX;1", 0, NULL, &result)`.
+2. Same for `ATAD.IRX`, with no start arguments.
+3. `HDD.IRX`, with **0xB bytes of startup arguments** prepared in a local stack buffer.
+4. `PFS.IRX`, with **0x11 bytes of startup arguments**, also built from compiled constants.
+5. `PreparePowerOff()` and `sceFsInit()` on the successful path.
+
+The module loader's calls loop on **negative loader return values**; then the `result == 1` check leads to error `-1`. This behavior and the exact argument bytes should be verified before porting. JP also has `PowerOffThread` (including `pfs:` and `hdd:` paths). The US v5 report has neither the four disc driver path strings nor `LoadHddModule` as a discovered symbol, and has **no game-side direct calls to `sceSifLoadStartModule`** other than the common wrapper. The regular US `init__Fv` ends after ten controller/memory-card/audio module loads and `InitCDFile`. `HddConectCheck` in both builds only checks for a resident module named `hdd`, then issues `sceDevctl("hdd:",0x4807,...)`; it does not load drivers.
+
+**Important open question:** The v5 report did not enumerate *incoming references to* the JP `LoadHddModule` function or export the full JP `init__Fv`, owing to its 18-function decompilation cap. We cannot yet say when or whether that loader runs during Japanese normal startup. The next narrow investigation is the read-only **`DC2HddBootReachabilityAuditV6.java`**, prepared locally, which enumerates inbound references and callers for `LoadHddModule`, `PreparePowerOff` and `init`, and prints the JP argument constant bytes. Run it on JP and US. This script has **not** been executed in Ghidra yet.
+
+### ROMIMG alternative under consideration
+
+The user suggested using **ROMIMG** to inject DEV9/ATAD/HDD/PFS into the disc's `MODULES/IOPRP243.IMG`. ROMIMG supports listing/extracting/adding files to IOPRP images (its `-l/-x/-a` commands); this is **plausible as a game-disc-side alternative** to transplanting the Japanese EE module-loading routine. But **merely copying IRX entries into ROMDIR will not autoload them**. The image boot configuration (`IOPBTCONF`) must actually request those modules, and module order/dependencies matter. The JP runtime loader supplies explicit 0xB/0x11 byte start arguments for HDD/PFS, which a simple list of module names in IOPBTCONF is not proven to replicate. `PreparePowerOff` and `sceFsInit` are also part of the successful Japanese flow. Test these independently; do not bypass `HDDINFO`.
+
+Before modifying an image: (a) hash-compare JP and US IOPRP images, (b) `ROMIMG -l` and `ROMIMG -x` **on copies** of both IOPRPs, (c) inspect embedded `IOPBTCONF` and module names and confirm correct entry order, (d) examine JP callsite/startup argument bytes, (e) use a disposable ISO/game image and backup virtual HDD for runtime tests. A patched IOPRP changes disc layout and must be rebuilt correctly. There is **no validated ROMIMG image or working HDD-install test** yet.
+
+Technical references: https://sites.google.com/view/ysai187/home/projects/romimg ; https://psi-rockin.github.io/ps2tek/ (IOPBTCONF and ROMDIR formats). No emulator source changes requested or required on this track.
+
+
 ## BSim propagation baseline (2026-10-10)
 
 BSim propagation was run **between the Japanese and US Ghidra databases in both directions**. **No additional labels were created in either database**, per the observed result. Match counts, confidence/similarity thresholds, ignored/conflicting matches, and the exact set of correspondences have not yet been exported or verified. Do not infer that no functions matched or that the binaries are structurally identical: both databases already contain extensive Metrowerks-mangled function symbols. Next targeted investigation remains the decompiled title/HDD conditional checks rather than another broad propagation pass.
