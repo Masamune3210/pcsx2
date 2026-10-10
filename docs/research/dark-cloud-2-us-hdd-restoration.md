@@ -253,6 +253,26 @@ Important open questions before proposing an ELF patch:
 
 No new PCSX2 code or US executable patch, beyond the already runtime-proven menu-only NOP, was made. Continue by reviewing targeted US audit output, not by another broad propagation or requesting existing archives.
 
+## V3 US native startup and installer report: 2026-10-10
+
+User ran the corrected `DC2_US_HDD_Startup_And_Installer_Audit_20261010_v3.java` on existing `SCUS_972.13`; report `2(2)` completed. **No executable or Ghidra modifications** in that audit.
+
+- `init__Fv @ 0x0015C160` body max `0x0015C397`. `main @0x0015C3A0` calls it from `0x0015C3C0`.
+- Last non-HDD module API call `sceSifLoadModule @ 0x00117D38` is `0x0015C364`; `0x0015C374` calls `InitCDFile @ 0x00148F70`; then final calls `0x001042E8`, `0x001027D0`, epilogue `0x0015C38C-0x0015C394`. Addresses `0x0015C398/0x0015C39C` are **eight bytes of zero padding before main**, not a disassembly defect. The API `sceSifLoadStartModule @0x00117D58` has only an EXTERNAL entry ref, no game-side caller.
+- `HddConectCheck @ 0x0031BA40` has expected multiple callers, including `TitleInit @0x0029FE98`, `TitleHDDInstallInit @0x002A39A4`, `CheckHDDInstall @0x002A4D48`, mount/debug calls. It still does not load `hdd`.
+- `TitleHDDInstallKey @0x002A3A80` currently has **noncontiguous function ownership**, although its recorded body max is `0x002A4617`. The 11-entry computed switch is at `0x002A3FF8` (native `jr v0` word `0x00400008`); its table base is **`0x0036E2D0`** (derived directly from US `lui v1,0x37; addiu v1,-0x1d30`, not inferred using a JP delta). Phase case instructions at `0x002A402C, 0x002A4160, 0x002A43FC, 0x002A4468` have no containing function; `0x002A4614` is within original function. Repair metadata, don't rewrite instructions or assume cases absent.
+- Raw US nine-byte install version marker at `0x00372E20` is **`Ver0.309\\0`**, distinctly newer than the Japanese `Ver0.208\\0`. Raw resource path at `0x00372ED0` is `etc/hdd_head.hed\\0`; immediately afterward a string `cdrom0:\\SYSTEM.CNF;1` is stored. These are verified byte reads from US live Ghidra, not assumptions from JP.
+- `TitleHDDCheckFlag` remains stock in the Ghidra database at `0x0029F2EC` (`60 84 80 A3`); the working one-NOP title patch was applied only at PCSX2 runtime, not to the original binary.
+- Audit summary listed two undefined instruction addresses `0x0015C398`, `0x0015C39C`; both have raw bytes `00 00 00 00` and lie **outside the init function at its end**, before `main`. Classify as **expected padding**, not a repair target.
+
+New local scripts prepared (not yet executed in Ghidra):
+
+1. **`DC2_US_HDD_Installer_Switch_Repair_20261010_v1.java`** applies a guarded Ghidra-only function-body repair to `0x002A3A80..0x002A4617`, validates all eleven 32-bit targets from `0x0036E2D0` fall on existing instructions inside the range, rejects ownership conflicts, and adds computed jump xrefs from `0x002A3FF8`, plus three non-destructive labels and comments. Transaction rolls back on conflict; does not modify executable bytes or automatically force Ghidra function signatures. **May decline to apply if another spurious function overlaps or a target is undisassembled.**
+2. **`DC2_US_HDD_Loader_Resources_And_CodeCaves_20261010_v1.java`** is a read-only bounded main-block string and zero-run scanner to find the actual US partition/archive constants and conservative unreferenced candidate locations for an EE-native loader. A code cave is *not* established as safe merely from static zero bytes; verify ELF file backing, loader map, actual execution and ownership before use.
+
+Dependency order for patching: confirm US source archive/partition strings and resolve installer jump table/body; select a safe EE payload location or other implementation before creating game patch bytes. Do not expand the 8-byte gap at `0x0015C398..C39C` into a driver loader: it is far too small. Do not bypass `HDDINFO`. Continue from provided report instead of repeating the earlier audit or requesting the already-provided US Ghidra archive.
+
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
