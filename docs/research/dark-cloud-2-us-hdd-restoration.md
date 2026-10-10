@@ -1,12 +1,12 @@
 # Dark Cloud 2 (US) native HDD installation restoration
 
-Status: **research parked; no patch implemented or tested**  
+Status: **operational: native US installation completes, 1664-MiB PFS verified, HDD-backed gameplay observed; consolidated v3 patch statically verified but not yet cold-boot regression-tested**  
 Repository branch: `research/dark-cloud-2-us-hdd-restoration` (from `master`)  
 Baseline: *Dark Cloud 2*, USA v2.00, `SCUS_972.13`, PCSX2 2.9.115, game CRC `1DF41F33`, ELF 4,014,996 bytes.
 
 ## Why this branch exists
 
-Investigate whether the native HDD installation/loading functionality available in Japanese *Dark Chronicle* can be made accessible in the US release. The US executable's Ghidra database retains HDD installation functions and apparent title-screen UI handling, despite no normally visible US install option. **This is game reverse-engineering research, not yet evidence of a PCSX2 defect.** Do not alter emulator behavior based on these observations alone.
+Investigate whether the native HDD installation/loading functionality available in Japanese *Dark Chronicle* can be made accessible in the US release. The US executable's Ghidra database retains HDD installation functions and apparent title-screen UI handling, despite no normally visible US install option. **Confirmed game-side restoration, not a PCSX2 defect:** the US title installer and HDD-backed gameplay run using the native game paths with reversible EE patches. The original installation allocation was insufficient for US assets.
 
 ## Observations so far
 
@@ -459,6 +459,10 @@ Generated deliverables (all uniquely named in the current chat):
 Validation output: compiled MIPS payload length **736**, SHA-256 **`b8f2bf8a1a974c6bcc505ac9fbaafbc9f396a665628c47925354c80af4861ef1`**, exact byte match against the earlier v1 assembler binary and **189/189 expected active writes** in the user's October 10 post-install PCSX2 log. Negative tests verified verifier rejects duplicate-address writes, missing capacity fix, and changed `DC2HDDv1` bytes. The git patch has been tested using `git apply --check`, `git apply`, and byte-for-byte comparison of four resulting files in a temporary local repository. **No change to working loader instructions** was made for packaging.
 
 **PFS cache warnings observed in cold-boot excerpt:** Seven `pfs: warning: null buffer returned` messages are visible in the user's 8986-line PCSX2 excerpt: one during HDD-OSD before game launch (~1315.6842s), and six during the game's HDD-active period (~1353.2878-1353.3655s). The warnings are not accompanied by a reported crash or user-visible gameplay failure. Their presence under the preceding OSD PFS driver means they cannot automatically be attributed to this loader, but their later occurrence with the game driver merits focused follow-up if stability problems occur. Do not claim a PFS buffer leak or corruption from this text alone. The game driver at startup uses the known Japanese arguments and printed its actual buffer configuration in the log.\n\n**Open next step:** apply repository patch to `research/dark-cloud-2-us-hdd-restoration` and commit once possible; the branch handoff records release readiness but the files are not yet present in the remote branch. On the user's machine, verify consolidated `v3.pnach` with one additional cold boot and existing installed partition (no reinstall) if transitioning off the previously tested merged `exp.pnach`. Scratch-slot lifetime under arbitrary resets and real hardware remains unverified. Existing save/load, source-selection and menu-return regressions remain to run. Do not conflate successful package static audit with a newly performed runtime regression.
+
+### Japanese HDD browser title from completed US installation (2026-10-10)
+
+The user supplied a PS2 HDD browser detail screenshot for the **successfully installed US** Dark Cloud 2 application data. The browser shows **`ダーククロニクル アプリケーションデータ`** ("Dark Chronicle Application Data") **in Japanese**, lists **`Location HDD`**, **`Type PlayStation®2 Format Software`**, and **`Size 1,664 MB`**, and gives the install creation date **2026-10-10 2:14:50 PM**. The Japanese label is **user-facing game-specific HDD installation metadata**, not the English US title *Dark Cloud 2*, and matches the 1664-MiB allocation added by the restoration. Combined with regional serial `SCUS-97213` but surviving partition suffix `APP.DARKCHRO`, English installer wording including `DC2 application data` and `PlayStation BB Unit`, the US-specific marker `Ver0.309`, and the original 1536-MiB allocation being too small for the US contents, the screenshot supports **incomplete HDD feature regional localization**. It does **not** independently establish exactly when the feature was disabled. The source of the installed browser title within disc/installer metadata has not yet been mapped to bytes: do not claim the precise metadata file/offset without separate analysis.
 
 ### US transfer strategy
 
