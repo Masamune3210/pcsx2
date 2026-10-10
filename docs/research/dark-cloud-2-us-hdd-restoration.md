@@ -46,6 +46,19 @@ Source: complete PCSX2 boot log from the investigation, `Pasted text (3).txt` (3
 - An earlier partial gameplay log showed `searchbyname: module name hdd` and `return -202`. This establishes a failed module lookup at that point, **not** that the game lacks HDD code or necessarily initiated the lookup itself.
 - Fast CDVD was enabled and a widescreen memory patch was present in the captured emulator configuration. Disable timing-altering options for controlled tests, and record any active patches.
 
+## Japanese reference imported into Ghidra (2026-10-10)
+
+The Japanese main executable `SCPS_150.33` has now been analyzed in **Ghidra 12.1.3** using `r5900:LE:32:default (1.4)`, image base `0x100000`. This is a **metadata-only milestone**; the Japanese `.gzf`/decompilation has not yet been supplied or compared function-by-function.
+
+- Japanese ELF MD5: `483996783678ccf04ead7eeff6c51e66`
+- Japanese ELF SHA-256: `05985e62f09e9a2fb6d818323f422932b78c6dc1bc41d3757f18cade7451aa06`
+- Japanese ELF comment: `MW MIPS C Compiler (2.4.1.01)`, `PlayStation2` (not verified against the US ELF comments)
+- JP analysis: **7,748 functions**, **540,730 instructions**, **32,419 symbols**, **39,740 defined data items**, **249 datatypes**, **114,056,425 indexed bytes**.
+- Earlier US analysis: **7,809 functions**, **548,645 instructions**, **32,768 symbols**, **44,691 defined data items**, **251 datatypes**, **114,173,295 indexed bytes**.
+- Differences are analysis counts, **not proof of removed or added code**. Both programs use the same Ghidra processor language and original image base, easing decompilation/structural matching.
+
+Next comparative step once the Japanese archive is available: resolve Japanese addresses/bodies/callers of `TitleHDDInstallInit`, `TitleHDDInstallKey`, `TitleHDDInstallDraw`, `TitleHDDCheckFlag`, the HDD module-load path, and the active file-device switch. Check whether the Japanese title screen actually enters these functions and identify corresponding US decisions before attempting a binary patch.
+
 ## Resume plan (smallest useful next steps)
 
 1. Run the **read-only** Ghidra audit script from this investigation (`DC2_US_HDD_Decompile_Audit_20261010_v1.py`) on the supplied US `SCUS_972.13.gzf` and retain the full decompilation/reference report. The script was prepared but **not verified by execution inside Ghidra**.
