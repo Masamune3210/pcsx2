@@ -417,6 +417,19 @@ New expected partition allocation: one 128-MiB main plus **12** 128-MiB addition
 
 **Next controlled runtime test:** ensure the 40-GB HDD image backup is verified; use the partition manager to delete **only** incomplete `PP.SCUS-97213.APP.DARKCHRO`, preserving JP `PP.SCPS-15033.APP.DARKCHRO` and all other partitions. Cold boot with merged patch, confirm PCSX2 lists the four-driver-loader group plus both capacity edits, then reinstall at retail EE=32 MiB/IOP=2 MiB. One extra 128-MiB subpartition is a plausible fix to the observed 1536-MiB full/0-MiB free late failure, **not** proven sufficient until completion. Verify installation marker `Ver0.309\0`, resulting PFS size/free space, cold restart and actual HDD-file asset loading. In any repeat failure, capture worker `RetCode` or file log before reset and avoid interrupting filesystem writes.
 
+### US HDD native installer completed successfully (2026-10-10)
+
+**Major confirmed runtime milestone:** The user supplied a PCSX2 screenshot after retrying the native US HDD installer with the merged experimental DEV9/ATAD/HDD/PFS loader and the Ghidra-verified extra 128-MiB subpartition capacity patch. **The game displayed `Application data installed.` in the original English installer UI.** This is the first observed **successful completion** of the region-disabled US *Dark Cloud 2* native HDD installation. Earlier attempt with stock 1536-MiB allocation displayed `Installation Failed` near end and wLaunchELF confirmed US PFS **1536/1536 MiB used, 0 MiB free**. New successful configuration was designed to create 1664 MiB (one 128-MiB main + twelve 128-MiB subpartitions) by patching:
+
+```text
+patch=0,EE,0031C4BC,word,2A42000C  # InstallLoop: slti v0,s2,0xC, 12 extra APA slices
+patch=0,EE,0031BF40,word,2A220680  # CheckInstallSpace: slti v0,s1,0x680, 1664 MiB
+```
+
+**Interpretation:** Native installer reached its success UI after archive copy and finalization; previous US capacity-exhaustion hypothesis is supported by successful rerun. Do **not** yet claim cold-boot resource switching, actual game assets reading from HDD, or verified marker bytes and final partition free-space until independent test. The extant `InstallLoop` decompilation writes the nine-byte `Ver0.309` installation marker at the end, but the screenshot itself only shows successful UI, not marker bytes. Experimental patch remains necessary unless equivalent functionality is integrated elsewhere.
+
+**Next test sequence:** after clean emulator shutdown, inspect the US partition identity **`PP.SCUS-97213.APP.DARKCHRO`** in wLaunchELF and note its PFS size/free space. Cold boot US game with **same merged .pnach**, confirm title detects installation and/or use native HDD file-source selection, enter actual gameplay and change scenes to exercise PFS-backed asset reads. If possible collect PCSX2 log evidence of game-side IOP module loads, PFS mounts/reads, or native `DefaultFileDev` transitions. Preserve backed-up HDD image and avoid reinstall unless needed. Consider collecting loader-status data only at startup before disposable EE memory can be reused.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
