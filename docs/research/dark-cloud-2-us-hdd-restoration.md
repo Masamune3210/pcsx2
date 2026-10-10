@@ -313,6 +313,22 @@ The critical resource constraint is **resident IOP RAM**, separately from tempor
 PCSX2 `VMManager::Shutdown` is a host teardown, not a guest shutdown callback; its `DEV9close` closes the emulated ATA device. Deferring the JP `PreparePowerOff` handler for an initial proof-of-concept may be valid **only after confirming its omission does not affect other initialized routines**. Do not drop `sceFsInit`, and do not infer host ATA close guarantees guest PFS consistency mid-install.
 
 
+## Minimal US eight-byte trampoline smoke test (2026-10-10)
+
+Created a **boot-only .pnach proof-of-control-flow**: `DC2_US_HDD_Startup_Trampoline_Smoke_20261010_v1.pnach` (conversation artifact, 971 bytes, static encoding checks passed, **not yet runtime-tested**). This is a complete pnach with the previously working title-gate patch plus a new separate smoke-test group. For actual PCSX2 loading the user must replace/rename the existing file to **`SCUS-97213_1DF41F33.pnach`** (don't leave competing same-name files). No new game modifications in git.
+
+**Verified from US v3 Ghidra native instruction report:** `0x0015C374` originally holds `jal InitCDFile @ 0x00148F70`, MIPS instruction `0x0C0523DC`, and `0x0015C378` is a NOP. The two following words at `0x0015C398, 0x0015C39C` are **eight zero bytes** in the padding after `init__Fv` and before `main`. That permits **exactly a two-word tail-jump smoke test**, not the production loader:
+
+```ini
+[Dark Cloud 2 - One-Shot Startup Trampoline Smoke Test]
+patch=0,EE,0015C398,word,080523DC
+patch=0,EE,0015C374,word,0C0570E6
+```
+
+`0x0015C398: j 0x00148F70` followed by existing NOP at `0x0015C39C`; `0x0015C374: jal 0x0015C398` preserves `ra = 0x0015C37C`, allowing original `InitCDFile` to return to normal US init at `0x0015C37C`. Both jumps stay in the compatible MIPS 256 MiB segment; little-endian encodings were independently asserted with a Python calculation. **No extra EE allocation, no IOP resident modules, and no altered game behavior expected.** Both new writes use `patch=0`, not a continuous VSync patch. To prove patch timing and execution, break on EE PC `0x0015C398` and inspect `ra=0x0015C37C`; then resume and verify game boots normally. Disabling the patch returns to stock instructions after a clean relaunch. The smoke test does **not** prove large future payload placement or IOP residency.
+
+**After smoke test passes:** identify a finite-lifetime EE payload slot that is safe *during the four blocking module loads* (or choose an alternative controllable loader location, not devkit-only memory). Keep memory exposed at standard 32 MiB EE/2 MiB IOP, capture free + largest contiguous IOP memory before/after each real IRX load; compare against JP. Only then build the full US DEV9/ATAD/HDD/PFS + `sceFsInit` trampoline, preserving US `DATA.HD3`, `PP.SCUS-97213.APP.DARKCHRO` and `Ver0.309`. Do not implement or force runtime HDDINFO fallback before actual driver success.
+
 ### US transfer strategy
 
 1. Verify US title/installer/backend routines one by one against the annotated JP flow, not by applying a global address delta or automatically copying 153 signatures. The original Metrowerks symbols and all existing unresolved US ABI parts must be preserved.
