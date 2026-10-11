@@ -2,11 +2,11 @@
 
 **Target:** `SCUS_972.13`, USA v2.00, CRC `1DF41F33` (original disc). This is a reversible PCSX2 `.pnach` game patch. It does not include copyrighted game assets or change the PCSX2 emulator.
 
-## Production candidate
+## Stable PCSX2 restoration (v5)
 
-**`DC2_US_HDD_Production_20261010_v5.pnach`** is the clean patch to test. It contains one **Dark Cloud 2 - HDD Support** group, 127 word writes, and a 488-byte EE boot loader. Four game-shipped IRX modules are started in order: DEV9, ATAD, HDD, PFS, followed by `sceFsInit`; the original `InitCDFile` runs afterward whether module startup succeeded or failed. The fifth title menu entry is restored without forging HDD detection, and the installer capacity is raised to 1,664 MiB using two verified instruction edits.
+**`DC2_US_HDD_Production_20261010_v5.pnach`** is the stable, cleaned-up restoration for the tested PCSX2 setup. It contains one **Dark Cloud 2 - HDD Support** group, 127 word writes, and a 488-byte EE boot loader. Four game-shipped IRX modules are started in order: DEV9, ATAD, HDD, PFS, followed by `sceFsInit`; the original `InitCDFile` runs afterward whether module startup succeeded or failed. The fifth title menu entry is restored without forging HDD detection, and the installer capacity is raised to 1,664 MiB using two verified instruction edits.
 
-The previous verified experimental patch was 736 bytes / 189 EE writes. The 248-byte reduction eliminates per-module status storage, failure and stage counters, the completion flag, and the `DC2HDDv1` diagnostic marker. The production candidate **changes loader instructions and data layout**. It passes static rebuilding, control-flow/API/argument checks and regression tests, **but is not yet runtime verified**. Do not discard your verified v4 patch or HDD backup until v5 passes cold boot and gameplay.
+The previous verified experimental patch was 736 bytes / 189 EE writes. The 248-byte reduction eliminates per-module status storage, failure and stage counters, the completion flag, and the `DC2HDDv1` diagnostic marker. The v5 production patch **changes loader instructions and data layout** relative to v4. Its static rebuild, control-flow/API/argument checks and regression tests passed. **Extended PCSX2 gameplay validation is now reported by the user:** PCSX2 logged `Add 4855 seconds play time to SCUS-97213 -> now 35768` after using the cleaned v5 patch, with no reported crash or loading malfunction during that session. This is sufficient to classify v5 as **stable in the user's tested PCSX2 configuration**, not as universally validated on physical hardware or every reset path. Keep an HDD image backup; v4 remains available in Git history.
 
 **Unchanged critical entry points:**
 - Title gate `0x0029F2EC`: `00000000` (patch mode 1).
@@ -36,6 +36,6 @@ Build refuses to overwrite an existing output. The audit rejects unexpected inst
 
 ## Preservation and research
 
-The v4 known-good files remain retrievable from the **`70948ffc24d9258888a73bc69cd3c42bd3983f7e`** Git commit; they are intentionally not part of the current patch directory. That tested loader completed the US native installation and HDD-backed gameplay with the two capacity edits. **This v5 file has not been boot-tested**, and the original v4 remains the fallback.
+The v4 known-good files remain retrievable from the **`70948ffc24d9258888a73bc69cd3c42bd3983f7e`** Git commit; they are intentionally not part of the current patch directory. That tested loader completed the US native installation and HDD-backed gameplay with the two capacity edits. **v5 has now been exercised in extended PCSX2 gameplay without a reported failure**, and supersedes v4 as the recommended restoration. The original v4 remains recoverable for regression comparisons.
 
 Research findings and verified evidence are recorded in `docs/research/dark-cloud-2-us-hdd-restoration.md`. HDD OSD title/icon localization is explicitly out of scope.
