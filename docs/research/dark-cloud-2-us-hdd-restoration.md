@@ -1,8 +1,20 @@
 # Dark Cloud 2 (US) native HDD installation restoration
 
-Status: **v4 restoration gameplay verified; v5 production loader removes instrumentation, rebuilt and statically tested, new runtime regression pending**  
+Status: **v5 clean HDD restoration stable in tested PCSX2 setup following 4,855-second gameplay session; native US installation and HDD-backed gameplay operational. Physical hardware and unusual reset paths not verified**  
 Repository branch: `research/dark-cloud-2-us-hdd-restoration` (from `master`)  
 Baseline: *Dark Cloud 2*, USA v2.00, `SCUS_972.13`, PCSX2 2.9.115, game CRC `1DF41F33`, ELF 4,014,996 bytes.
+
+## Stable v5 gameplay validation (2026-10-10)
+
+**New user-confirmed runtime milestone:** After replacing the diagnostic-heavy experimental restoration with the actual stripped-down **v5** `.pnach`, PCSX2 logged:
+
+```text
+[10882.8291] Add 4855 seconds play time to SCUS-97213 -> now 35768
+```
+
+This records **4,855 seconds (1 h 20 m 55 s)** added in the tested session, and the user reports the patch remained stable over that gameplay. Combined with the prior verified native US installation (1,664 MiB), working HDD-backed loading, and static rebuild/regressions, this is adequate to designate **v5 stable in the user's PCSX2 configuration**. The active v5 loader is the **488-byte, 127-write production patch** with no debug-state table; do not mistakenly attribute the validation to v4 or assume v5 has only been statically tested. Do not imply the timestamp `10882.8291` equals playtime; it is merely the log timestamp.
+
+**Evidence boundary:** The log line establishes added game-play duration; the user reports stability. No full new v5 gameplay trace was attached for this milestone, so do not claim per-operation instrumentation or a separate measured cold-boot trace from this line alone. Physical PS2 compatibility, arbitrary EE heap lifetimes, unusual soft resets, and no-HDD fallback remain unverified, not known failures. HDD OSD metadata localization is postponed by user request; no changes made to the shipped OSD resources.
 
 ## Lean production candidate v5 (2026-10-10)
 
