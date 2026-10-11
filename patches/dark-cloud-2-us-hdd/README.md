@@ -1,6 +1,12 @@
 # Dark Cloud 2 (USA) native HDD support
 
-**Target:** `SCUS_972.13`, USA v2.00, CRC `1DF41F33` (original disc). This is a reversible PCSX2 `.pnach` game patch. It does not include copyrighted game assets or change the PCSX2 emulator.
+**Target:** `SCUS_972.13`, USA disc v1.00 **and** v2.00, common ELF CRC `1DF41F33` (as established by matching imported executable SHA-256 and MD5). This is a reversible PCSX2 `.pnach` game patch. It does not include copyrighted game assets or change the PCSX2 emulator.
+
+## Disc revision compatibility (2026-10-11)
+
+The newly supplied Ghidra export imported from `Dark Cloud 2 (USA) (v1.00)/SCUS_972.13` carries original executable SHA-256 `ac784f749c046cc78ebc3d7a026342a505354c422ffc55187b8128983d7d74e7` and MD5 `2d1aca0b2522a520a4e8839e88b7db69`. The preexisting US v2.00 Ghidra export records **both exact same hashes**, and both use MIPS R5900, image base `0x00100000`. Therefore these archived ELFs have identical original bytes, so the **existing 127-write v5 .pnach is the correct common executable patch**. Do not create a duplicate version-specific loader with inferred new offsets. The patch still selects CRC `1DF41F33`.
+
+**Evidence limits:** original-executable hashes are preserved Ghidra import metadata, not a fresh hash computed from re-ripped raw disc files. The two disc revisions may still differ in other files or in their bundled IRX modules; loading and installing from the *actual US v1.00 disc* remains to be tested. Never interpret matching ELF SHA-256 as proof all disc payloads are identical or the 1.00 run is tested.
 
 ## Stable PCSX2 restoration (v5)
 
