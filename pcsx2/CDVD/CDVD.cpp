@@ -49,6 +49,12 @@ static u8 s_nvram[NVRAM_SIZE];
 static constexpr u32 DEFAULT_MECHA_VERSION = 0x00020603;
 static u32 s_mecha_version = 0;
 
+// Opt-in research branch trace. Logs SCMD control flow, never parameter/secret payload bytes.
+// Set to false after capturing a test session to avoid persistent console traffic.
+static constexpr bool s_scmdTraceEnabled = true;
+static u32 s_scmdTraceSequence = 0;
+static u32 s_scmdTraceLastSequence = 0;
+
 static __fi void SetSCMDResultSize(u8 size) noexcept
 {
 	cdvd.SCMDResultCnt = size;
@@ -1690,6 +1696,9 @@ static __fi u8 cdvdRead18(void) // SDATAOUT
 		if (cdvd.SCMDResultPos >= cdvd.SCMDResultCnt)
 			cdvd.sDataIn |= 0x40;
 		ret = cdvd.SCMDResultBuff[cdvd.SCMDResultPos - 1];
+		if (s_scmdTraceEnabled && cdvd.SCMDResultPos == cdvd.SCMDResultCnt)
+			Console.WriteLn("[SCMDTRACE] #%u consumed cmd=%02X bytes=%u", s_scmdTraceLastSequence,
+				cdvd.sCommand, static_cast<unsigned int>(cdvd.SCMDResultCnt));
 	}
 	CDVD_LOG("cdvdRead18(SDataOut) %x (ResultC=%d, ResultP=%d)", ret, cdvd.SCMDResultCnt, cdvd.SCMDResultPos);
 
@@ -2427,6 +2436,17 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
 		CDVD_LOG("cdvdWrite16: SCMD %s (%x) (ParamP = %x)", sCmdName[rt], rt, cdvd.SCMDParamPos);
 
+		const u32 scmd_trace_id = ++s_scmdTraceSequence;
+		if (s_scmdTraceEnabled)
+		{
+			if (rt == 0x03 && cdvd.SCMDParamCnt != 0)
+				Console.WriteLn("[SCMDTRACE] #%u request cmd=%02X sub=%02X params=%u", scmd_trace_id,
+					rt, cdvd.SCMDParamBuff[0], static_cast<unsigned int>(cdvd.SCMDParamCnt));
+			else
+				Console.WriteLn("[SCMDTRACE] #%u request cmd=%02X params=%u", scmd_trace_id,
+					rt, static_cast<unsigned int>(cdvd.SCMDParamCnt));
+		}
+
 		cdvd.sCommand = rt;
 		std::memset(&cdvd.SCMDResultBuff[0], 0, sizeof(cdvd.SCMDResultBuff));
 
@@ -3077,6 +3097,13 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 		} // end switch
 
 		//Console.WriteLn("SCMD - 0x%x\n", rt);
+		if (s_scmdTraceEnabled)
+		{
+			s_scmdTraceLastSequence = scmd_trace_id;
+			const u8 first_result = (cdvd.SCMDResultCnt != 0) ? cdvd.SCMDResultBuff[0] : 0;
+			Console.WriteLn("[SCMDTRACE] #%u response cmd=%02X bytes=%u first=%02X (payload hidden)",
+				scmd_trace_id, rt, static_cast<unsigned int>(cdvd.SCMDResultCnt), first_result);
+		}
 		cdvd.SCMDParamPos = 0;
 		cdvd.SCMDParamCnt = 0;
 	}
