@@ -2933,6 +2933,8 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
 					if ((cdvd.mg_maxsize != cdvd.mg_size) || (cdvd.mg_size < 0x20) || (cdvd.mg_size != GetBufferU16(&cdvd.mg_buffer[0], 0x14)))
 					{
+						Console.Warning("[MGTRACE] HEADER_LENGTH_REJECT received=0x%X requested=0x%X declared=0x%X",
+							cdvd.mg_size, cdvd.mg_maxsize, GetBufferU16(&cdvd.mg_buffer[0], 0x14));
 						fail_pol_cal();
 						break;
 					}
@@ -2953,24 +2955,37 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
 					const size_t buf_size = sizeof(cdvd.mg_buffer);
 
-					if (bit_ofs < 0x20 || (size_t)bit_ofs > buf_size)
+					// Validate the BIT location against the bytes actually received before reading its fields.
+					// Keep the original rejection behavior; these diagnostics do not bypass MagicGate.
+					if (bit_ofs < 0x20 || static_cast<size_t>(bit_ofs) > buf_size ||
+						static_cast<size_t>(bit_ofs) > static_cast<size_t>(cdvd.mg_size) - 8)
 					{
+						Console.Warning("[MGTRACE] BIT_BOUNDS_REJECT offset=0x%X received=0x%X capacity=0x%zX",
+							bit_ofs, cdvd.mg_size, buf_size);
+						fail_pol_cal();
+						break;
+					}
+
+					const unsigned int block_count = GetBufferU16(&cdvd.mg_buffer[0], bit_ofs + 4);
+					const unsigned int declared_header_size = GetBufferU16(&cdvd.mg_buffer[0], 0x14);
+					const size_t calculated_header_size = static_cast<size_t>(block_count) * 16 + static_cast<size_t>(bit_ofs) + 8 + 16;
+					const unsigned int reserved5 = cdvd.mg_buffer[bit_ofs + 5];
+					const unsigned int reserved6 = cdvd.mg_buffer[bit_ofs + 6];
+					const unsigned int reserved7 = cdvd.mg_buffer[bit_ofs + 7];
+					Console.WriteLn("[MGTRACE] BIT offset=0x%X blockCount=%u reserved=%02X,%02X,%02X calculatedHeader=0x%zX declaredHeader=0x%X",
+						bit_ofs, block_count, reserved5, reserved6, reserved7, calculated_header_size, declared_header_size);
+					if (reserved5 || reserved6 || reserved7 || calculated_header_size != declared_header_size)
+					{
+						Console.Warning("[MGTRACE] BIT_FORMAT_REJECT reservedNonzero=%d lengthMismatch=%d",
+							(reserved5 || reserved6 || reserved7) ? 1 : 0, (calculated_header_size != declared_header_size) ? 1 : 0);
 						fail_pol_cal();
 						break;
 					}
 
 					const size_t kbit_ofs = bit_ofs - 0x20;
 					const size_t kcon_ofs = bit_ofs - 0x10;
-
 					std::memcpy(&cdvd.mg_kbit[0], &cdvd.mg_buffer[kbit_ofs], 0x10);
 					std::memcpy(&cdvd.mg_kcon[0], &cdvd.mg_buffer[kcon_ofs], 0x10);
-
-					if ((cdvd.mg_buffer[bit_ofs + 5] || cdvd.mg_buffer[bit_ofs + 6] || cdvd.mg_buffer[bit_ofs + 7]) ||
-						(GetBufferU16(&cdvd.mg_buffer[0],bit_ofs + 4) * 16 + bit_ofs + 8 + 16 != GetBufferU16(&cdvd.mg_buffer[0], 0x14)))
-					{
-						fail_pol_cal();
-						break;
-					}
 				}
 				cdvd.SCMDResultBuff[0] = 0; // 0 complete ; 1 busy ; 0x80 error
 				break;
