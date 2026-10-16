@@ -2426,6 +2426,14 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 		u8 tmp;
 
 		CDVD_LOG("cdvdWrite16: SCMD %s (%x) (ParamP = %x)", sCmdName[rt], rt, cdvd.SCMDParamPos);
+		// Record only command timing/lengths, not authentication payloads, keys, or ciphertext.
+		const bool trace_mg = (rt >= 0x80 && rt <= 0x97);
+		if (trace_mg)
+		{
+			Console.WriteLn("[MGFLOW] CALL scmd=%02X inputLength=%u dataType=%d buffered=0x%X expected=0x%X",
+				static_cast<unsigned int>(rt), static_cast<unsigned int>(cdvd.SCMDParamCnt),
+				cdvd.mg_datatype, cdvd.mg_size, cdvd.mg_maxsize);
+		}
 
 		cdvd.sCommand = rt;
 		std::memset(&cdvd.SCMDResultBuff[0], 0, sizeof(cdvd.SCMDResultBuff));
@@ -3090,6 +3098,23 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				Console.WriteLn("SCMD Unknown %x", rt);
 				break;
 		} // end switch
+
+		if (trace_mg)
+		{
+			// sceMgReadData returns raw buffered bytes; its first byte is NOT a status code.
+			if (rt == 0x8E)
+			{
+				Console.WriteLn("[MGFLOW] RETURN scmd=%02X transferBytes=%u dataType=%d remaining=0x%X",
+					static_cast<unsigned int>(rt), static_cast<unsigned int>(cdvd.SCMDResultCnt),
+					cdvd.mg_datatype, cdvd.mg_size);
+			}
+			else
+			{
+				Console.WriteLn("[MGFLOW] RETURN scmd=%02X result=%02X resultLength=%u dataType=%d buffered=0x%X expected=0x%X",
+					static_cast<unsigned int>(rt), static_cast<unsigned int>(cdvd.SCMDResultBuff[0]),
+					static_cast<unsigned int>(cdvd.SCMDResultCnt), cdvd.mg_datatype, cdvd.mg_size, cdvd.mg_maxsize);
+			}
+		}
 
 		//Console.WriteLn("SCMD - 0x%x\n", rt);
 		cdvd.SCMDParamPos = 0;
