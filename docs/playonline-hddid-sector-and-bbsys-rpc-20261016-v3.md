@@ -1,0 +1,23 @@
+# PlayOnline DNAS -404: genuine HDDID structure, dump tools and BBSYS101 consumer (2026-10-16, v3)
+
+**Branch** `note-working/magicgate-scmd-boundary-trace-20261016`. Extends [runtime trace v2](playonline-dnas-hdd-binding-trace-findings-20261016-v2.md). No code modified for this note.
+
+## Source-grounded findings
+
+1. [PS2 Developer Wiki HDD security sector](https://www.psdevwiki.com/ps2/Hard_Drive#Security_Sector) describes a proprietary record returned by Sony ATA command `0x8E`, feature `0xEC`. It is **not** an ordinary sector addressed via LBA and therefore should not be expected inside a raw HDD image or obtained by regular raw sector copy.
+2. A genuine record begins with `Sony Computer Entertainment Inc.` at `0x00..0x1F`, model `0x20..0x2F`, GB tag `0x30..0x33`; it has Sony drive serial at `0x40..0x43`, varying DNAS-observed fields through `0x4F`, DNAS/encryption-related `0x50..0x5F` and additional `0x60..0x7F`. The detailed meaning of those latter fields remains unproven.
+3. [PS2 Developer Wiki command notes](https://www.psdevwiki.com/ps2/Hard_Drive#Sony_custom_ATA_commands): **for the official ATAD driver's genuine-drive command check alone**, a successful `0x8E/0xEC` and 512-byte all-zero return can be sufficient. This is NOT proof that DNAS accepts zeros. DNAS `-404` means HDD/console binding mismatch according to historical documented code tables.
+4. [PSX-Place reverse-engineering worklog by uyjulian (Apr 9, 2025, post 551)](https://www.psx-place.com/threads/julians-various-ps2-projects-worklog.20977/page-28): **BBSYS101 / Sys1_driver02** uses SIF RPC service ID `0x80000F02`; operation `0x39B` returns ATA identify result plus obfuscated 8 bytes from HDDID `0x40..0x47` and 16 bytes from `0x50..0x5F`, then 8 null bytes. Operation `0x18E` zeroes 64 output bytes. This is third-party static RE evidence, not independently verified in the user's specific DNAS binaries. It gives concrete RPC IDs and exact offsets for targeted IOP/EE instrumentation.
+5. [PSX-Place PS2 ID Dumper](https://www.psx-place.com/resources/id-dumper.455/) is an actual tool to dump genuine HDD/console IDs. It produces `HDD_ID.BIN` of **128 bytes**, not necessarily a 512-byte file. Requires a functioning genuine Sony HDD and network adapter plus proprietary drivers `dev9.irx`, `atad.irx`, `hdd.irx` sourced separately from user-owned hardware/software, not included with tool. Do not request users to post unredacted IDs publicly.
+6. PCSX2 `pcsx2/DEV9/ATA/ATA_State.cpp` accepts any file with `length <= sizeof(sceSec)` (512) at `Path::ReplaceExtension(hddPath, "hddid")`, copies it into zero-initialized 512-byte `sceSec`; therefore a genuine 128-byte `HDD_ID.BIN` may be copied to the HDD image's sibling name `HDDOSD.hddid` and the remaining 384 bytes remain zero. No need to invent a padded 512-byte file, and no implementation change is required to use this dump. **Absent override** defaults to fixed HDD serial `00 00 00 01` and all zero bytes at `0x50..0x7F`.
+7. Finding a public HDDID dump from an unrelated console/HDD pair may be helpful for the *record shape* but won't necessarily satisfy console-specific DNAS binding. A HDDID from an arcade MAME dump is not automatically compatible with PlayOnline or the BIOS console identity. Do not blindly swap sensitive IDs or equate this with a completed fix.
+8. Another [PS2 Developer Wiki DNAS authentication note](https://www.psdevwiki.com/ps2/Hard_Drive#DNAS_Authentication) identifies separate `__net/etc/access_flag*` data sectors (`0x41008, 0x4100C, 0x41010` depending on configuration); these are separate **ordinary disk data** and must not be conflated with the vendor-identify response.
+
+## Next smallest justified investigation
+
+- Preserve user log `Pasted text(20261016-031224).txt` privately. It shows 256 S-commands and several ATA `0x8E/0xEC` requests but **does not locate the actual DNAS -404 return PC, nor prove a live network response**.
+- If matched genuine Sony HDD and console are available, use legitimate dumping route; keep IDs out of repo/logs; a 128-byte HDDID is compatible with current PCSX2 loader. If not, further web hunting random `.hddid` files is not the primary goal.
+- Trace first appearance of `-404` in guest code and, where present, `BBSYS101` RPC service `0x80000F02`, method `0x39B`. Correlate call with ATA HDDID read and with the guest BIOS console ID and network state. Only make PCSX2 behavior changes once specific discrepancy identified.
+- Scope is DNAS/MagicGate and actual PlayOnline failure. No Dragon private storage MMIO work unless this path traces into it.
+
+**Status:** source-only research and handoff; no build/test or new Ghidra metadata from this note.
