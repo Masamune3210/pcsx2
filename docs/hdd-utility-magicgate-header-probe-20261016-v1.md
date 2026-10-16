@@ -1,7 +1,7 @@
 # HDD Utility MagicGate header validation probe (2026-10-16)
 
 **Branch:** `note-working/magicgate-hdd-utility-header-validation-20261016` from `testing`.
-**Status:** Focused MagicGate source instrumentation pending local build and HDD Utility v1.10 SCUS-97395 rerun. PlayOnline/DNAS is expressly parked.
+**Status:** Source instrumentation **committed** as `04841c4dac9ec51cb7321bc3e13aff5ff0df1a5d` in `pcsx2/CDVD/CDVD.cpp`. Local PCSX2 compile and HDD Utility v1.10 SCUS-97395 runtime **not yet verified**. PlayOnline/DNAS is expressly parked.
 
 ## Why this exists
 
@@ -23,6 +23,6 @@ The current SCMD implementation is largely a stub: authentication commands `0x80
 
 ## Next step
 
-Instrument **existing code** in `pcsx2/CDVD/CDVD.cpp`, specifically distinguish initial header mismatch, BIT location/length and reserved bytes, logging lengths/flags but not protected keys/data. Add bounds safety for rejected header before dereferencing the BIT fields. Build user's PCSX2 fork and run HDD Utility v1.10 with unchanged disc and `testdrive.raw`; collect `[MGTRACE]` and adjacent `[MG]` lines. When precise culprit is known, determine whether the KELF header is genuinely encrypted (due to missing MechaCon authentication) or PCSX2's parser has wrong offsets for this header variant. Never assume hardcoded success is an acceptable emulator fix.
+The source now emits `[MGTRACE] HEADER_LENGTH_REJECT`, `BIT_BOUNDS_REJECT`, and `BIT offset=... blockCount=... reserved=... calculatedHeader=... declaredHeader=...` followed by `BIT_FORMAT_REJECT` where applicable. It preserves the existing result `0x80` and avoids logging protected key bytes or bypassing authentication. It also guards the BIT fields against exceeding received data, and delays copying the two key buffers until format checks pass. **NEXT:** build branch and run HDD Utility v1.10 with unchanged disc and `testdrive.raw`; collect `[MGTRACE]` and adjacent `[MG]` lines. Compare actual count/reserved bytes against required 20 entries at 0x48, then determine crypto versus parser problem. When precise culprit is known, determine whether the KELF header is genuinely encrypted (due to missing MechaCon authentication) or PCSX2's parser has wrong offsets for this header variant. Never assume hardcoded success is an acceptable emulator fix.
 
 No user-supplied game/media or proprietary key material in GitHub. DNAS secondary branch remains untouched.
