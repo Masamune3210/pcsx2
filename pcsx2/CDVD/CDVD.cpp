@@ -2410,6 +2410,25 @@ static __fi void cdvdWrite14(u8 rt)
 		Console.Warning("*PCSX2*: Unimplemented PS1 mode DISC SPEED = STANDARD");
 }
 
+// Full MagicGate trace for controlled debugging: no suppression of request or response bytes.
+static void cdvdTraceMagicGateBytes(const char* name, const u8* bytes, size_t length)
+{
+	Console.WriteLn("[MGRAW] %s length=0x%zX", name, length);
+	for (size_t offset = 0; offset < length; offset += 16)
+	{
+		const size_t count = std::min<size_t>(16, length - offset);
+		std::string row;
+		row.reserve(count * 3);
+		for (size_t i = 0; i < count; i++)
+		{
+			if (i)
+				row += ' ';
+			row += fmt::format("{:02X}", bytes[offset + i]);
+		}
+		Console.WriteLn("[MGRAW] %s +0x%04zX: %s", name, offset, row.c_str());
+	}
+}
+
 static __fi void fail_pol_cal()
 {
 	Console.Error("[MG] ERROR - Make sure the file is already decrypted!!!");
@@ -2426,13 +2445,22 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 		u8 tmp;
 
 		CDVD_LOG("cdvdWrite16: SCMD %s (%x) (ParamP = %x)", sCmdName[rt], rt, cdvd.SCMDParamPos);
-		// Record only command timing/lengths, not authentication payloads, keys, or ciphertext.
+		// Record complete MagicGate protocol requests, responses, and buffered data.
 		const bool trace_mg = (rt >= 0x80 && rt <= 0x97);
 		if (trace_mg)
 		{
 			Console.WriteLn("[MGFLOW] CALL scmd=%02X inputLength=%u dataType=%d buffered=0x%X expected=0x%X",
 				static_cast<unsigned int>(rt), static_cast<unsigned int>(cdvd.SCMDParamCnt),
 				cdvd.mg_datatype, cdvd.mg_size, cdvd.mg_maxsize);
+			cdvdTraceMagicGateBytes("SCMD_REQUEST", cdvd.SCMDParamBuff,
+				std::min<size_t>(cdvd.SCMDParamCnt, sizeof(cdvd.SCMDParamBuff)));
+			// Log full staged data at each consumer; 0x8D writes are already captured above.
+			if (rt == 0x88 || rt == 0x8F || rt == 0x91 || rt == 0x93 || rt == 0x8E)
+			{
+				const size_t buffered = static_cast<size_t>(std::max(cdvd.mg_size, 0));
+				cdvdTraceMagicGateBytes("MG_STAGED_BUFFER", cdvd.mg_buffer,
+					std::min(buffered, sizeof(cdvd.mg_buffer)));
+			}
 		}
 
 		cdvd.sCommand = rt;
@@ -3101,6 +3129,19 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
 		if (trace_mg)
 		{
+			cdvdTraceMagicGateBytes("SCMD_RESPONSE", cdvd.SCMDResultBuff,
+				std::min<size_t>(cdvd.SCMDResultCnt, sizeof(cdvd.SCMDResultBuff)));
+			if ((rt == 0x88 || rt == 0x8F) && cdvd.SCMDResultBuff[0] == 0)
+			{
+				cdvdTraceMagicGateBytes("MG_KBIT", cdvd.mg_kbit, sizeof(cdvd.mg_kbit));
+				cdvdTraceMagicGateBytes("MG_KCON", cdvd.mg_kcon, sizeof(cdvd.mg_kcon));
+			}
+			if (rt == 0x91 && cdvd.SCMDResultBuff[0] == 0)
+			{
+				const size_t buffered = static_cast<size_t>(std::max(cdvd.mg_size, 0));
+				cdvdTraceMagicGateBytes("MG_BIT_RESULT", cdvd.mg_buffer,
+					std::min(buffered, sizeof(cdvd.mg_buffer)));
+			}
 			// sceMgReadData returns raw buffered bytes; its first byte is NOT a status code.
 			if (rt == 0x8E)
 			{
