@@ -75,6 +75,52 @@ void ATA::IO_Read()
 		pxAssert(false);
 		abort();
 	}
+	// Research-only DNAS access-flag trace. The LBA pairs are taken from
+	// the documented access_flag/access_flag2/access_flag25 checks.
+	// Do not log sector data or identifiers. This code is read-only.
+	static constexpr u64 dnasAccessFlagPairs[] = {0x41008ULL, 0x4100CULL, 0x41010ULL};
+	if (nsector > 0)
+	{
+		const u64 readStart = static_cast<u64>(lba);
+		const u64 readEnd = readStart + static_cast<u64>(nsector);
+		for (const u64 pairStart : dnasAccessFlagPairs)
+		{
+			if (readStart >= pairStart + 2 || readEnd <= pairStart)
+				continue;
+			if (readStart <= pairStart && readEnd >= pairStart + 2)
+			{
+				const size_t pairByteOffset = static_cast<size_t>(pairStart - readStart) * 512;
+				const u8* first = readBuffer + pairByteOffset;
+				const u8* second = first + 512;
+				bool first16Equal = true;
+				bool first16AllZero = true;
+				bool second16AllZero = true;
+				for (size_t i = 0; i < 16; i++)
+				{
+					if (first[i] != second[i])
+						first16Equal = false;
+					if (first[i] != 0)
+						first16AllZero = false;
+					if (second[i] != 0)
+						second16AllZero = false;
+				}
+				Console.WriteLn("[DNASLBA] pair=%05llX read=%llX sectors=%llu first16equal=%u first16zero=%u second16zero=%u",
+					static_cast<unsigned long long>(pairStart),
+					static_cast<unsigned long long>(readStart),
+					static_cast<unsigned long long>(nsector),
+					static_cast<unsigned int>(first16Equal),
+					static_cast<unsigned int>(first16AllZero),
+					static_cast<unsigned int>(second16AllZero));
+			}
+			else
+			{
+				Console.WriteLn("[DNASLBA] partial pair=%05llX read=%llX sectors=%llu (no byte comparison)",
+					static_cast<unsigned long long>(pairStart),
+					static_cast<unsigned long long>(readStart),
+					static_cast<unsigned long long>(nsector));
+			}
+		}
+	}
 	{
 		std::lock_guard ioSignallock(ioMutex);
 		ioRead = false;
