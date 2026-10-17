@@ -3045,7 +3045,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
                 SetSCMDResultSize(1);
                 // BIOS OSDSYS uses 0x80/0x81/0x82/0x83/0x8F with no staged
                 // KELF input. Previously 0x8F returned success; the KELF worker
-                // accidentally rejected it, making PS2 cards appear as PocketStations.
+                // rejected it. The affected build also identifies PS2 cards as PocketStations.
                 // Keep this legacy response limited to an empty, non-content
                 // handshake. It does not claim cryptographic card verification.
                 if (cdvd.mg_datatype == 0 && s_mgHeader.legacyAuthCompletionPending &&
