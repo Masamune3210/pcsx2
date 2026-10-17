@@ -29,3 +29,13 @@ The emulator branch commits and standalone CI workflow exist, but **no successfu
 Potential follow-up work: validate per-stage SIO2 framing and exact retail BIOS expectations; support other MagicGate key modes if needed; consider per-card identity persistence/savestates; F1/F2 card-binding remains out of scope, as it was before.
 
 Avoid the withdrawn one-shot 0x8F success workaround on `note-working/magicgate-bios-card-auth-completion-20261017`. It was reverted for being cryptographically incorrect.
+
+## Compile correction: SIO2 card slot access (2026-10-17)
+
+A Windows/MSVC build surfaced six diagnostics in `pcsx2/SIO/Memcard/MemoryCardProtocol.cpp`: `C2065 g_MultitapArr` (three occurrences), `C2737 slot` uninitialized, and `C2660 Runtime::ResetCard/SelectCardKey` apparent argument-count mismatches. All come from using `g_MultitapArr` without the multitap header in the protocol implementation, and its dependent initializer/call-expression errors. No change to MagicGate calculations was needed.
+
+**Commit `bee3eef237b71a5623b5018f7da8b750d5736670`** resolves the selected card slot directly from `mcd->port` and `mcd->slot`. `Sio2::Memcard()` already sets `mcd = &mcds[port][mtap.GetMemcardSlot()]` before dispatching the card command, and `_mcd::port/slot` are initialized in `Sio2::Init`. This uses authoritative selected-card identity, avoids unnecessary dependence on `g_MultitapArr`, and preserves the command responses and existing verbose logging.
+
+Source review also confirmed that Sio2::Memcard pre-pushes **two** response bytes before the F0 handler, so the handler's first `0x2B` is at output byte index 3, as expected by `SECRMAN::card_auth_read`. No framing change was made.
+
+**Verification:** The MSVC compiler diagnostic fix is committed but awaits user rebuild. A standalone local compile attempt was blocked by container DNS resolving raw.githubusercontent.com, not by a compiler error; no green test result is claimed.
