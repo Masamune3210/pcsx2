@@ -2920,8 +2920,11 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
                 s_mgHeader.cardAuthSelected = true;
                 cdvd.mg_datatype = 0;
                 MagicGateCrypto::Keys cardKeys;
-                const bool haveKeys = cdvd.SCMDParamCnt == 1 && cdvdLoadMagicGateKeys(cardKeys);
-                const bool started = haveKeys && MagicGateCardAuth::g_runtime.StartMecha(cardKeys, cdvd.SCMDParamBuff[0]);
+                // A hardware reset is valid even with unavailable external
+                // crypto keys. The card rejects F7 key selection in that case.
+                cdvdLoadMagicGateKeys(cardKeys);
+                const bool started = cdvd.SCMDParamCnt == 1 &&
+                    MagicGateCardAuth::g_runtime.StartMecha(cardKeys, cdvd.SCMDParamBuff[0]);
                 if (!started)
                     MagicGateCardAuth::g_runtime.mecha = {};
                 cdvd.SCMDResultBuff[0] = started ? 0 : 0x80;
