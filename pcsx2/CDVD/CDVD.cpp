@@ -52,7 +52,7 @@ static bool cdvdLoadMagicGateKeys(MagicGateCrypto::Keys& keys)
     auto fp = FileSystem::OpenManagedCFileTryIgnoreCase(path.c_str(), "rb", &error);
     if (!fp)
     {
-        Console.Warning("[MG] Missing BIOS-adjacent .mgkeys file; KELF crypto unavailable");
+        Console.Warning("[MG] Cannot open MagicGate key file: %s (selected BIOS: %s); KELF crypto unavailable", path.c_str(), BiosPath.c_str());
         return false;
     }
     std::string contents;
