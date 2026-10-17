@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "SIO/Memcard/MemoryCardProtocol.h"
+#include "CDVD/MagicGateCardAuth.h"
 
 #include "SIO/Sio.h"
 #include "SIO/Sio2.h"
@@ -433,80 +434,71 @@ void MemoryCardProtocol::UnknownBoot()
 
 void MemoryCardProtocol::AuthXor()
 {
-	MC_LOG.WriteLn("%s", __FUNCTION__);
-	PS1_FAIL();
-	const u8 modeByte = g_Sio2FifoIn.front();
-	g_Sio2FifoIn.pop_front();
+    MC_LOG.WriteLn("%s", __FUNCTION__);
+    PS1_FAIL();
+    // SECRMAN exchanges 81 F0 00..14 with the emulated card. The card
+    // computes its own challenges; CDVD/MechaCon verifies the responses.
+    if (g_Sio2FifoIn.empty())
+        return;
+    const u8 modeByte = g_Sio2FifoIn.front();
+    g_Sio2FifoIn.pop_front();
+    const unsigned port = static_cast<unsigned>(g_Sio2.port);
+    const unsigned slot = static_cast<unsigned>(g_MultitapArr.at(g_Sio2.port).GetMemcardSlot());
+    const bool isRead = modeByte == 0x01 || modeByte == 0x02 || modeByte == 0x04 ||
+        modeByte == 0x0f || modeByte == 0x11 || modeByte == 0x13;
+    const bool isWrite = modeByte == 0x06 || modeByte == 0x07 || modeByte == 0x0b;
+    MagicGateCrypto::B8 input{}, output{};
+    bool validPacket = !isWrite || g_Sio2FifoIn.size() >= 9;
+    if (isWrite && validPacket)
+    {
+        u8 checksum=0;
+        for (unsigned i=0;i<8;i++)
+        {
+            const u8 value=g_Sio2FifoIn.front();
+            g_Sio2FifoIn.pop_front();
+            input[7-i]=value; // SECRMAN serializes each 8-byte block in reverse.
+            checksum^=value;
+        }
+        const u8 incomingChecksum=g_Sio2FifoIn.front();
+        g_Sio2FifoIn.pop_front();
+        validPacket = checksum == incomingChecksum;
+    }
+    const bool valid = validPacket && mcd->IsPresent() && !mcd->IsPSX() &&
+        MagicGateCardAuth::g_runtime.CardStep(port,slot,modeByte,
+            isWrite?&input:nullptr,isRead?&output:nullptr);
 
-	switch (modeByte)
-	{
-		// When encountered, the command length in RECV3 is guaranteed to be 14,
-		// and the PS2 is expecting us to XOR the data it is about to send.
-		case 0x01:
-		case 0x02:
-		case 0x04:
-		case 0x0f:
-		case 0x11:
-		case 0x13:
-		{
-			// Long + XOR
-			g_Sio2FifoOut.push_back(0x00);
-			g_Sio2FifoOut.push_back(0x2b);
-			u8 xorResult = 0x00;
-
-			for (size_t xorCounter = 0; xorCounter < 8; xorCounter++)
-			{
-				const u8 toXOR = g_Sio2FifoIn.front();
-				g_Sio2FifoIn.pop_front();
-				xorResult ^= toXOR;
-				g_Sio2FifoOut.push_back(0x00);
-			}
-
-			g_Sio2FifoOut.push_back(xorResult);
-			g_Sio2FifoOut.push_back(mcd->term);
-			break;
-		}
-		// When encountered, the command length in RECV3 is guaranteed to be 5,
-		// and there is no attempt to XOR anything.
-		case 0x00:
-		case 0x03:
-		case 0x05:
-		case 0x08:
-		case 0x09:
-		case 0x0a:
-		case 0x0c:
-		case 0x0d:
-		case 0x0e:
-		case 0x10:
-		case 0x12:
-		case 0x14:
-		{
-			// Short + No XOR
-			The2bTerminator(5);
-			break;
-		}
-		// When encountered, the command length in RECV3 is guaranteed to be 14,
-		// and the PS2 is about to send us data, BUT the PS2 does NOT want us
-		// to send the XOR, it wants us to send the 0x2b and terminator as the
-		// last two bytes.
-		case 0x06:
-		case 0x07:
-		case 0x0b:
-		{
-			// Long + No XOR
-			The2bTerminator(14);
-			break;
-		}
-		default:
-			Console.Warning("%s(queue) Unexpected modeByte (%02X), please report to the PCSX2 team", __FUNCTION__, modeByte);
-			break;
-	}
+    if (isRead)
+    {
+        g_Sio2FifoOut.push_back(0x00);
+        g_Sio2FifoOut.push_back(0x2b);
+        u8 checksum=0;
+        for (int i=7;i>=0;i--)
+        {
+            const u8 value=valid?output[i]:0;
+            checksum^=value;
+            g_Sio2FifoOut.push_back(value);
+        }
+        g_Sio2FifoOut.push_back(checksum);
+        g_Sio2FifoOut.push_back(valid?mcd->term:0x66);
+    }
+    else
+    {
+        // Long card-auth writes return 14 bytes, short commands five.
+        // A rejected stage reports 0x66; it must never advance the auth state.
+        const size_t replyLength=isWrite?14:5;
+        while (g_Sio2FifoOut.size() < replyLength-2)
+            g_Sio2FifoOut.push_back(0);
+        g_Sio2FifoOut.push_back(0x2b);
+        g_Sio2FifoOut.push_back(valid?mcd->term:0x66);
+    }
 }
 
 void MemoryCardProtocol::AuthF3()
 {
 	MC_LOG.WriteLn("%s", __FUNCTION__);
 	PS1_FAIL();
+    MagicGateCardAuth::g_runtime.ResetCard(static_cast<unsigned>(g_Sio2.port),
+        static_cast<unsigned>(g_MultitapArr.at(g_Sio2.port).GetMemcardSlot()));
 
 	if (!mcd->IsPresent())
 	{
@@ -524,7 +516,15 @@ void MemoryCardProtocol::AuthF3()
 
 void MemoryCardProtocol::AuthF7()
 {
-	MC_LOG.WriteLn("%s", __FUNCTION__);
-	PS1_FAIL();
-	The2bTerminator(5);
+    MC_LOG.WriteLn("%s", __FUNCTION__);
+    PS1_FAIL();
+    if (g_Sio2FifoIn.empty()) return;
+    const u8 mode=g_Sio2FifoIn.front();
+    g_Sio2FifoIn.pop_front();
+    const bool valid=mcd->IsPresent() && !mcd->IsPSX() &&
+        MagicGateCardAuth::g_runtime.SelectCardKey(static_cast<unsigned>(g_Sio2.port),
+            static_cast<unsigned>(g_MultitapArr.at(g_Sio2.port).GetMemcardSlot()),mode);
+    while (g_Sio2FifoOut.size()<3) g_Sio2FifoOut.push_back(0);
+    g_Sio2FifoOut.push_back(0x2b);
+    g_Sio2FifoOut.push_back(valid?mcd->term:0x66);
 }
