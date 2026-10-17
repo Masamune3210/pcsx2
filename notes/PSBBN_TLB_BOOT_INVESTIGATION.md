@@ -136,6 +136,30 @@ Relevant exact code:
 
 **Next diagnostic:** From the earliest repeated TLBWR in the *interpreter* run, capture guest PC and decoded nearby instructions, `Random`, `Wired`, `EntryHi`, both `EntryLo` values, `Index`, `Status`, `Cause`, `EPC`, `BadVAddr`, plus the preceding TLB exceptions and changes. Verify whether Random should move and whether the guest code is attempting to initialize/flush entries or service recurring faults. Collect only bounded samples, not another million lines.
 
+### Recovered PSBBN v0.32 osdboot ELF and second stage (2026-10-17)
+
+Using the user's extracted `hdd0:/__system/p2lboot/osdboot.elf` (KELF) **plus the full verbose PCSX2 MagicGate log**, reconstructed the authenticated plaintext directly from the decrypted BIT and `SCMD 0x8E` output. **No guesswork and no console keys needed to reproduce from this log.**
+
+Original KELF: 1,097,904 bytes, SHA256 `164a607b2496c6079f9d299584be1820aef59141985b1ede05207855698d376f`.
+Parsed PS2SDK `SecrKELFHeader_t` (LE): content_size=0x10BD00, KELF_header_size=0x03B0, unknown5=0x0B00, flags=0x022C, BIT_count=0, mg_zones=1 (Japan). Decrypted BIT table at ~1248.435 in user's trace has block_count=53, table length 856 bytes, content length 1,096,960 bytes. Descriptors completely cover content without gaps: 29 flagged=3 blocks of 6,128 total protected bytes, 24 flagged=0 unprotected blocks of 1,090,832 bytes. The logged verified content plaintext totals exactly 6,128 bytes for this KELF. Applying it to protected blocks, and retaining unprotected bytes directly, produces an actual `ELF32 MIPS little-endian EE` recognized by `file` and `readelf`.
+
+Recovered EE ELF: size=1,096,960, SHA256 `ce10a21c5c741fcc4b0a4f4561e8df516558a1b6d1a3ffa7d09af3a794c72bed`; entry=0x00800000; main PT_LOAD=0x00800000, size=0x10A9BC; secondary PT_LOAD=0x0090AA00. Matches the guest `loadelf` output in the original trace. Do not load the original KELF directly into Ghidra.
+
+The EE ELF's `.text` is only 0x258 bytes. Disassembly reveals an additional **XXTEA-style self-decrypting second stage** using a key stored in its own `.data` (NOT a MagicGate key); delta 0x9E3779B9 from `.sdata`, ciphertext [EE 0x00800290,0x0090A990), 272,832 LE u32 words, six XXTEA rounds. Bootstrap copies this plaintext to 0x01000000 and jumps to it.
+
+Recovered raw second-stage EE image: 1,091,328 bytes, SHA256 `423e87063db94a01c425bfb67719a2410c1d27fa36fbe08fbadb1c3f5bf85eff`. **Ghidra import as raw R5900 little-endian, guest base 0x01000000**.
+
+Two complete, valid IOP IRX module ELFs (MIPS little endian e_type 0xFF80, with relocation sections intact) were carved from stage 2:
+- stage2 offset 0x63B30, mapped position 0x01063B30, size 275,200 bytes, SHA256 `8e1751b9421c9f05d59716c5a2ff1398320122a5c3e682028da5b397c460989a`.
+- stage2 offset 0xA6E30, mapped position 0x010A6E30, size 310,832 bytes, SHA256 `bcf8b05b3263c4427638a9859f299bd61cff186217d9e8f164ac2688d1577e4d`.
+Import these IRXs using the separate IOP loader (not EE); both contain text pointing to `IOPBTCONF`.
+
+PS2 Linux strings are visible in the second-stage image, including the original memory-card startup warning.
+
+**Still unresolved:** the repeatedly faulting guest PC `0x801A4930` (physical alias 0x001A4930) is outside the recovered stage1 main LOAD, and is not inherently at the raw stage2 base. Map the code's actual load chain before assigning that PC to a named binary. Do not assume completing KELF/XXTEA extraction solves the TLB issue.
+
+A separate pure-Python reproducibility helper `recover_psbbn_osdboot.py` was generated in this conversation, taking the extracted KELF and the PCSX2 log and generating the four files; code and commercial binary dumps have **not** been committed.
+
 ## First next step
 
 Collect a **non-destructive baseline run** of PSBBN (Definitive Project) on the current fork using a disposable HDD image, identifying whether the first failure occurs in HDD/ATA/MBR/KELF or at Linux EE TLB initialization. In parallel, inspect PCSX2's existing TLB logic and review closed PR #14847 *line by line* to extract hypotheses for testable fixes.
