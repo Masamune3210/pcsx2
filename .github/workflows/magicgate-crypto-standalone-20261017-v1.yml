@@ -5,6 +5,7 @@ on:
     paths:
       - 'pcsx2/CDVD/MagicGateCrypto.h'
       - 'tools/magicgate/SmokeMagicGateCrypto.cpp'
+      - 'tools/magicgate/VerifyMagicGateFirstBlock_20261017_v1.cpp'
       - '.github/workflows/magicgate-crypto-standalone-20261017-v1.yml'
 permissions:
   contents: read
@@ -15,5 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compile independent DES/3DES KATs
         run: c++ -std=c++20 -O2 -Wall -Wextra -Werror -Ipcsx2 tools/magicgate/SmokeMagicGateCrypto.cpp -o /tmp/magicgate-crypto-smoke
+      - name: Compile private-fixture regression runner (fixture stays local)
+        run: c++ -std=c++20 -O2 -Wall -Wextra -Werror -Ipcsx2 tools/magicgate/VerifyMagicGateFirstBlock_20261017_v1.cpp -o /tmp/magicgate-content-regression
       - name: Run public synthetic vectors and reject invalid headers
         run: /tmp/magicgate-crypto-smoke
