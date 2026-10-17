@@ -666,6 +666,10 @@ void cdvdGetDiscInfo(std::string* out_serial, std::string* out_elf_path, std::st
 
 void cdvdReadKey(u8, u16, u32 arg2, u8* key)
 {
+	// DVD Player installation issues a special read-key mode just before a
+	// subsequent IOP reboot. Record the decrypt register without altering it.
+	if (arg2 == 4246)
+		DevCon.WriteLn("[DVD_INSTALL_PROBE] ReadKey 4246 pre-state: decSet=%02X keyXor=%02X discType=%02X sector=%u", cdvd.decSet, cdvd.KeyXor, cdvd.DiscType, cdvd.CurrentSector);
 	const std::string DiscSerial = VMManager::GetDiscSerial();
 
 	s32 numbers = 0, letters = 0;
@@ -1130,6 +1134,8 @@ void cdvdNewDiskCB()
 	}
 }
 
+static unsigned s_dvdInstallDecProbeRemaining = 12;
+
 static void mechaDecryptBytes(u32 madr, int size)
 {
 	int shiftAmount = (cdvd.decSet >> 4) & 7;
@@ -1234,6 +1240,13 @@ int cdvdReadSector()
 		memcpy(mdest, &cdr.Transfer[0], cdvd.BlockSize);
 	}
 
+	// Diagnose whether CDVD decryption persists into ordinary filesystem reads
+	// after DVD Player's special ReadKey(4246) and subsequent IOP reboots.
+	if (cdvd.decSet && s_dvdInstallDecProbeRemaining > 0)
+	{
+		--s_dvdInstallDecProbeRemaining;
+		DevCon.WriteLn("[DVD_INSTALL_PROBE] sector decrypt: decSet=%02X keyXor=%02X sector=%u blockSize=%u", cdvd.decSet, cdvd.KeyXor, cdvd.CurrentSector, cdvd.BlockSize);
+	}
 	// decrypt sector's bytes
 	if (cdvd.decSet)
 		mechaDecryptBytes(HW_DMA3_MADR, cdvd.BlockSize);
@@ -3341,6 +3354,8 @@ static __fi void cdvdWrite18(u8 rt)
 static __fi void cdvdWrite3A(u8 rt)
 { // DEC-SET
 	CDVD_LOG("cdvdWrite3A(DecSet) %x", rt);
+	DevCon.WriteLn("[DVD_INSTALL_PROBE] decSet write: old=%02X new=%02X sector=%u", cdvd.decSet, rt, cdvd.CurrentSector);
+	s_dvdInstallDecProbeRemaining = 12;
 	cdvd.decSet = rt;
 }
 
