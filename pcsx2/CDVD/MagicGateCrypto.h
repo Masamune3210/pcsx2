@@ -184,7 +184,8 @@ inline bool fail(HeaderResult& out, const char* what) {
 } // Detail
 
 // Plain KEY=HEX file. No key values are stored in PCSX2 or written to logs.
-inline bool ParseKeys(const std::string& file,Keys& output,std::string& error) {
+inline bool ParseKeys(const std::string& file,Keys& output,std::string& error,
+    std::vector<std::string>* ignoredFields=nullptr) {
     struct Spec {const char* name; std::uint8_t* buffer;std::size_t len;};
     Keys tmp{};
     Spec specs[]={
@@ -211,7 +212,10 @@ inline bool ParseKeys(const std::string& file,Keys& output,std::string& error) {
         const std::string name=line.substr(start,last-start+1);
         const auto found=std::find_if(std::begin(specs),std::end(specs),
             [&](const Spec& s){return name==s.name;});
-        if(found==std::end(specs)) {error="Unexpected key field: "+name;return false;}
+        if(found==std::end(specs)) {
+            if(ignoredFields) ignoredFields->push_back(name);
+            continue;
+        }
         const unsigned index=static_cast<unsigned>(found-std::begin(specs));
         if(seen&(1u<<index)){error="Duplicate key field: "+name;return false;}
         const std::size_t valueStart=line.find_first_not_of(" \t\r",eq+1);
