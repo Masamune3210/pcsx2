@@ -44,3 +44,38 @@ Restart PCSX2, run the same HDD Utility 1.10 image and inspect `[MG] Verified KE
 **Remaining:** Build the full Windows emulator, run authentic HDD Utility, verify the new SCmd path at runtime, then implement full content block crypto/signatures and the unrelated memory-card authentication path. Investigate savestate serialization of `s_mgHeader` before merging to testing; it is currently reset on VM reset but is **not serialized**. Do not equate one fixed busy reply with exact hardware time, and do not claim card authentication has been replaced. DNAS work remains parked.
 
 Original branch-specific source tracing is preserved, and no raw firmware/keys were committed.
+
+## First PCSX2 runtime test: missing per-BIOS key file (2026-10-17)
+
+The user supplied PCSX2 v2.9.92-43-g519a569c4 log for BIOS 1.60 and HDD Utility 1.10.
+The newly compiled source's 90 command accepted 00 A0 01 00 00, and all 26 SCmd8D
+transfers staged the original 0x1A0-byte encrypted header. The first SCmd8F poll
+returned 01 (busy), followed by 80 when the loader reported:
+
+    [MG] Missing BIOS-adjacent .mgkeys file; KELF crypto unavailable
+
+This is a configuration error, NOT failed header cryptography. The log does not
+contain a verified SCmd91/8E BIT result because the crypto core never ran.
+
+Log ROMconf named PS20160AC20020207.bin. Actual selected BIOS path must be
+confirmed if renamed: the loader expects Path::ReplaceExtension(BiosPath, "mgkeys").
+The user's previously supplied public-key JSON was converted to an uncommitted
+PS20160AC20020207.mgkeys artifact. Exact generated file successfully passed
+the standalone C++ authentic-header test against the 416-byte fixture:
+BIT 328, physical SHA256 match, all three MACs, seven mutated-header rejects.
+No published key values or original KELF bytes were committed to the repo.
+
+After the failed SCmd8F and HDD Utility restart, there were repeated TLB misses
+with PC=0x0/0x4. This is a later symptom, not yet causally attributed to the
+MagicGate core. Observe whether it persists after supplying valid config.
+
+Commit f1b413d7e88527c3390702fa1516b2317ead20c7 changes only logging:
+the missing-file warning now displays the requested .mgkeys pathname and the
+selected BIOS path. This diagnostic update needs a rebuild to appear, but
+providing the .mgkeys file works with the existing build.
+
+Next verify PCSX2's expected '[MG] Verified KELF header: blocks=20 BIT bytes=328
+content bytes=21360', terminal SCmd8F=00, and SCmd91 length 0x148.
+These are expected from host tests and real console, not yet seen in PCSX2.
+Content-block verification, authentic card authentication, and downstream
+HDD Utility behavior remain independently unverified.
