@@ -2997,7 +2997,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
                     maxSize <= 0 || cdvd.mg_size < 0 ||
                     cdvd.mg_size + cdvd.SCMDParamCnt > maxSize ||
                     cdvd.mg_size + cdvd.SCMDParamCnt > static_cast<int>(sizeof(cdvd.mg_buffer)) ||
-                    (s_mgHeader.active && s_mgHeader.returnedBusy))
+                    (s_mgHeader.active && cdvd.mg_datatype == 1 && s_mgHeader.returnedBusy))
                 {
                     cdvd.SCMDResultBuff[0] = 0x80;
                 }
