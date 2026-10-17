@@ -79,3 +79,41 @@ content bytes=21360', terminal SCmd8F=00, and SCmd91 length 0x148.
 These are expected from host tests and real console, not yet seen in PCSX2.
 Content-block verification, authentic card authentication, and downstream
 HDD Utility behavior remain independently unverified.
+
+## Required runtime setup (corrected after first user test)
+
+The first real HDD Utility run with this branch returned `SCmd8F=0x80` because
+the emulator's published-key sidecar was not provided. This was a setup
+omission in the handoff to the user, **not** proof of failed DES processing.
+
+**The selected BIOS filename in that log was `PS20160AC20020207.bin`.**
+The loader derives its lookup path via
+`Path::ReplaceExtension(BiosPath, "mgkeys")`, so the required filename is
+**`PS20160AC20020207.mgkeys`** in the **same directory as the selected
+BIOS file**. It does not search beside the PCSX2 executable, the ISO, or
+the repository checkout. Another selected BIOS requires its own matching
+basename.
+
+The sidecar is a plain ASCII text file with exactly nine required
+`MG_*_KEY=HEX` / `MG_*_IV=HEX` assignment lines, 8 or 16 raw bytes
+encoded as 16 or 32 hex characters respectively. `MG_CONTENT_IV` is
+recognized and ignored by the header-only parser and is not required.
+Comments starting `#` or `;` are accepted. A JSON file is **not**
+directly accepted by the C++ loader. Use the existing converter
+`tools/magicgate/BuildMagicGateKeyFile.py` against the user's public
+keys JSON and the **full selected BIOS path**, or copy a locally prepared
+and independently verified correctly named sidecar there. Never commit
+the sidecar or genuine decrypted file keys.
+
+Independent local confirmation in this investigation: the exact
+431-byte nine-key sidecar was parsed by this branch's real
+`MagicGateCrypto::ParseKeys` C++ function. The same C++ header verifier
+accepted the genuine 416-byte HDD Utility header; its decrypted BIT was
+328 bytes, 20 blocks, total content 21,360 bytes and SHA-256
+`7c3d0e4746b9fc11b2691f66146e53e4db0bc111533df34c25186d5b5c42e220`.
+This verifies **sidecar format plus standalone crypto**, not a new
+full emulator execution with keys installed.
+
+The TLB misses seen **after** the missing-sidecar `8F=80` and IOP
+restart are downstream observations requiring a fresh successful-key
+runtime test before a separate CPU-bug attribution.
