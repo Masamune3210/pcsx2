@@ -56,3 +56,22 @@ SCmd 8F       poll calculation until !=busy              PHASE 2
 ## Validation and change state
 
 This branch currently contains only this handoff document; **no emulator code changes, no claim of cryptographic verification, and no build/runtime verification**. Keep existing verbose `MGFLOW`/`MGRAW` logging intact as expressly requested. The sibling SIO2-response branch was abandoned/reverted and must not be revived on the strength of PocketStation icons alone.
+
+## Confirmed fallback path explains the two downstream symptoms
+
+The ps2dev reconstruction explicitly implements PS2-to-PS1/PDA **card-type fallback** in `iop/memorycard/mcman/src/main.c` (`McDetectCard2` / `mcman_detectcard`):
+
+- First try `mcman_probePS2Card` (or `mcman_probePS2Card2`).
+- On result `r < -9`, try `mcman_probePS1Card` (or `...2`).
+- If the PS1 probe returns `r >= -9`, `mcman_probePDACard` selects `sceMcTypePS1` for a nonzero result, or `sceMcTypePDA` (PocketStation) for zero.
+- `iop/memorycard/mcman/src/mcsio2.c::mcman_probePS2Card` returns `sceMcResFailAuth` if `SecrAuthCard` fails, which is defined as **-90** by `common/include/libmc-common.h`; therefore it directly satisfies the fallback threshold `r < -9`.
+- `McFormat` checks MCMAN's **detected cardtype**, dispatching `mcman_format2` only for `sceMcTypePS2`, and `mcman_format1` otherwise.
+- `iop/memorycard/mcman/src/ps1mc_fio.c::mcman_format1` uses **128-byte PS1/PDA page buffers** and `McWritePS1PDACard`, writing directory/bad-block records and finally page **0** with PS1 magic `MC`. This is consistent with 128-warning flash-write bursts at address zero in the user's affected build and could overwrite page zero of the configured PS2 card image, because PCSX2's `MemoryCardProtocol::PS1Write` is backed by the same card data and SIO2 does not discriminate PS1 command dispatch by physical card type.
+
+**Inference boundary:** The code establishes the causal control-flow path; the previously supplied PCSX2 logs do not include actual SIO2 per-command traces to show that each PS1 write occurred in that run. The exact source-version match to retail BIOS MCMAN needs confirmation, although the observed symptoms are consistent. Card file creation remains identical across the fork/upstream and is not the supported cause. Fix the upstream authentication cause, not PS1/PDA fallback or card formatting, then verify with a disposable card image.
+
+Primary source links:
+- https://github.com/ps2dev/ps2sdk/blob/master/iop/memorycard/mcman/src/main.c
+- https://github.com/ps2dev/ps2sdk/blob/master/iop/memorycard/mcman/src/mcsio2.c
+- https://github.com/ps2dev/ps2sdk/blob/master/iop/memorycard/mcman/src/ps1mc_fio.c
+- https://github.com/ps2dev/ps2sdk/blob/master/common/include/libmc-common.h
