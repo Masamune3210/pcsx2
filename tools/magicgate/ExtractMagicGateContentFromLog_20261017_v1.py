@@ -16,10 +16,6 @@ def extract(text):
     for i, line in enumerate(lines):
         if not CALL.search(line):
             continue
-        if i + 1 >= len(lines) or not START.search(lines[i+2] if i+2<len(lines) else ""):
-            # The request line immediately follows CALL; then the staged buffer length.
-            # Some loggers can insert a diagnostic line between these.
-            pass
         for j in range(i+1, min(i+6,len(lines))):
             if not START.search(lines[j]):
                 continue
