@@ -149,6 +149,12 @@ struct Runtime {
             case 0x04: if(!output) return false; *output=card.nonce; break;
             case 0x06: if(!input) return false; card.challenge3=*input; break;
             case 0x07: if(!input) return false; card.challenge2=*input; break;
+            case 0x0a:
+                // This stage can already validate challenge3 using challenge2
+                // as its CBC IV; no need to wait for challenge1.
+                if(!Equal(Crypt(card.challenge3,card.unique,card.challenge2,true),card.iv))
+                    return false;
+                break;
             case 0x0b:
             {
                 if(!input) return false;
