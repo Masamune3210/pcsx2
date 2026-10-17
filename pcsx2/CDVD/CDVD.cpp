@@ -40,6 +40,10 @@ struct MgVerifiedHeaderState {
     bool active = false;
     bool authenticated = false;
     bool returnedBusy = false;
+    bool contentBusy = false;
+    bool contentVerified = false;
+    bool contentOutputReady = false;
+    MagicGateCrypto::ContentCursor contentCursor;
     MagicGateCrypto::HeaderResult verified;
 };
 static MgVerifiedHeaderState s_mgHeader;
@@ -3008,8 +3012,9 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
             case 0x8E: // Stream raw authenticated BIT bytes without a result prefix
             {
-                if (cdvd.mg_datatype == 1 &&
-                    (!s_mgHeader.authenticated || cdvd.mg_size < 0))
+                if ((cdvd.mg_datatype == 1 &&
+                     (!s_mgHeader.authenticated || cdvd.mg_size < 0)) ||
+                    (cdvd.mg_datatype == 0 && !s_mgHeader.contentOutputReady))
                 {
                     SetSCMDResultSize(0);
                     break;
@@ -3031,6 +3036,53 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
             case 0x8F: // Independently verify the authentic encrypted KELF header
             {
                 SetSCMDResultSize(1);
+                if (cdvd.mg_datatype == 0)
+                {
+                    if (!s_mgHeader.authenticated || cdvd.mg_size <= 0)
+                    {
+                        cdvd.SCMDResultBuff[0] = 0x80;
+                        break;
+                    }
+                    if (s_mgHeader.contentVerified)
+                    {
+                        cdvd.SCMDResultBuff[0] = 0;
+                        break;
+                    }
+                    if (cdvd.mg_maxsize <= 0 || cdvd.mg_size != cdvd.mg_maxsize)
+                    {
+                        cdvd.SCMDResultBuff[0] = 0x80;
+                        break;
+                    }
+                    if (!s_mgHeader.contentBusy)
+                    {
+                        s_mgHeader.contentBusy = true;
+                        cdvd.SCMDResultBuff[0] = 1;
+                        break;
+                    }
+                    MagicGateCrypto::Keys keys;
+                    if (!cdvdLoadMagicGateKeys(keys))
+                    {
+                        cdvd.SCMDResultBuff[0] = 0x80;
+                        break;
+                    }
+                    MagicGateCrypto::ContentResult output;
+                    if (!MagicGateCrypto::DecryptContentTransfer(
+                            cdvd.mg_buffer, static_cast<size_t>(cdvd.mg_size), keys,
+                            s_mgHeader.verified, s_mgHeader.contentCursor, output))
+                    {
+                        Console.Warning("[MG] Content authentication failed: %s", output.error.c_str());
+                        cdvd.SCMDResultBuff[0] = 0x84;
+                        break;
+                    }
+                    std::memcpy(cdvd.mg_buffer, output.plaintext.data(), output.plaintext.size());
+                    s_mgHeader.contentCursor = output.next;
+                    s_mgHeader.contentVerified = true;
+                    cdvd.mg_maxsize = 0; // No further writes until another 0x92.
+                    Console.WriteLn("[MG] Verified content: bytes=%zu nextBlock=%zu blockOffset=%u",
+                        output.plaintext.size(), output.next.blockIndex, output.next.blockOffset);
+                    cdvd.SCMDResultBuff[0] = 0;
+                    break;
+                }
                 if (!s_mgHeader.active || cdvd.mg_datatype != 1 ||
                     cdvd.mg_size < cdvd.mg_maxsize || cdvd.mg_size < 0x20)
                 {
@@ -3120,27 +3172,48 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
                 break;
             }
 
-			case 0x92: // sceMgWriteDatainLength
-				s_mgHeader = {};
-				SetSCMDResultSize(1); //in:2
-				cdvd.mg_size = 0;
-				cdvd.mg_datatype = 0; //data (encrypted)
-				cdvd.mg_maxsize = cdvd.SCMDParamBuff[0] | (((int)cdvd.SCMDParamBuff[1]) << 8);
-				cdvd.SCMDResultBuff[0] = 0; // 0 complete ; 1 busy ; 0x80 error
-				break;
+			case 0x92: // Start another authenticated content input transfer
+            {
+                SetSCMDResultSize(1);
+                if (cdvd.SCMDParamCnt != 2 || !s_mgHeader.authenticated ||
+                    (cdvd.mg_datatype == 0 && s_mgHeader.contentVerified &&
+                     cdvd.mg_size != 0))
+                {
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                    break;
+                }
+                const int size = cdvd.SCMDParamBuff[0] | (static_cast<int>(cdvd.SCMDParamBuff[1]) << 8);
+                if (size == 0 || size > static_cast<int>(sizeof(cdvd.mg_buffer)))
+                {
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                    break;
+                }
+                cdvd.mg_size = 0;
+                cdvd.mg_maxsize = size;
+                cdvd.mg_datatype = 0;
+                s_mgHeader.contentBusy = false;
+                s_mgHeader.contentVerified = false;
+                s_mgHeader.contentOutputReady = false;
+                cdvd.SCMDResultBuff[0] = 0;
+                break;
+            }
 
-			case 0x93: // sceMgWriteDataoutLength
-				SetSCMDResultSize(1); //in:2
-				if (((cdvd.SCMDParamBuff[0] | (static_cast<int>(cdvd.SCMDParamBuff[1]) << 8)) == cdvd.mg_size) && (cdvd.mg_datatype == 0))
-				{
-					cdvd.mg_maxsize = 0; // don't allow any write
-					cdvd.SCMDResultBuff[0] = 0; // 0 complete ; 1 busy ; 0x80 error
-				}
-				else
-				{
-					cdvd.SCMDResultBuff[0] = 0x80;
-				}
-				break;
+			case 0x93: // Authorize streaming only after content MAC verification
+            {
+                SetSCMDResultSize(1);
+                const int requested = cdvd.SCMDParamCnt == 2 ?
+                    (cdvd.SCMDParamBuff[0] | (static_cast<int>(cdvd.SCMDParamBuff[1]) << 8)) : -1;
+                if (cdvd.mg_datatype == 0 && s_mgHeader.contentVerified &&
+                    requested == cdvd.mg_size)
+                {
+                    s_mgHeader.contentOutputReady = true;
+                    cdvd.mg_maxsize = 0;
+                    cdvd.SCMDResultBuff[0] = 0;
+                }
+                else
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                break;
+            }
 
             case 0x94: // Validated Kbit (first half)
             case 0x95: // Validated Kbit (second half)
