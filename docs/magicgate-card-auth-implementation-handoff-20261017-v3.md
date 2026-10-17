@@ -43,3 +43,9 @@ Source review also confirmed that Sio2::Memcard pre-pushes **two** response byte
 ## Build verification update (2026-10-17)
 
 User confirmed the `bee3eef2` SIO2 card-slot correction **fixed the reported MSVC compilation errors**. This is user-reported build/error verification, not confirmation that the BIOS recognizes PS2 memory cards correctly or that both 0x8F authentication phases pass at runtime. The next test remains a BIOS-only cold boot with HDD disabled and a disposable card, followed by a regression test of the official HDD software.
+
+## BIOS runtime verification: both original card regressions resolved (2026-10-17)
+
+The user clarified that the successful test was **not just a corrected build**: with the new card-authentication implementation, the BIOS now **identifies PS2 memory cards as PS2 cards instead of PocketStations**, and **memory-card formatting works correctly**. This directly verifies resolution of both original observable symptoms on the test setup. The evidence supports the earlier diagnosis that failure of MechaCon 0x8F card authentication caused MCMAN to fall back to PS1/PDA card detection and the PS1 formatter. No SIO2 PS1 detection override or memory-card flash write bypass was needed.
+
+**Verified by user:** PCSX2 fork builds after the selected-card slot fix; PS2 card recognition in BIOS; PS2 card formatting. **Not independently verified:** all cryptographic intermediate results against physical retail-card vectors or hardware; full regression of authenticated HDD Browser/HDD Utility and other titles; automated CI pass (no run status available). Preserve verbose logging and avoid overstating the scope of runtime validation.
