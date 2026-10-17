@@ -442,8 +442,8 @@ void MemoryCardProtocol::AuthXor()
         return;
     const u8 modeByte = g_Sio2FifoIn.front();
     g_Sio2FifoIn.pop_front();
-    const unsigned port = static_cast<unsigned>(g_Sio2.port);
-    const unsigned slot = static_cast<unsigned>(g_MultitapArr.at(g_Sio2.port).GetMemcardSlot());
+    const unsigned port = mcd->port;
+    const unsigned slot = mcd->slot;
     const bool isRead = modeByte == 0x01 || modeByte == 0x02 || modeByte == 0x04 ||
         modeByte == 0x0f || modeByte == 0x11 || modeByte == 0x13;
     const bool isWrite = modeByte == 0x06 || modeByte == 0x07 || modeByte == 0x0b;
@@ -497,8 +497,7 @@ void MemoryCardProtocol::AuthF3()
 {
 	MC_LOG.WriteLn("%s", __FUNCTION__);
 	PS1_FAIL();
-    MagicGateCardAuth::g_runtime.ResetCard(static_cast<unsigned>(g_Sio2.port),
-        static_cast<unsigned>(g_MultitapArr.at(g_Sio2.port).GetMemcardSlot()));
+    MagicGateCardAuth::g_runtime.ResetCard(mcd->port, mcd->slot);
 
 	if (!mcd->IsPresent())
 	{
@@ -522,8 +521,7 @@ void MemoryCardProtocol::AuthF7()
     const u8 mode=g_Sio2FifoIn.front();
     g_Sio2FifoIn.pop_front();
     const bool valid=mcd->IsPresent() && !mcd->IsPSX() &&
-        MagicGateCardAuth::g_runtime.SelectCardKey(static_cast<unsigned>(g_Sio2.port),
-            static_cast<unsigned>(g_MultitapArr.at(g_Sio2.port).GetMemcardSlot()),mode);
+        MagicGateCardAuth::g_runtime.SelectCardKey(mcd->port, mcd->slot, mode);
     while (g_Sio2FifoOut.size()<3) g_Sio2FifoOut.push_back(0);
     g_Sio2FifoOut.push_back(0x2b);
     g_Sio2FifoOut.push_back(valid?mcd->term:0x66);
