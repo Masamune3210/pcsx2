@@ -22,6 +22,10 @@ struct Keys {
     B8 sigMaster{}, sigHash{}, kbitIV{}, kcIV{}, rootMaster{}, tableIV{}, contentIV{};
     bool hasContentIV = false;
     B16 kbitMaster{}, kcMaster{}, rootHash{};
+    // Optional external retail memory-card authentication keys, independent of KELF.
+    B8 cardIV1{}, cardIV2{}, challengeIV{};
+    B16 cardHash1{}, cardHash2{};
+    bool hasCardKeys = false;
 };
 
 struct HeaderResult {
@@ -198,7 +202,12 @@ inline bool ParseKeys(const std::string& file,Keys& output,std::string& error,
         {"MG_ROOTSIG_MASTER_KEY",tmp.rootMaster.data(),8},
         {"MG_ROOTSIG_HASH_KEY",tmp.rootHash.data(),16},
         {"MG_CONTENT_TABLE_IV",tmp.tableIV.data(),8},
-        {"MG_CONTENT_IV",tmp.contentIV.data(),8}
+        {"MG_CONTENT_IV",tmp.contentIV.data(),8},
+        {"MG_CARDIV_0",tmp.cardIV1.data(),8},
+        {"MG_CARDKEY_0",tmp.cardHash1.data(),16},
+        {"MG_CARDIV2_0",tmp.cardIV2.data(),8},
+        {"MG_CARDKEY2_0",tmp.cardHash2.data(),16},
+        {"MG_CHALLENGE_IV",tmp.challengeIV.data(),8}
     };
     std::uint32_t seen=0;
     std::istringstream lines(file);
@@ -238,6 +247,10 @@ inline bool ParseKeys(const std::string& file,Keys& output,std::string& error,
     constexpr std::uint32_t requiredMask=(1u<<9)-1u;
     if((seen&requiredMask)!=requiredMask){error="Missing required MagicGate keys";return false;}
     tmp.hasContentIV=(seen&(1u<<9))!=0;
+    constexpr std::uint32_t cardMask=((1u<<5)-1u)<<10;
+    tmp.hasCardKeys=(seen&cardMask)==cardMask;
+    // Partial optional card-key sets cannot authenticate a card. Do not reject
+    // an otherwise valid KELF key file solely because they are incomplete.
     output=tmp;
     error.clear();
     return true;
