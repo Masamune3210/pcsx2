@@ -160,6 +160,34 @@ PS2 Linux strings are visible in the second-stage image, including the original 
 
 A separate pure-Python reproducibility helper `recover_psbbn_osdboot.py` was generated in this conversation, taking the extracted KELF and the PCSX2 log and generating the four files; code and commercial binary dumps have **not** been committed.
 
+### User Ghidra analyses and next-stage kernel discovery (2026-10-17)
+
+The user supplied four Ghidra 12.1.3 `.gzf` projects, preserving completed analysis. The packed Ghidra DBs were inspected for persisted metadata and symbols; source binaries were cross-checked independently with ELF parser/LLVM disassembly. These are **not** headless Ghidra analysis results or a decompilation audit.
+
+Import architectures were correctly set:
+- `osdboot.decrypted.elf`: `r5900:LE:32:default` (ELF loader).
+- `osdboot.stage2.bin`: `r5900:LE:32:default` (raw binary loaded at `0x01000000`).
+- `osdboot.stage2.iop1.irx` and `osdboot.stage2.iop2.irx`: `MIPS:LE:32:default` (IOP IRX ELF loader).
+Both IRX projects record `Relocations applied=82`, `partial=11`, `failed=0`, `unknown=0`, `unsupported=0`, `import tables=4`, `export tables=0`. `readelf` independently finds 86 `rel.text` plus 7 `rel.rodata` entries = 93 records per IRX, so 82+11 accounts for all relocation entries. Review the 11 partial cases before assuming perfect cross-references.
+
+**Unexpected shared loader:** Both IOP IRXs have identical 0x1640-byte `.text` layout, with only SIX bytes different between text sections; their 0x50-byte `.rodata` sections match byte-for-byte. The executable ELF entry is 0xE00 in both. The substantive differences are in large `.data` payloads (0x416D0 and 0x4A200). These appear to be *shared IOP loader/bootimage variants with different embedded payloads*, not unrelated IRX drivers. Treat that interpretation as a working model until their runtime unpacking is traced. The Ghidra EE raw stage2 project detects some apparent R5900 functions *inside the embedded IRX regions*; these must not be conflated with independently analyzed IOP functions.
+
+**Important discovery: next kernel pathname in stage2.** Offset `0x103970` of the raw second stage (guest address `0x01103970`) contains the literal null-terminated `pfs0:/p2lboot/vmlinux`. Raw disassembly at guest `0x01000460`–`0x01000468`:
+
+```asm
+0x01000460: lui   v0, 0x0110
+0x01000464: addiu v0, v0, 0x3970
+0x01000468: sw    v0, 0x14(sp)
+```
+
+This assigns a default boot-path pointer (conditional on zero preexisting pointer in preceding code). It is therefore an **active code reference**, not merely a stray unused embedded filename. Additional strings near `0x01104CD0` and `0x01104D28` describe kernel CRC and ELF validation errors; `0x01104298` describes `encpack_header decode error`. `0x01105EF0` references `hdd%d:__linux.%d`. They document a kernel-loading/configuration layer whose exact behavior remains to be reconstructed.
+
+For Ghidra start at `0x01000460`, follow its enclosing function and calls to kernel path resolution, `encpack` validation, memory segment load, and transfer. Resolve use-sites of `0x01103970`, `0x01104298`, `0x01104CD0`. For a more meaningful address-to-code mapping of recompiler failure PC `0x801A4930`, **extract `pfs0:/p2lboot/vmlinux` from the HDD copy next** and inspect its actual file format; do not assume ordinary ELF until header verified. If absent, verify which PFS mount backs `pfs0:` and record file-access attempts.
+
+A raw 4-byte-aligned scan found **zero exact `TLBWR` opcodes (0x42000006) within the decrypted first-stage ELF or the stage2 binary**. This does not prove a runtime mapping or that no instruction is generated/copied later. It supports looking for the repeated interpreter TLBWR in a subsequently loaded executable rather than attributing it directly to stage2.
+
+**State:** source-level evidence only; no modifications to uploaded Ghidra archives, no emulator behavior changes, and no copyrighted binary artifacts committed.
+
 ## First next step
 
 Collect a **non-destructive baseline run** of PSBBN (Definitive Project) on the current fork using a disposable HDD image, identifying whether the first failure occurs in HDD/ATA/MBR/KELF or at Linux EE TLB initialization. In parallel, inspect PCSX2's existing TLB logic and review closed PR #14847 *line by line* to extract hypotheses for testable fixes.
