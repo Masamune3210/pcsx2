@@ -271,6 +271,29 @@ void Sio2::Memcard()
 
 	const u8 commandByte = g_Sio2FifoIn.front();
 	g_Sio2FifoIn.pop_front();
+	const bool traceCardCommand =
+		commandByte == MemcardCommand::PROBE ||
+		commandByte == MemcardCommand::GET_SPECS ||
+		commandByte == MemcardCommand::SET_ERASE_SECTOR ||
+		commandByte == MemcardCommand::SET_WRITE_SECTOR ||
+		commandByte == MemcardCommand::SET_READ_SECTOR ||
+		commandByte == MemcardCommand::WRITE_DATA ||
+		commandByte == MemcardCommand::ERASE_BLOCK ||
+		commandByte == MemcardCommand::PS1_READ ||
+		commandByte == MemcardCommand::PS1_STATE ||
+		commandByte == MemcardCommand::PS1_WRITE ||
+		commandByte == MemcardCommand::PS1_POCKETSTATION ||
+		commandByte == MemcardCommand::AUTH_XOR ||
+		commandByte == MemcardCommand::AUTH_F3 ||
+		commandByte == MemcardCommand::AUTH_F7;
+	if (traceCardCommand)
+	{
+		Console.WriteLn("[MCDTRACE] SIO2 request port=%u slot=%u command=%02X bytes=%u present=%u ps1=%u sector=%08X offset=%08X",
+			static_cast<unsigned>(port), static_cast<unsigned>(mtap.GetMemcardSlot()),
+			static_cast<unsigned>(commandByte), static_cast<unsigned>(commandLength),
+			static_cast<unsigned>(mcd->IsPresent()), static_cast<unsigned>(mcd->IsPSX()),
+			mcd->sectorAddr, mcd->transferAddr);
+	}
 	const u8 responseByte = mcd->IsPresent() ? 0x00 : 0xff;
 	g_Sio2FifoOut.push_back(responseByte);
 	g_Sio2FifoOut.push_back(responseByte);
@@ -374,6 +397,13 @@ void Sio2::Memcard()
 		default:
 			Console.Warning("%s() Unhandled memcard command %02X, things are about to break!", __FUNCTION__, commandByte);
 			break;
+	}
+	if (traceCardCommand)
+	{
+		Console.WriteLn("[MCDTRACE] SIO2 reply port=%u slot=%u command=%02X stat=%08X sector=%08X offset=%08X goodSector=%u replyBytes=%zu",
+			static_cast<unsigned>(port), static_cast<unsigned>(mtap.GetMemcardSlot()),
+			static_cast<unsigned>(commandByte), CmdStat, mcd->sectorAddr, mcd->transferAddr,
+			static_cast<unsigned>(mcd->goodSector), g_Sio2FifoOut.size());
 	}
 }
 
