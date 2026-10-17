@@ -118,7 +118,7 @@ static void ParseExternalCardKeys()
     std::string cardOnly;
     auto cardEntry=[&](const char* name,unsigned bytes)
     {
-        cardOnly+=std::string(name)+"="+std::string(bytes*2,'0')+"\\n";
+        cardOnly+=std::string(name)+"="+std::string(bytes*2,'0')+"\n";
     };
     cardEntry("MG_CARDIV_0",8);cardEntry("MG_CARDKEY_0",16);
     cardEntry("MG_CARDIV2_0",8);cardEntry("MG_CARDKEY2_0",16);
