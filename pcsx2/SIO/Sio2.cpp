@@ -271,6 +271,23 @@ void Sio2::Memcard()
 
 	const u8 commandByte = g_Sio2FifoIn.front();
 	g_Sio2FifoIn.pop_front();
+
+	// The PS2 memory card and PS1/PocketStation command sets are distinct.
+	// SIO0 already rejects PS1 commands for PS2 cards; SIO2 must do the
+	// same or a PS2 card can be misidentified as a PS1/PocketStation device.
+	const bool ps1Command = commandByte == MemcardCommand::PS1_READ ||
+		commandByte == MemcardCommand::PS1_STATE ||
+		commandByte == MemcardCommand::PS1_WRITE ||
+		commandByte == MemcardCommand::PS1_POCKETSTATION;
+	if (ps1Command && !mcd->IsPSX())
+	{
+		SetCmdStat(CmdStat::DISCONNECTED);
+		g_Sio2FifoIn.clear();
+		while (g_Sio2FifoOut.size() < commandLength)
+			g_Sio2FifoOut.push_back(0xff);
+		return;
+	}
+
 	const u8 responseByte = mcd->IsPresent() ? 0x00 : 0xff;
 	g_Sio2FifoOut.push_back(responseByte);
 	g_Sio2FifoOut.push_back(responseByte);
