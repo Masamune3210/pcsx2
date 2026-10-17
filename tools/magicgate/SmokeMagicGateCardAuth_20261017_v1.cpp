@@ -115,6 +115,17 @@ static void ParseExternalCardKeys()
     config.erase(config.find("MG_CHALLENGE_IV="),config.find("MG_CARDKEY_1=")-config.find("MG_CHALLENGE_IV="));
     Check(MagicGateCrypto::ParseKeys(config,missing,error),"retain KELF parsing with partial card keys");
     Check(!missing.hasCardKeys,"reject incomplete card auth keyset");
+    std::string cardOnly;
+    auto cardEntry=[&](const char* name,unsigned bytes)
+    {
+        cardOnly+=std::string(name)+"="+std::string(bytes*2,'0')+"\\n";
+    };
+    cardEntry("MG_CARDIV_0",8);cardEntry("MG_CARDKEY_0",16);
+    cardEntry("MG_CARDIV2_0",8);cardEntry("MG_CARDKEY2_0",16);
+    cardEntry("MG_CHALLENGE_IV",8);
+    Keys isolated;
+    Check(MagicGateCrypto::ParseKeys(cardOnly,isolated,error,nullptr,false),"parse card-only keys");
+    Check(isolated.hasCardKeys,"card auth independent of KELF keys");
 }
 int main()
 {
