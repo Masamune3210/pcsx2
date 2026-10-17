@@ -76,11 +76,14 @@ static bool cdvdLoadMagicGateKeys(MagicGateCrypto::Keys& keys)
         return false;
     }
     std::string reason;
-    if (!MagicGateCrypto::ParseKeys(contents, keys, reason))
+    std::vector<std::string> ignoredFields;
+    if (!MagicGateCrypto::ParseKeys(contents, keys, reason, &ignoredFields))
     {
         Console.Warning("[MG] MagicGate key file rejected: %s", reason.c_str());
         return false;
     }
+    for (const std::string& name : ignoredFields)
+        Console.Warning("[MG] Ignoring unsupported MagicGate key field: %s", name.c_str());
     return true;
 }
 
