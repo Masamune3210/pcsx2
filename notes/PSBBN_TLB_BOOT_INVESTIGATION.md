@@ -75,6 +75,47 @@ Record first *observable* failure at the correct stage. Avoid assuming every ear
 - Keep detailed logs only in local test artifacts as appropriate; do not commit BIOS files, licensed system executables, keys, or disk images.
 - Rebase on `testing` when beginning implementation, preserving an identifiable experimental baseline.
 
+## First real PSBBN 0.32 boot trace (2026-10-17)
+
+**Observed:** Original Japanese PSBBN 0.32 installer reported completion of BB Unit initialization and installation. Installer disc was subsequently removed; the recorded restarted boot stayed on the PlayStation 2 logo. Evidence below is from the user's approximately 1,057,412-line PCSX2 trace of that session, **not yet a controlled fresh-power-on trace**. The drive being tested in the recorded boot was a disposable 40 GiB `bbntest.raw` image. The BIOS was USA v1.60 (2002-02-07), a potential separate compatibility variable.
+
+### Ordered boot evidence
+
+1. Initial OSDSYS HDD detection attempt at about `653.7648` logged `HDL:read 0 sec`, `ATA: C_READ_SECTOR`, `cannot alloc memory`, then `new power off`. This was **earlier in the session, while the installer disc was involved**, so do not conflate with the later boot path.
+2. After the disc was removed at approximately `1162.872`, later restart at `1243+`:
+   - `1245.1040`: `loadmodule: fname rom0:HDDLOAD args 28 arg -osd`
+   - `1245.6353`: `HDL:read 0 sec`
+   - `1245.6875`: `HDL:securiyt decript.` (verbatim guest message)
+   - `1247.3923`: `HDL:END ver.1.00`
+   - `1247.6971`: loads `rom0:UDNL` with `img0:` argument (IOP image boot stage).
+   - `1249.8776`: `Input ELF format filename = pfs0:/p2lboot/osdboot.elf`
+   - `1250.3924`: `Loaded, pfs0:/p2lboot/osdboot.elf`
+   - Subsequent IOP reboots and HDD/PFS activity continue through `1253+`.
+   - `1251.7260`: `pfs: warning: null buffer returned` (potential separate issue, not yet causally connected).
+3. `1253.0593` through `1253.0618`: 50 logged EE **store** TLB misses at the same `pc=0x801a4930`, addressed sequentially `0xc0005000`, `0xc0005004`, ... `0xc00050c4`. This address range is in guest TLB-mapped KSEG2. The log does not prove which guest mapping or instruction should have been used.
+
+**Interpretation:** This run moves well past mere BIOS HDD recognition and visibly loads `osdboot.elf` from the installed HDD. Do **not** state that it necessarily boots the final PSBBN Linux kernel or that TLB is the sole cause of the hang. The final TLB messages are a strong direct lead.
+
+### Concrete emulator-source finding
+
+Checked `pcsx2/vtlb.cpp` on fork `testing`, around lines 514–550, at the time of this audit:
+
+- `vtlb_Miss(u32 addr, u32 mode)` on the **interpreter** path (`Cpu == &intCpu`) invokes `cpuTlbMissW` or `cpuTlbMissR`, then `CancelInstruction()`.
+- On the **recompiler** path it constructs the `TLB Miss, pc=...` message and, when `PauseOnTLBMiss` is enabled, pauses/raises a host debugger report. Without that setting, it logs and returns **without delivering an equivalent guest TLB exception** at that point.
+- The logger uses `static int spamStop` and emits at most **50 errors** in a normal non-development build. Therefore the 50 visible misses are a logging cap, **not evidence the misses stopped**.
+
+Relevant exact source: [fork vtlb.cpp on testing](https://github.com/Masamune3210/pcsx2/blob/testing/pcsx2/vtlb.cpp).
+
+### Minimal discriminating next tests
+
+1. Preserve an untouched backup/hash of the installed test HDD. Record full executable hash, BIOS, region, settings, and boot origin.
+2. Run **from a full cold boot with no disc**, on a copied HDD image, first using existing EE recompiler then **EE interpreter**, with identical settings except the engine. Avoid introducing new emulation hacks for this comparison.
+3. Enable **Pause on TLB Miss** for the recompiler and capture, at the **first** miss, guest PC/instruction or recompiled block, general registers, COP0 `EntryHi/EntryLo0/EntryLo1/PageMask/Index/Status/Cause/EPC/BadVAddr`, and emulator VTLB state. Check whether the expected guest TLB entry was installed and whether its ASID/global, valid and dirty flags permit the write. Note: a single logged PC can be block-level/stale for recompiler mid-block faults, per existing `vtlb.cpp` comment.
+4. If interpreter proceeds beyond this point, compare first divergent guest operation and exception behavior. If interpreter also fails, check missing/invalid guest mappings, earlier exception registration, invalid page mask handling, and BIOS-vs-original-Japanese region mismatch.
+5. Revisit `pfs: warning: null buffer returned` only if trace/differential tests connect it to the boot failure. Do not assume the log proves a broken HDD filesystem.
+
+**State:** Documentation only. No fixes, workarounds, emulator binaries, keys, BIOS, or game content committed.
+
 ## First next step
 
 Collect a **non-destructive baseline run** of PSBBN (Definitive Project) on the current fork using a disposable HDD image, identifying whether the first failure occurs in HDD/ATA/MBR/KELF or at Linux EE TLB initialization. In parallel, inspect PCSX2's existing TLB logic and review closed PR #14847 *line by line* to extract hypotheses for testable fixes.
