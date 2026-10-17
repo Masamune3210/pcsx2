@@ -39,3 +39,7 @@ A Windows/MSVC build surfaced six diagnostics in `pcsx2/SIO/Memcard/MemoryCardPr
 Source review also confirmed that Sio2::Memcard pre-pushes **two** response bytes before the F0 handler, so the handler's first `0x2B` is at output byte index 3, as expected by `SECRMAN::card_auth_read`. No framing change was made.
 
 **Verification:** The MSVC compiler diagnostic fix is committed but awaits user rebuild. A standalone local compile attempt was blocked by container DNS resolving raw.githubusercontent.com, not by a compiler error; no green test result is claimed.
+
+## Build verification update (2026-10-17)
+
+User confirmed the `bee3eef2` SIO2 card-slot correction **fixed the reported MSVC compilation errors**. This is user-reported build/error verification, not confirmation that the BIOS recognizes PS2 memory cards correctly or that both 0x8F authentication phases pass at runtime. The next test remains a BIOS-only cold boot with HDD disabled and a disposable card, followed by a regression test of the official HDD software.
