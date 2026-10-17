@@ -3,6 +3,7 @@
 #include "CDVD/MagicGateCrypto.h"
 #include <cstdio>
 #include <string>
+#include <utility>
 using namespace MagicGateCrypto;
 using namespace MagicGateCrypto::Detail;
 static int failures=0;
@@ -52,17 +53,17 @@ int main() {
     };
     std::string config;
     for(const auto& field:fields)
-        config+=std::string(field.first)+"="+std::string(field.second*2,'0')+"\\n";
+        config+=std::string(field.first)+"="+std::string(field.second*2,'0')+"\n";
     if(!ParseKeys(config,parsed,why) || parsed.hasContentIV) {
         std::fputs("Header-only key parsing FAILED\n",stderr);++failures;
     }
-    const std::string withContentIV=config+"MG_CONTENT_IV=0011223344556677\\n";
+    const std::string withContentIV=config+"MG_CONTENT_IV=0011223344556677\n";
     if(!ParseKeys(withContentIV,parsed,why) || !parsed.hasContentIV ||
        parsed.contentIV[0]!=0 || parsed.contentIV[7]!=0x77) {
         std::fputs("Optional content IV parsing FAILED\n",stderr);++failures;
     }
-    if(ParseKeys(withContentIV+"MG_CONTENT_IV=0011223344556677\\n",parsed,why) ||
-       ParseKeys(config+"MG_CONTENT_IV=00\\n",parsed,why)) {
+    if(ParseKeys(withContentIV+"MG_CONTENT_IV=0011223344556677\n",parsed,why) ||
+       ParseKeys(config+"MG_CONTENT_IV=00\n",parsed,why)) {
         std::fputs("Invalid optional IV accepted\n",stderr);++failures;
     }
 
