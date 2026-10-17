@@ -4,6 +4,7 @@
 #include "CDVD/CDVD.h"
 #include "CDVD/Ps1CD.h"
 #include "CDVD/MagicGateCrypto.h"
+#include "CDVD/MagicGateCardAuth.h"
 #include "CDVD/CDVD_internal.h"
 #include "CDVD/IsoReader.h"
 #include "CDVD/IsoFileFormats.h"
@@ -39,6 +40,7 @@
 struct MgVerifiedHeaderState {
     bool active = false;
     bool authenticated = false;
+    bool cardAuthSelected = false;
     bool returnedBusy = false;
     bool contentBusy = false;
     bool contentVerified = false;
@@ -959,6 +961,7 @@ static uint cdvdBlockReadTime(CDVD_MODE_TYPE mode) noexcept
 void cdvdReset()
 {
 	s_mgHeader = {};
+    MagicGateCardAuth::g_runtime.Reset();
 	std::memset(&cdvd, 0, sizeof(cdvd));
 
 	cdvd.DiscType = CDVD_TYPE_NODISC;
@@ -2911,76 +2914,62 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				cdvd.SCMDResultBuff[0] = 0;
 				break;
 
-			case 0x80: // secrman: __mechacon_auth_0x80
-				SetSCMDResultSize(1); //in:1
-				cdvd.mg_datatype = 0; //data
-				cdvd.SCMDResultBuff[0] = 0;
+			case 0x80: // SECRMAN memory-card authentication initialization
+            {
+                SetSCMDResultSize(1);
+                s_mgHeader.cardAuthSelected = true;
+                cdvd.mg_datatype = 0;
+                MagicGateCrypto::Keys cardKeys;
+                const bool haveKeys = cdvd.SCMDParamCnt == 1 && cdvdLoadMagicGateKeys(cardKeys);
+                const bool started = haveKeys && MagicGateCardAuth::g_runtime.StartMecha(cardKeys, cdvd.SCMDParamBuff[0]);
+                if (!started)
+                    MagicGateCardAuth::g_runtime.mecha = {};
+                cdvd.SCMDResultBuff[0] = started ? 0 : 0x80;
+                break;
+            }
+
+			case 0x81: // SECRMAN card key-exchange initialization
+				SetSCMDResultSize(1);
+				cdvd.SCMDResultBuff[0] = (s_mgHeader.cardAuthSelected && cdvd.SCMDParamCnt == 1 &&
+                    MagicGateCardAuth::g_runtime.Mecha81(cdvd.SCMDParamBuff[0])) ? 0 : 0x80;
 				break;
 
-			case 0x81: // secrman: __mechacon_auth_0x81
-				SetSCMDResultSize(1); //in:1
-				cdvd.mg_datatype = 0; //data
-				cdvd.SCMDResultBuff[0] = 0;
+			case 0x82: // CardIV + CardMaterial: derive two-key 3DES unique key
+				SetSCMDResultSize(1);
+				cdvd.SCMDResultBuff[0] = (s_mgHeader.cardAuthSelected &&
+                    MagicGateCardAuth::g_runtime.Mecha82(cdvd.SCMDParamBuff, cdvd.SCMDParamCnt)) ? 0 : 0x80;
 				break;
 
-			case 0x82: // secrman: __mechacon_auth_0x82
-				SetSCMDResultSize(1); //in:16
-				cdvd.SCMDResultBuff[0] = 0;
+			case 0x83: // CardNonce: start first authenticated calculation
+				SetSCMDResultSize(1);
+				cdvd.SCMDResultBuff[0] = (s_mgHeader.cardAuthSelected &&
+                    MagicGateCardAuth::g_runtime.Mecha83(cdvd.SCMDParamBuff, cdvd.SCMDParamCnt)) ? 0 : 0x80;
 				break;
 
-			case 0x83: // secrman: __mechacon_auth_0x83
-				SetSCMDResultSize(1); //in:8
-				cdvd.SCMDResultBuff[0] = 0;
-				break;
-
-			case 0x84: // secrman: __mechacon_auth_0x84
-				SetSCMDResultSize(1 + 8 + 4); //in:0
-				cdvd.SCMDResultBuff[0] = 0;
-
-				cdvd.SCMDResultBuff[1] = 0x21;
-				cdvd.SCMDResultBuff[2] = 0xdc;
-				cdvd.SCMDResultBuff[3] = 0x31;
-				cdvd.SCMDResultBuff[4] = 0x96;
-				cdvd.SCMDResultBuff[5] = 0xce;
-				cdvd.SCMDResultBuff[6] = 0x72;
-				cdvd.SCMDResultBuff[7] = 0xe0;
-				cdvd.SCMDResultBuff[8] = 0xc8;
-
-				cdvd.SCMDResultBuff[9] = 0x69;
-				cdvd.SCMDResultBuff[10] = 0xda;
-				cdvd.SCMDResultBuff[11] = 0x34;
-				cdvd.SCMDResultBuff[12] = 0x9b;
-				break;
-
-			case 0x85: // secrman: __mechacon_auth_0x85
-				SetSCMDResultSize(1 + 4 + 8); //in:0
-				cdvd.SCMDResultBuff[0] = 0;
-
-				cdvd.SCMDResultBuff[1] = 0xeb;
-				cdvd.SCMDResultBuff[2] = 0x01;
-				cdvd.SCMDResultBuff[3] = 0xc7;
-				cdvd.SCMDResultBuff[4] = 0xa9;
-
-				cdvd.SCMDResultBuff[5] = 0x3f;
-				cdvd.SCMDResultBuff[6] = 0x9c;
-				cdvd.SCMDResultBuff[7] = 0x5b;
-				cdvd.SCMDResultBuff[8] = 0x19;
-				cdvd.SCMDResultBuff[9] = 0x31;
-				cdvd.SCMDResultBuff[10] = 0xa0;
-				cdvd.SCMDResultBuff[11] = 0xb3;
-				cdvd.SCMDResultBuff[12] = 0xa3;
-				break;
-
-			case 0x86: // secrman: __mechacon_auth_0x86
-				SetSCMDResultSize(1); //in:16
-				cdvd.SCMDResultBuff[0] = 0;
-				break;
-
-			case 0x87: // secrman: __mechacon_auth_0x87
-				SetSCMDResultSize(1); //in:8
-				cdvd.SCMDResultBuff[0] = 0;
-				break;
-
+            case 0x84: // First 8 bytes of challenge1, then first 4 bytes of challenge2
+            case 0x85: // Last 4 bytes of challenge2, then challenge3
+            {
+                SetSCMDResultSize(13);
+                cdvd.SCMDResultBuff[0] = 0x80;
+                std::memset(cdvd.SCMDResultBuff + 1, 0, 12);
+                if (!s_mgHeader.cardAuthSelected || cdvd.SCMDParamCnt != 0)
+                    break;
+                const bool ok = rt == 0x84 ?
+                    MagicGateCardAuth::g_runtime.Read84(cdvd.SCMDResultBuff + 1) :
+                    MagicGateCardAuth::g_runtime.Read85(cdvd.SCMDResultBuff + 1);
+                cdvd.SCMDResultBuff[0] = ok ? 0 : 0x80;
+                break;
+            }
+            case 0x86: // Receive CardResponse1 and CardResponse2
+                SetSCMDResultSize(1);
+                cdvd.SCMDResultBuff[0] = (s_mgHeader.cardAuthSelected &&
+                    MagicGateCardAuth::g_runtime.Write86(cdvd.SCMDParamBuff, cdvd.SCMDParamCnt)) ? 0 : 0x80;
+                break;
+            case 0x87: // Receive CardResponse3
+                SetSCMDResultSize(1);
+                cdvd.SCMDResultBuff[0] = (s_mgHeader.cardAuthSelected &&
+                    MagicGateCardAuth::g_runtime.Write87(cdvd.SCMDParamBuff, cdvd.SCMDParamCnt)) ? 0 : 0x80;
+                break;
 
             case 0x8C: // Reset the volatile MagicGate worker
                 SetSCMDResultSize(1);
@@ -3031,14 +3020,21 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
                 break;
             }
 
-            case 0x88: // Card authentication completion remains a separate placeholder
+            case 0x88: // Finish only a mutually verified card authentication session
                 SetSCMDResultSize(1);
-                cdvd.SCMDResultBuff[0] = 0;
+                cdvd.SCMDResultBuff[0] = (s_mgHeader.cardAuthSelected &&
+                    cdvd.SCMDParamCnt == 0 && MagicGateCardAuth::g_runtime.Complete88()) ? 0 : 0x80;
                 break;
 
-            case 0x8F: // Independently verify the authentic encrypted KELF header
+            case 0x8F: // Poll either card challenge-response or KELF worker
             {
                 SetSCMDResultSize(1);
+                if (s_mgHeader.cardAuthSelected)
+                {
+                    cdvd.SCMDResultBuff[0] = cdvd.SCMDParamCnt == 0 ?
+                        MagicGateCardAuth::g_runtime.Poll() : 0x80;
+                    break;
+                }
                 if (cdvd.mg_datatype == 0)
                 {
                     if (!s_mgHeader.authenticated || cdvd.mg_size <= 0)
@@ -3178,6 +3174,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 			case 0x92: // Start another authenticated content input transfer
             {
                 SetSCMDResultSize(1);
+                s_mgHeader.cardAuthSelected = false;
                 // A new transfer cannot discard staged ciphertext or unread verified
                 // plaintext. The authenticated header and BIT cursor remain intact.
                 if (cdvd.SCMDParamCnt != 2 || !s_mgHeader.authenticated ||
