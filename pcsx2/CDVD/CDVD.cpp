@@ -51,7 +51,7 @@ struct MgVerifiedHeaderState {
 static MgVerifiedHeaderState s_mgHeader;
 
 // A per-BIOS .mgkeys file supplies published keys; source and logs never contain them.
-static bool cdvdLoadMagicGateKeys(MagicGateCrypto::Keys& keys)
+static bool cdvdLoadMagicGateKeys(MagicGateCrypto::Keys& keys, bool cardOnly = false)
 {
     const std::string path = Path::ReplaceExtension(BiosPath, "mgkeys");
     Error error;
@@ -79,7 +79,7 @@ static bool cdvdLoadMagicGateKeys(MagicGateCrypto::Keys& keys)
     }
     std::string reason;
     std::vector<std::string> ignoredFields;
-    if (!MagicGateCrypto::ParseKeys(contents, keys, reason, &ignoredFields))
+    if (!MagicGateCrypto::ParseKeys(contents, keys, reason, &ignoredFields, !cardOnly))
     {
         Console.Warning("[MG] MagicGate key file rejected: %s", reason.c_str());
         return false;
@@ -2922,7 +2922,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
                 MagicGateCrypto::Keys cardKeys;
                 // A hardware reset is valid even with unavailable external
                 // crypto keys. The card rejects F7 key selection in that case.
-                cdvdLoadMagicGateKeys(cardKeys);
+                cdvdLoadMagicGateKeys(cardKeys, true);
                 const bool started = cdvd.SCMDParamCnt == 1 &&
                     MagicGateCardAuth::g_runtime.StartMecha(cardKeys, cdvd.SCMDParamBuff[0]);
                 if (!started)
