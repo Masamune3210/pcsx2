@@ -189,7 +189,7 @@ inline bool fail(HeaderResult& out, const char* what) {
 
 // Plain KEY=HEX file. No key values are stored in PCSX2 or written to logs.
 inline bool ParseKeys(const std::string& file,Keys& output,std::string& error,
-    std::vector<std::string>* ignoredFields=nullptr) {
+    std::vector<std::string>* ignoredFields=nullptr, bool requireKelfKeys=true) {
     struct Spec {const char* name; std::uint8_t* buffer;std::size_t len;};
     Keys tmp{};
     Spec specs[]={
@@ -245,7 +245,7 @@ inline bool ParseKeys(const std::string& file,Keys& output,std::string& error,
         seen|=1u<<index;
     }
     constexpr std::uint32_t requiredMask=(1u<<9)-1u;
-    if((seen&requiredMask)!=requiredMask){error="Missing required MagicGate keys";return false;}
+    if(requireKelfKeys && (seen&requiredMask)!=requiredMask){error="Missing required MagicGate keys";return false;}
     tmp.hasContentIV=(seen&(1u<<9))!=0;
     constexpr std::uint32_t cardMask=((1u<<5)-1u)<<10;
     tmp.hasCardKeys=(seen&cardMask)==cardMask;
