@@ -3,6 +3,7 @@
 
 #include "CDVD/CDVD.h"
 #include "CDVD/Ps1CD.h"
+#include "CDVD/MagicGateCrypto.h"
 #include "CDVD/CDVD_internal.h"
 #include "CDVD/IsoReader.h"
 #include "CDVD/IsoFileFormats.h"
@@ -32,6 +33,52 @@
 #include <time.h>
 #endif
 #include <memory>
+
+
+// Verifies KELF independently from the not-yet-implemented card authentication.
+struct MgVerifiedHeaderState {
+    bool active = false;
+    bool authenticated = false;
+    bool returnedBusy = false;
+    MagicGateCrypto::HeaderResult verified;
+};
+static MgVerifiedHeaderState s_mgHeader;
+
+// A per-BIOS .mgkeys file supplies published keys; source and logs never contain them.
+static bool cdvdLoadMagicGateKeys(MagicGateCrypto::Keys& keys)
+{
+    const std::string path = Path::ReplaceExtension(BiosPath, "mgkeys");
+    Error error;
+    auto fp = FileSystem::OpenManagedCFileTryIgnoreCase(path.c_str(), "rb", &error);
+    if (!fp)
+    {
+        Console.Warning("[MG] Missing BIOS-adjacent .mgkeys file; KELF crypto unavailable");
+        return false;
+    }
+    std::string contents;
+    char line[256];
+    while (std::fgets(line, sizeof(line), fp.get()))
+    {
+        contents.append(line);
+        if (contents.size() > 4096)
+        {
+            Console.Warning("[MG] Invalid .mgkeys file length");
+            return false;
+        }
+    }
+    if (std::ferror(fp.get()))
+    {
+        Console.Warning("[MG] Error reading MagicGate key file");
+        return false;
+    }
+    std::string reason;
+    if (!MagicGateCrypto::ParseKeys(contents, keys, reason))
+    {
+        Console.Warning("[MG] MagicGate key file rejected: %s", reason.c_str());
+        return false;
+    }
+    return true;
+}
 
 cdvdStruct cdvd;
 
@@ -114,19 +161,6 @@ static void cdvdSetIrq(uint id = (1 << Irq_CommandComplete))
 	cdvd.AbortRequested = false;
 }
 
-static int mg_BIToffset(u8* buffer)
-{
-	int i, ofs = 0x20;
-	for (i = 0; i < GetBufferU16(&buffer[0], 0x1A); i++)
-		ofs += 0x10;
-
-	if (GetBufferU16(&buffer[0], 0x18) & 1)
-		ofs += buffer[ofs];
-	if ((GetBufferU16(&buffer[0], 0x18) & 0xF000) == 0)
-		ofs += 8;
-
-	return ofs + 0x20;
-}
 
 const NVMLayout* getNvmLayout() noexcept
 {
@@ -917,6 +951,7 @@ static uint cdvdBlockReadTime(CDVD_MODE_TYPE mode) noexcept
 
 void cdvdReset()
 {
+	s_mgHeader = {};
 	std::memset(&cdvd, 0, sizeof(cdvd));
 
 	cdvd.DiscType = CDVD_TYPE_NODISC;
@@ -2939,143 +2974,154 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				cdvd.SCMDResultBuff[0] = 0;
 				break;
 
-			case 0x8D: // sceMgWriteData
-				SetSCMDResultSize(1); //in:length<=16
-				if (cdvd.mg_size + cdvd.SCMDParamCnt > cdvd.mg_maxsize)
-				{
-					cdvd.SCMDResultBuff[0] = 0x80;
-				}
-				else
-				{
-					memcpy(&cdvd.mg_buffer[cdvd.mg_size], cdvd.SCMDParamBuff, cdvd.SCMDParamCnt);
-					cdvd.mg_size += cdvd.SCMDParamCnt;
-					cdvd.SCMDResultBuff[0] = 0; // 0 complete ; 1 busy ; 0x80 error
-				}
-				break;
 
-			case 0x8E: // sceMgReadData
-				SetSCMDResultSize(std::min(16, cdvd.mg_size));
-				memcpy(&cdvd.SCMDResultBuff[0], &cdvd.mg_buffer[0], cdvd.SCMDResultCnt);
-				cdvd.mg_size -= cdvd.SCMDResultCnt;
-				memcpy(&cdvd.mg_buffer[0], &cdvd.mg_buffer[cdvd.SCMDResultCnt], cdvd.mg_size);
-				break;
+            case 0x8C: // Reset the volatile MagicGate worker
+                SetSCMDResultSize(1);
+                s_mgHeader = {};
+                cdvd.mg_size = cdvd.mg_maxsize = cdvd.mg_datatype = 0;
+                std::memset(cdvd.mg_kbit, 0, sizeof(cdvd.mg_kbit));
+                std::memset(cdvd.mg_kcon, 0, sizeof(cdvd.mg_kcon));
+                cdvd.SCMDResultBuff[0] = 0;
+                break;
 
-			case 0x88: // secrman: __mechacon_auth_0x88	//for now it is the same; so, fall;)
-			case 0x8F: // secrman: __mechacon_auth_0x8F
-				SetSCMDResultSize(1); //in:0
-				if (cdvd.mg_datatype == 1) // header data
-				{
-					int bit_ofs = 0;
+            case 0x8D: // Header staging capacity differs from declared header length
+            {
+                SetSCMDResultSize(1);
+                const int maxSize = (s_mgHeader.active && cdvd.mg_datatype == 1) ?
+                    0x800 : cdvd.mg_maxsize;
+                if (cdvd.SCMDParamCnt == 0 || cdvd.SCMDParamCnt > 16 ||
+                    maxSize <= 0 || cdvd.mg_size < 0 ||
+                    cdvd.mg_size + cdvd.SCMDParamCnt > maxSize ||
+                    cdvd.mg_size + cdvd.SCMDParamCnt > static_cast<int>(sizeof(cdvd.mg_buffer)) ||
+                    (s_mgHeader.active && s_mgHeader.returnedBusy))
+                {
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                }
+                else
+                {
+                    std::memcpy(cdvd.mg_buffer + cdvd.mg_size, cdvd.SCMDParamBuff, cdvd.SCMDParamCnt);
+                    cdvd.mg_size += cdvd.SCMDParamCnt;
+                    cdvd.SCMDResultBuff[0] = 0;
+                }
+                break;
+            }
 
-					if ((cdvd.mg_maxsize != cdvd.mg_size) || (cdvd.mg_size < 0x20) || (cdvd.mg_size != GetBufferU16(&cdvd.mg_buffer[0], 0x14)))
-					{
-						Console.Warning("[MGTRACE] HEADER_LENGTH_REJECT received=0x%X requested=0x%X declared=0x%X",
-							cdvd.mg_size, cdvd.mg_maxsize, GetBufferU16(&cdvd.mg_buffer[0], 0x14));
-						fail_pol_cal();
-						break;
-					}
+            case 0x8E: // Stream raw authenticated BIT bytes without a result prefix
+            {
+                if (cdvd.mg_datatype == 1 &&
+                    (!s_mgHeader.authenticated || cdvd.mg_size < 0))
+                {
+                    SetSCMDResultSize(0);
+                    break;
+                }
+                const int n = std::clamp(cdvd.mg_size, 0, 16);
+                SetSCMDResultSize(static_cast<u8>(n));
+                std::memcpy(cdvd.SCMDResultBuff, cdvd.mg_buffer, n);
+                cdvd.mg_size -= n;
+                if (cdvd.mg_size > 0)
+                    std::memmove(cdvd.mg_buffer, cdvd.mg_buffer + n, cdvd.mg_size);
+                break;
+            }
 
-					std::string zoneStr;
-					for (int i = 0; i < 8; i++)
-					{
-						if (cdvd.mg_buffer[0x1C] & (1 << i))
-							zoneStr += mg_zones[i];
-					}
+            case 0x88: // Card authentication completion remains a separate placeholder
+                SetSCMDResultSize(1);
+                cdvd.SCMDResultBuff[0] = 0;
+                break;
 
-					Console.WriteLn("[MG] ELF_size=0x%X Hdr_size=0x%X unk=0x%X flags=0x%X count=%d zones=%s",
-						*(u32*)&cdvd.mg_buffer[0x10], *(u16*)&cdvd.mg_buffer[0x14], *(u16*)&cdvd.mg_buffer[0x16],
-						*(u16*)&cdvd.mg_buffer[0x18], *(u16*)&cdvd.mg_buffer[0x1A],
-						zoneStr.c_str());
+            case 0x8F: // Independently verify the authentic encrypted KELF header
+            {
+                SetSCMDResultSize(1);
+                if (!s_mgHeader.active || cdvd.mg_datatype != 1 ||
+                    cdvd.mg_size < cdvd.mg_maxsize || cdvd.mg_size < 0x20)
+                {
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                    break;
+                }
+                if (!s_mgHeader.returnedBusy)
+                {
+                    s_mgHeader.returnedBusy = true;
+                    cdvd.SCMDResultBuff[0] = 1;
+                    break;
+                }
+                if (s_mgHeader.authenticated)
+                {
+                    cdvd.SCMDResultBuff[0] = 0;
+                    break;
+                }
+                MagicGateCrypto::Keys keys;
+                if (!cdvdLoadMagicGateKeys(keys))
+                {
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                    break;
+                }
+                MagicGateCrypto::HeaderResult output;
+                if (!MagicGateCrypto::VerifyHeader(cdvd.mg_buffer,
+                    static_cast<size_t>(cdvd.mg_size), keys, output))
+                {
+                    Console.Warning("[MG] Header authentication failed: %s", output.error.c_str());
+                    cdvd.SCMDResultBuff[0] = 0x84;
+                    break;
+                }
+                s_mgHeader.verified = std::move(output);
+                s_mgHeader.authenticated = true;
+                std::memcpy(cdvd.mg_kbit, s_mgHeader.verified.kbit.data(), 16);
+                std::memcpy(cdvd.mg_kcon, s_mgHeader.verified.kc.data(), 16);
+                Console.WriteLn("[MG] Verified KELF header: blocks=%u BIT bytes=%zu content bytes=%u",
+                    static_cast<unsigned>(s_mgHeader.verified.blockCount),
+                    s_mgHeader.verified.bit.size(), s_mgHeader.verified.contentSize);
+                cdvd.SCMDResultBuff[0] = 0;
+                break;
+            }
 
-					bit_ofs = mg_BIToffset(&cdvd.mg_buffer[0]);
+            case 0x90: // Begin a new bounded header worker
+            {
+                SetSCMDResultSize(1);
+                s_mgHeader = {};
+                cdvd.mg_size = 0;
+                cdvd.mg_maxsize = cdvd.mg_datatype = 0;
+                std::memset(cdvd.mg_kbit, 0, sizeof(cdvd.mg_kbit));
+                std::memset(cdvd.mg_kcon, 0, sizeof(cdvd.mg_kcon));
+                if (cdvd.SCMDParamCnt != 5 || cdvd.SCMDParamBuff[0] >= 4)
+                {
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                    break;
+                }
+                const int declared = cdvd.SCMDParamBuff[1] |
+                    (static_cast<int>(cdvd.SCMDParamBuff[2]) << 8);
+                if (declared < 0x20 || declared > 0x800)
+                {
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                    break;
+                }
+                cdvd.mg_maxsize = declared;
+                cdvd.mg_datatype = 1;
+                s_mgHeader.active = true;
+                cdvd.SCMDResultBuff[0] = 0;
+                break;
+            }
 
-					const size_t buf_size = sizeof(cdvd.mg_buffer);
+            case 0x91: // Authenticated, decrypted BIT, never raw ciphertext
+            {
+                SetSCMDResultSize(3);
+                if (!s_mgHeader.authenticated || cdvd.mg_datatype != 1 ||
+                    s_mgHeader.verified.bit.empty() ||
+                    s_mgHeader.verified.bit.size() > sizeof(cdvd.mg_buffer))
+                {
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                    break;
+                }
+                const size_t n = s_mgHeader.verified.bit.size();
+                std::memcpy(cdvd.mg_buffer, s_mgHeader.verified.bit.data(), n);
+                cdvd.mg_size = static_cast<int>(n);
+                cdvd.mg_maxsize = 0;
+                cdvd.SCMDResultBuff[0] = 0;
+                cdvd.SCMDResultBuff[1] = static_cast<u8>(n);
+                cdvd.SCMDResultBuff[2] = static_cast<u8>(n >> 8);
+                break;
+            }
 
-					// Validate the BIT location against the bytes actually received before reading its fields.
-					// Keep the original rejection behavior; these diagnostics do not bypass MagicGate.
-					if (bit_ofs < 0x20 || static_cast<size_t>(bit_ofs) > buf_size ||
-						static_cast<size_t>(bit_ofs) > static_cast<size_t>(cdvd.mg_size) - 8)
-					{
-						Console.Warning("[MGTRACE] BIT_BOUNDS_REJECT offset=0x%X received=0x%X capacity=0x%zX",
-							bit_ofs, cdvd.mg_size, buf_size);
-						fail_pol_cal();
-						break;
-					}
-
-					const unsigned int block_count = GetBufferU16(&cdvd.mg_buffer[0], bit_ofs + 4);
-					const unsigned int declared_header_size = GetBufferU16(&cdvd.mg_buffer[0], 0x14);
-					const size_t calculated_header_size = static_cast<size_t>(block_count) * 16 + static_cast<size_t>(bit_ofs) + 8 + 16;
-					const unsigned int reserved5 = cdvd.mg_buffer[bit_ofs + 5];
-					const unsigned int reserved6 = cdvd.mg_buffer[bit_ofs + 6];
-					const unsigned int reserved7 = cdvd.mg_buffer[bit_ofs + 7];
-					Console.WriteLn("[MGTRACE] BIT offset=0x%X blockCount=%u reserved=%02X,%02X,%02X calculatedHeader=0x%zX declaredHeader=0x%X",
-						bit_ofs, block_count, reserved5, reserved6, reserved7, calculated_header_size, declared_header_size);
-					if (reserved5 || reserved6 || reserved7 || calculated_header_size != declared_header_size)
-					{
-						Console.Warning("[MGTRACE] BIT_FORMAT_REJECT reservedNonzero=%d lengthMismatch=%d",
-							(reserved5 || reserved6 || reserved7) ? 1 : 0, (calculated_header_size != declared_header_size) ? 1 : 0);
-						fail_pol_cal();
-						break;
-					}
-
-					const size_t kbit_ofs = bit_ofs - 0x20;
-					const size_t kcon_ofs = bit_ofs - 0x10;
-					std::memcpy(&cdvd.mg_kbit[0], &cdvd.mg_buffer[kbit_ofs], 0x10);
-					std::memcpy(&cdvd.mg_kcon[0], &cdvd.mg_buffer[kcon_ofs], 0x10);
-				}
-				cdvd.SCMDResultBuff[0] = 0; // 0 complete ; 1 busy ; 0x80 error
-				break;
-
-			case 0x90: // sceMgWriteHeaderStart
-				SetSCMDResultSize(1); //in:5
-				cdvd.mg_size = 0;
-				cdvd.mg_datatype = 1; //header data
-				Console.WriteLn("[MG] hcode=%d cnum=%d a2=%d length=0x%X",
-					cdvd.SCMDParamBuff[0], cdvd.SCMDParamBuff[3], cdvd.SCMDParamBuff[4], cdvd.mg_maxsize = cdvd.SCMDParamBuff[1] | (static_cast<int>(cdvd.SCMDParamBuff[2]) << 8));
-
-				cdvd.SCMDResultBuff[0] = 0; // 0 complete ; 1 busy ; 0x80 error
-				break;
-
-			case 0x91: // sceMgReadBITLength
-			{
-				SetSCMDResultSize(3); //in:0
-				const int bit_ofs = mg_BIToffset(&cdvd.mg_buffer[0]);
-
-				if (bit_ofs < 0)
-				{
-					fail_pol_cal();
-					break;
-				}
-
-				const size_t bufsize = sizeof(cdvd.mg_buffer);
-				const size_t ofs = static_cast<size_t>(bit_ofs);
-
-				if (ofs > bufsize - 5) // Make sure we can read the block count
-				{
-					fail_pol_cal();
-					break;
-				}
-				const unsigned int blocks = static_cast<unsigned int>(cdvd.mg_buffer[ofs + 4]);
-				const size_t copy_len = 8 + 16 * static_cast<size_t>(blocks);
-
-				if (copy_len > bufsize - ofs) // Make sure we can read the blocks
-				{
-					fail_pol_cal();
-					break;
-				}
-
-				std::memmove(&cdvd.mg_buffer[0], &cdvd.mg_buffer[ofs], copy_len);
-
-				cdvd.mg_maxsize = 0; // don't allow any write
-				cdvd.mg_size = 8 + 16 * cdvd.mg_buffer[4]; //new offset, i just moved the data
-				Console.WriteLn("[MG] BIT count=%d", cdvd.mg_buffer[4]);
-
-				cdvd.SCMDResultBuff[0] = (cdvd.mg_datatype == 1) ? 0 : 0x80; // 0 complete ; 1 busy ; 0x80 error
-				cdvd.SCMDResultBuff[1] = (cdvd.mg_size >> 0) & 0xFF;
-				cdvd.SCMDResultBuff[2] = (cdvd.mg_size >> 8) & 0xFF;
-				break;
-			}
 			case 0x92: // sceMgWriteDatainLength
+				s_mgHeader = {};
 				SetSCMDResultSize(1); //in:2
 				cdvd.mg_size = 0;
 				cdvd.mg_datatype = 0; //data (encrypted)
@@ -3096,29 +3142,22 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 				}
 				break;
 
-			case 0x94: // sceMgReadKbit - read first half of BIT key
-				SetSCMDResultSize(1 + 8); //in:0
-				cdvd.SCMDResultBuff[0] = 0;
-				memcpy(&cdvd.SCMDResultBuff[1], cdvd.mg_kbit, 8);
-				break;
-
-			case 0x95: // sceMgReadKbit2 - read second half of BIT key
-				SetSCMDResultSize(1 + 8); //in:0
-				cdvd.SCMDResultBuff[0] = 0;
-				memcpy(&cdvd.SCMDResultBuff[1], cdvd.mg_kbit+8, 8);
-				break;
-
-			case 0x96: // sceMgReadKcon - read first half of content key
-				SetSCMDResultSize(1 + 8); //in:0
-				cdvd.SCMDResultBuff[0] = 0;
-				memcpy(&cdvd.SCMDResultBuff[1], cdvd.mg_kcon, 8);
-				break;
-
-			case 0x97: // sceMgReadKcon2 - read second half of content key
-				SetSCMDResultSize(1 + 8); //in:0
-				cdvd.SCMDResultBuff[0] = 0;
-				memcpy(&cdvd.SCMDResultBuff[1], cdvd.mg_kcon + 8, 8);
-				break;
+            case 0x94: // Validated Kbit (first half)
+            case 0x95: // Validated Kbit (second half)
+            case 0x96: // Validated Kc (first half)
+            case 0x97: // Validated Kc (second half)
+                if (!s_mgHeader.authenticated)
+                {
+                    SetSCMDResultSize(1);
+                    cdvd.SCMDResultBuff[0] = 0x80;
+                    break;
+                }
+                SetSCMDResultSize(9);
+                cdvd.SCMDResultBuff[0] = 0;
+                std::memcpy(cdvd.SCMDResultBuff + 1,
+                    (rt == 0x94 || rt == 0x95 ? cdvd.mg_kbit : cdvd.mg_kcon) +
+                    ((rt & 1) ? 8 : 0), 8);
+                break;
 
 			default:
 				SetSCMDResultSize(1); //in:0
@@ -3129,13 +3168,14 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
 		if (trace_mg)
 		{
-			cdvdTraceMagicGateBytes("SCMD_RESPONSE", cdvd.SCMDResultBuff,
-				std::min<size_t>(cdvd.SCMDResultCnt, sizeof(cdvd.SCMDResultBuff)));
-			if ((rt == 0x88 || rt == 0x8F) && cdvd.SCMDResultBuff[0] == 0)
-			{
-				cdvdTraceMagicGateBytes("MG_KBIT", cdvd.mg_kbit, sizeof(cdvd.mg_kbit));
-				cdvdTraceMagicGateBytes("MG_KCON", cdvd.mg_kcon, sizeof(cdvd.mg_kcon));
-			}
+			if (rt >= 0x94 && rt <= 0x97)
+				Console.WriteLn("[MGRAW] SCMD_RESPONSE redacted (verified file key bytes)");
+			else
+				cdvdTraceMagicGateBytes("SCMD_RESPONSE", cdvd.SCMDResultBuff,
+					std::min<size_t>(cdvd.SCMDResultCnt, sizeof(cdvd.SCMDResultBuff)));
+			// Validated file keys must never be emitted into general MGRAW logs.
+			if (rt == 0x8F && s_mgHeader.authenticated)
+				Console.WriteLn("[MGFLOW] KELF verified; derived keys redacted");
 			if (rt == 0x91 && cdvd.SCMDResultBuff[0] == 0)
 			{
 				const size_t buffered = static_cast<size_t>(std::max(cdvd.mg_size, 0));
