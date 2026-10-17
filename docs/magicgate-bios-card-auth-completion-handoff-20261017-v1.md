@@ -1,4 +1,4 @@
-# BIOS card handshake regression isolated from KELF (2026-10-17)
+> **RETRACTED (2026-10-17):** The temporary success-response patch in this branch was reverted in commit `de32f1fcbba5c35859827be205db2e17f940d3b8`. The ps2dev SECRMAN `SecrAuthCard` source proves SCmd 0x8F is polled in **two distinct cryptographic phases** (after 0x83 and after 0x87), with `01` busy, `00` success, and other results failure. The previous patch consumed a one-shot pending flag and produced unauthenticated success for the first phase, so it was neither protocol-correct nor sufficient to authenticate the card. **Do not test or port this approach.** Current investigation is on `note-working/magicgate-card-auth-protocol-20261017`, with updated source-level handoff in `docs/magicgate-card-auth-protocol-handoff-20261017-v1.md`. Material below is retained for the historical regression evidence only.\n\n# BIOS card handshake regression isolated from KELF (2026-10-17)
 
 Branch: `note-working/magicgate-bios-card-auth-completion-20261017`, based on working `note-working/magicgate-authenticated-header-20261017`.
 
