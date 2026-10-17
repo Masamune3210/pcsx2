@@ -67,8 +67,8 @@ int main() {
         std::fputs("Invalid optional IV accepted\n",stderr);++failures;
     }
 
-    // A synthetic two-descriptor BIT: authenticated EDE2-CBC content,
-    // followed by an unprotected range that may cross transfer boundaries.
+    // Synthetic protected-unprotected-protected BIT. Only protected blocks
+    // traverse MechaCon; the loader copies the intervening unprotected range.
     Keys contentKeys{};
     std::copy(key,key+8,contentKeys.sigMaster.begin());
     std::copy(k16.begin(),k16.begin()+8,contentKeys.sigHash.begin());
@@ -76,14 +76,16 @@ int main() {
     contentKeys.hasContentIV=true;
     HeaderResult header{};
     header.valid=true;
-    header.blockCount=2;
+    header.blockCount=3;
     header.contentKeyCount=2;
-    header.contentSize=24;
-    header.bit.resize(8+2*16);
-    header.bit[4]=2;
+    header.contentSize=40;
+    header.bit.resize(8+3*16);
+    header.bit[4]=3;
     header.bit[8]=16; // first block: 16 bytes, encrypted and signed
     header.bit[12]=3;
     header.bit[24]=8; // second block: 8 raw unsigned bytes
+    header.bit[40]=16; // third block: another 16 protected bytes
+    header.bit[44]=3;
     const std::uint8_t firstPlain[16]={0x7f,'E','L','F',4,5,6,7,8,9,10,11,12,13,14,15};
     auto firstCipher=cbc(firstPlain,16,k16.data(),true,false,iv);
     header.kc=k16;
@@ -94,6 +96,7 @@ int main() {
     std::copy(contentKeys.sigMaster.begin(),contentKeys.sigMaster.end(),macKeys.begin());
     std::copy(contentKeys.sigHash.begin(),contentKeys.sigHash.end(),macKeys.begin()+8);
     toBe(ede2(fromBe(signature.data()),macKeys,false),header.bit.data()+16);
+    std::copy(header.bit.begin()+16,header.bit.begin()+24,header.bit.begin()+48);
     ContentResult transfer;
     if(!DecryptContentTransfer(firstCipher.data(),firstCipher.size(),contentKeys,header,{},transfer) ||
        transfer.plaintext.size()!=16 || !eq(transfer.plaintext.data(),firstPlain,16) ||
@@ -117,18 +120,25 @@ int main() {
     contentKeys.hasContentIV=true;
     const std::uint8_t raw[8]={1,2,3,4,5,6,7,8};
     ContentCursor cursor{1,0};
-    if(!DecryptContentTransfer(raw,3,contentKeys,header,cursor,transfer) ||
-       transfer.next.blockIndex!=1 || transfer.next.blockOffset!=3 ||
-       transfer.plaintext.size()!=3 || !eq(transfer.plaintext.data(),raw,3)) {
-        std::fputs("Unsigned partial content FAILED\n",stderr);++failures;
+    if(DecryptContentTransfer(raw,sizeof(raw),contentKeys,header,cursor,transfer) ||
+       transfer.valid || !transfer.plaintext.empty()) {
+        std::fputs("Unprotected BIT bytes accepted by MechaCon\n",stderr);++failures;
     }
-    cursor={1,3};
-    if(!DecryptContentTransfer(raw+3,5,contentKeys,header,cursor,transfer) ||
-       transfer.next.blockIndex!=2 || transfer.next.blockOffset!=0 ||
-       transfer.plaintext.size()!=5 || !eq(transfer.plaintext.data(),raw+3,5)) {
-        std::fputs("Unsigned descriptor completion FAILED\n",stderr);++failures;
+    if(!DecryptContentTransfer(firstCipher.data(),firstCipher.size(),contentKeys,header,cursor,transfer) ||
+       transfer.next.blockIndex!=3 || transfer.next.blockOffset!=0 ||
+       transfer.plaintext.size()!=16 || !eq(transfer.plaintext.data(),firstPlain,16)) {
+        std::fputs("Protected block following unprotected BIT descriptor FAILED\n",stderr);++failures;
     }
-    if(DecryptContentTransfer(raw,8,contentKeys,header,{2,0},transfer)) {
+    auto bothCipher=firstCipher;
+    bothCipher.insert(bothCipher.end(),firstCipher.begin(),firstCipher.end());
+    if(!DecryptContentTransfer(bothCipher.data(),bothCipher.size(),contentKeys,header,{},transfer) ||
+       transfer.next.blockIndex!=3 || transfer.next.blockOffset!=0 ||
+       transfer.plaintext.size()!=32 ||
+       !eq(transfer.plaintext.data(),firstPlain,16) ||
+       !eq(transfer.plaintext.data()+16,firstPlain,16)) {
+        std::fputs("Protected transfers separated by unprotected BIT descriptor FAILED\n",stderr);++failures;
+    }
+    if(DecryptContentTransfer(raw,sizeof(raw),contentKeys,header,{3,0},transfer)) {
         std::fputs("Past-BIT data accepted\n",stderr);++failures;
     }
     // Signed plaintext descriptor follows the DES CBC -> D(hash) -> E(master) MAC.
