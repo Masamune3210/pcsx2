@@ -35,3 +35,32 @@ The successful authenticated HDD Utility install and existing KELF behavior on t
 ## Previous abandoned approach
 
 Sibling branch `note-working/sio2-ps2-pocketstation-probe-20261017` originally changed SIO2 PS1 command handling but reverted that speculative change. This was not evidence-based and should not be used as the fix. Sibling `note-working/sio-card-identification-format-trace-20261017` is an instrumentation-only experiment and is not needed to test the 0x8F regression. Preserve oververbose MagicGate logging while debugging.
+
+
+## Memory-card authentication and mount sequence supplied by user
+
+The observed protocol progression (not independently captured as SIO2 bytes by the earlier `emulog.txt`) is:
+
+```text
+81 11             Presence probe
+81 F3             Driver authentication reset
+81 F3             SECRMAN authentication reset
+81 F7 01          Select authentication key mode
+81 F0 00..14      Authentication exchange, interleaved
+                  with MechaCon SCmd 80–88 and 8F
+81 28             Get terminator
+81 27 5A          Set terminator to 5A
+81 26             Get card geometry
+81 23 <page>      Select page to read
+81 43 <length>    Read data chunks and spare/ECC bytes
+81 81             End read
+                  Validate superblock, backup metadata,
+                  root directory, and mount filesystem
+```
+
+Source mapping: `pcsx2/SIO/SioTypes.h` defines PROBE=0x11, AUTH_F3=0xf3, AUTH_F7=0xf7, AUTH_XOR=0xf0, GET_TERMINATOR=0x28, SET_TERMINATOR=0x27, GET_SPECS=0x26, SET_READ_SECTOR=0x23, READ_DATA=0x43, READ_WRITE_END=0x81. Dispatch in `Sio2.cpp` matches the list. `MemoryCardProtocol::AuthXor` handles fixed-length framed/XOR responses for submodes, not full cryptographic challenge-response; `AuthF3` resets the terminator to READY for a present card; `AuthF7` returns a framing terminator. The two F3 calls are separate points in the protocol, not distinct SIO command codes.
+
+Thus the BIOS's empty-data SCmd `0x8F` belongs to **memory-card authentication orchestration**, and should not be processed as an incomplete `0x92` KELF content transfer. The legacy completion reply is a compatibility placeholder pending actual emulation of the card/MechaCon exchange and should not be described as verified card authentication.
+
+Expected next stage after the corrected `0x8F`: card terminator/geometry, page reads, and filesystem validation; compare against same-build pre-regression baseline if possible. The UI's PocketStation fallback is correlated with `0x8F` rejection but not yet independently traced to the exact BIOS decision. Formatting errors involving first-page writes may be downstream of the incomplete exchange or a separate fault; test rather than assuming.
+
