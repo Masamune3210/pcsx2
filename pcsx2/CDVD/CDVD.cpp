@@ -3205,6 +3205,14 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
                             (static_cast<u32>(bit[at + 1]) << 8) |
                             (static_cast<u32>(bit[at + 2]) << 16) |
                             (static_cast<u32>(bit[at + 3]) << 24);
+                        const u32 blockFlags = static_cast<u32>(bit[at + 4]) |
+                            (static_cast<u32>(bit[at + 5]) << 8) |
+                            (static_cast<u32>(bit[at + 6]) << 16) |
+                            (static_cast<u32>(bit[at + 7]) << 24);
+                        // Unprotected descriptors are read directly by the loader
+                        // and never consume MagicGate content transfer capacity.
+                        if (blockFlags == 0)
+                            continue;
                         if (i == cursor.blockIndex)
                         {
                             if (cursor.blockOffset > blockSize)
