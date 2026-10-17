@@ -91,9 +91,11 @@ struct Runtime {
         ready=keys.hasCardKeys;
         mecha=Mecha{};
         mecha.cnum=cnum;
-        mecha.phase=ready?Phase::Reset:Phase::Idle;
+        mecha.phase=Phase::Reset;
         activePort=activeSlot=-1;
-        return ready;
+        // Resetting the hardware auth controller succeeds even if external
+        // card keys are unavailable. The card rejects key selection later.
+        return true;
     }
     void ResetCard(unsigned port,unsigned slot)
     {
