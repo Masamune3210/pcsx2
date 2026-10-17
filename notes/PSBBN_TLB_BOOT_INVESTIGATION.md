@@ -116,6 +116,26 @@ Relevant exact source: [fork vtlb.cpp on testing](https://github.com/Masamune321
 
 **State:** Documentation only. No fixes, workarounds, emulator binaries, keys, BIOS, or game content committed.
 
+### Interpreter differential: repeated TLBWR (2026-10-17)
+
+Switching **EE recompiler off** replaces the visible recompiler store-miss sequence with an apparent fast repetition of:
+
+```text
+[ 1802.0182] COP0_TLBWR 0:0,fb88101,0,0
+```
+
+The exact same five fields repeat hundreds/thousands of times in the user's reported log excerpt. This output is printed unconditionally on the interpreter-side `R5900::Interpreter::OpcodeImpl::COP0::TLBWR()` code path, `pcsx2/COP0.cpp`, **even though the line is routed through a development-console warning and not itself an error return**.
+
+The fields come from source as `Random:PageMask,EntryHi,EntryLo0,EntryLo1`. So the observed state is `Random=0`, `PageMask=0` (4 KiB pages), `EntryHi=0x0FB88101`, and both `EntryLo` registers `0` (neither page valid). TLBWR picks `j=Random&0x3F`; all reported calls target index 0 with those values, and `MapTLB` maps only if an EntryLo valid bit is set. An invalid TLBWR *can be normal* (invalidation or flush), so this alone does not establish the causal failure.
+
+**Do not assume** this is the same fault/PC as the recompiler's stores at `pc=0x801A4930` and `addr=0xC0005000...`. The interpreter trace currently lacks guest PC, COP0 `EPC`/`Cause`/`Status`/`BadVAddr`, `Wired` and associated transitions. There may be repeated guest-exception entry, incorrect `Random` register evolution, or an independent initialization/invalidation loop. Need evidence, not a workaround.
+
+Relevant exact code:
+- [COP0.cpp TLBWR / WriteTLB / MapTLB](https://github.com/Masamune3210/pcsx2/blob/testing/pcsx2/COP0.cpp)
+- [R5900.cpp cpuTlbMiss and cpuException](https://github.com/Masamune3210/pcsx2/blob/testing/pcsx2/R5900.cpp)
+
+**Next diagnostic:** From the earliest repeated TLBWR in the *interpreter* run, capture guest PC and decoded nearby instructions, `Random`, `Wired`, `EntryHi`, both `EntryLo` values, `Index`, `Status`, `Cause`, `EPC`, `BadVAddr`, plus the preceding TLB exceptions and changes. Verify whether Random should move and whether the guest code is attempting to initialize/flush entries or service recurring faults. Collect only bounded samples, not another million lines.
+
 ## First next step
 
 Collect a **non-destructive baseline run** of PSBBN (Definitive Project) on the current fork using a disposable HDD image, identifying whether the first failure occurs in HDD/ATA/MBR/KELF or at Linux EE TLB initialization. In parallel, inspect PCSX2's existing TLB logic and review closed PR #14847 *line by line* to extract hypotheses for testable fixes.
