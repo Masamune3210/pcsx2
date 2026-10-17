@@ -5,6 +5,8 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#include <vector>
 
 using namespace MagicGateCardAuth;
 static void Check(bool ok, const char* what)
@@ -87,8 +89,36 @@ static void RoundTrip(bool mutateResponse)
         Check(!r.Complete88(),"reject completion after bad response");
     }
 }
+static void ParseExternalCardKeys()
+{
+    std::string config;
+    auto entry=[&](const char* name,unsigned bytes)
+    {
+        config+=std::string(name)+"="+std::string(bytes*2,'0')+"\n";
+    };
+    entry("MG_SIG_MASTER_KEY",8);entry("MG_SIG_HASH_KEY",8);
+    entry("MG_KBIT_MASTER_KEY",16);entry("MG_KBIT_IV",8);
+    entry("MG_KC_MASTER_KEY",16);entry("MG_KC_IV",8);
+    entry("MG_ROOTSIG_MASTER_KEY",8);entry("MG_ROOTSIG_HASH_KEY",16);
+    entry("MG_CONTENT_TABLE_IV",8);
+    entry("MG_CARDIV_0",8);entry("MG_CARDKEY_0",16);
+    entry("MG_CARDIV2_0",8);entry("MG_CARDKEY2_0",16);
+    entry("MG_CHALLENGE_IV",8);
+    entry("MG_CARDKEY_1",16); // different keyset, not silently used for CEX
+    Keys parsed;
+    std::string error;
+    std::vector<std::string> ignored;
+    Check(MagicGateCrypto::ParseKeys(config,parsed,error,&ignored),"parse external card keys");
+    Check(parsed.hasCardKeys,"recognize all five external card-key fields");
+    Check(ignored.size()==1 && ignored[0]=="MG_CARDKEY_1","ignore other card keyset");
+    Keys missing;
+    config.erase(config.find("MG_CHALLENGE_IV="),config.find("MG_CARDKEY_1=")-config.find("MG_CHALLENGE_IV="));
+    Check(MagicGateCrypto::ParseKeys(config,missing,error),"retain KELF parsing with partial card keys");
+    Check(!missing.hasCardKeys,"reject incomplete card auth keyset");
+}
 int main()
 {
+    ParseExternalCardKeys();
     Runtime r;
     Check(r.StartMecha(Keys{},3),"hardware auth reset succeeds without external keys");
     Check(!r.SelectCardKey(0,0,1),"reject retail card key selection without key material");
