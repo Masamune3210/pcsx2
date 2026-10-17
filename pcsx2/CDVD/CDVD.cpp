@@ -3175,15 +3175,45 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 			case 0x92: // Start another authenticated content input transfer
             {
                 SetSCMDResultSize(1);
+                // A new transfer cannot discard staged ciphertext or unread verified
+                // plaintext. The authenticated header and BIT cursor remain intact.
                 if (cdvd.SCMDParamCnt != 2 || !s_mgHeader.authenticated ||
-                    (cdvd.mg_datatype == 0 && s_mgHeader.contentVerified &&
-                     cdvd.mg_size != 0))
+                    (cdvd.mg_datatype == 0 &&
+                     ((!s_mgHeader.contentVerified && cdvd.mg_maxsize > 0) ||
+                      (s_mgHeader.contentVerified && cdvd.mg_size != 0))))
                 {
                     cdvd.SCMDResultBuff[0] = 0x80;
                     break;
                 }
                 const int size = cdvd.SCMDParamBuff[0] | (static_cast<int>(cdvd.SCMDParamBuff[1]) << 8);
-                if (size == 0 || size > static_cast<int>(sizeof(cdvd.mg_buffer)))
+                // Do not accept data beyond the last authenticated BIT descriptor.
+                // A transfer may cover multiple descriptors, so calculate the
+                // remaining size rather than assuming the next block's length.
+                const auto& bit = s_mgHeader.verified.bit;
+                const auto cursor = s_mgHeader.contentCursor;
+                size_t remaining = 0;
+                if (cursor.blockIndex <= s_mgHeader.verified.blockCount &&
+                    bit.size() == 8 + static_cast<size_t>(s_mgHeader.verified.blockCount) * 16)
+                {
+                    for (size_t i = cursor.blockIndex; i < s_mgHeader.verified.blockCount; ++i)
+                    {
+                        const size_t at = 8 + i * 16;
+                        const u32 blockSize = static_cast<u32>(bit[at]) |
+                            (static_cast<u32>(bit[at + 1]) << 8) |
+                            (static_cast<u32>(bit[at + 2]) << 16) |
+                            (static_cast<u32>(bit[at + 3]) << 24);
+                        if (i == cursor.blockIndex)
+                        {
+                            if (cursor.blockOffset > blockSize)
+                                break;
+                            remaining += blockSize - cursor.blockOffset;
+                        }
+                        else
+                            remaining += blockSize;
+                    }
+                }
+                if (size == 0 || size > static_cast<int>(sizeof(cdvd.mg_buffer)) ||
+                    static_cast<size_t>(size) > remaining)
                 {
                     cdvd.SCMDResultBuff[0] = 0x80;
                     break;
