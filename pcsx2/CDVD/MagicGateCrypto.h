@@ -19,7 +19,8 @@ using B8 = std::array<std::uint8_t, 8>;
 using B16 = std::array<std::uint8_t, 16>;
 
 struct Keys {
-    B8 sigMaster{}, sigHash{}, kbitIV{}, kcIV{}, rootMaster{}, tableIV{};
+    B8 sigMaster{}, sigHash{}, kbitIV{}, kcIV{}, rootMaster{}, tableIV{}, contentIV{};
+    bool hasContentIV = false;
     B16 kbitMaster{}, kcMaster{}, rootHash{};
 };
 
@@ -27,7 +28,7 @@ struct HeaderResult {
     std::vector<std::uint8_t> bit;
     B16 kbit{}, kc{};
     std::uint32_t contentOffset = 0, contentSize = 0;
-    std::uint8_t blockCount = 0;
+    std::uint8_t blockCount = 0, contentKeyCount = 0;
     std::string error;
     bool valid = false;
 };
@@ -195,7 +196,8 @@ inline bool ParseKeys(const std::string& file,Keys& output,std::string& error) {
         {"MG_KC_IV",tmp.kcIV.data(),8},
         {"MG_ROOTSIG_MASTER_KEY",tmp.rootMaster.data(),8},
         {"MG_ROOTSIG_HASH_KEY",tmp.rootHash.data(),16},
-        {"MG_CONTENT_TABLE_IV",tmp.tableIV.data(),8}
+        {"MG_CONTENT_TABLE_IV",tmp.tableIV.data(),8},
+        {"MG_CONTENT_IV",tmp.contentIV.data(),8}
     };
     std::uint32_t seen=0;
     std::istringstream lines(file);
@@ -209,10 +211,7 @@ inline bool ParseKeys(const std::string& file,Keys& output,std::string& error) {
         const std::string name=line.substr(start,last-start+1);
         const auto found=std::find_if(std::begin(specs),std::end(specs),
             [&](const Spec& s){return name==s.name;});
-        if(found==std::end(specs)) { // The optional content IV is not used for header authentication.
-            if(name=="MG_CONTENT_IV")continue;
-            error="Unexpected key field: "+name;return false;
-        }
+        if(found==std::end(specs)) {error="Unexpected key field: "+name;return false;}
         const unsigned index=static_cast<unsigned>(found-std::begin(specs));
         if(seen&(1u<<index)){error="Duplicate key field: "+name;return false;}
         const std::size_t valueStart=line.find_first_not_of(" \t\r",eq+1);
@@ -232,7 +231,9 @@ inline bool ParseKeys(const std::string& file,Keys& output,std::string& error) {
         }
         seen|=1u<<index;
     }
-    if(seen!=((1u<<std::size(specs))-1u)){error="Missing required MagicGate keys";return false;}
+    constexpr std::uint32_t requiredMask=(1u<<9)-1u;
+    if((seen&requiredMask)!=requiredMask){error="Missing required MagicGate keys";return false;}
+    tmp.hasContentIV=(seen&(1u<<9))!=0;
     output=tmp;
     error.clear();
     return true;
@@ -327,9 +328,109 @@ inline bool VerifyHeader(const std::uint8_t* bytes,std::size_t len,const Keys& k
     out.contentOffset=contentOffset;
     out.contentSize=static_cast<std::uint32_t>(contentSize);
     out.blockCount=blockCount;
+    out.contentKeyCount=static_cast<std::uint8_t>((flags>>4)&3);
     out.bit=std::move(bit);
     out.kbit=kbit;
     out.kc=kc;
     return true;
 }
+
+struct ContentCursor {
+    std::size_t blockIndex = 0;
+    std::uint32_t blockOffset = 0;
+};
+
+struct ContentResult {
+    std::vector<std::uint8_t> plaintext;
+    ContentCursor next;
+    std::string error;
+    bool valid = false;
+};
+
+// Process a SCmd92 input window. A signed/encrypted descriptor must arrive
+// complete so its authentication can finish before any plaintext is released.
+// Unsigned plaintext descriptors may be split across arbitrary windows.
+inline bool DecryptContentTransfer(const std::uint8_t* input, std::size_t length,
+                                   const Keys& keys, const HeaderResult& header,
+                                   ContentCursor cursor, ContentResult& result) {
+    using namespace Detail;
+    result = ContentResult{};
+    auto failContent = [&](const char* why) {
+        result = ContentResult{};
+        result.error = why;
+        return false;
+    };
+    if (!header.valid || header.bit.size() != 8 + static_cast<std::size_t>(header.blockCount)*16)
+        return failContent("Missing authenticated BIT");
+    if (!input || !length || length > 0xffff)
+        return failContent("Invalid content transfer length");
+    result.plaintext.reserve(length);
+    std::size_t pos = 0;
+    while (pos < length) {
+        if (cursor.blockIndex >= header.blockCount)
+            return failContent("Content exceeds authenticated BIT");
+        const std::uint8_t* desc = header.bit.data() + 8 + cursor.blockIndex*16;
+        const std::uint32_t size = u32(desc);
+        const std::uint32_t flags = u32(desc+4);
+        if (cursor.blockOffset > size)
+            return failContent("Invalid content cursor");
+        if (!size || cursor.blockOffset == size) {
+            ++cursor.blockIndex;
+            cursor.blockOffset = 0;
+            continue;
+        }
+        const std::size_t count = std::min<std::size_t>(size-cursor.blockOffset, length-pos);
+        if (flags && (cursor.blockOffset || count != size))
+            return failContent("Protected BIT block needs a complete transfer");
+        if ((flags & 1) && (!keys.hasContentIV || (size % 8) || (header.contentKeyCount != 1 && header.contentKeyCount != 2)))
+            return failContent("Missing IV or unsupported content cipher");
+        if ((flags & 2) && (size < 8 || (size % 8)))
+            return failContent("Invalid signed block size");
+        std::vector<std::uint8_t> plain;
+        if (flags & 1) {
+            plain = cbc(input+pos, count, header.kc.data(),
+                        header.contentKeyCount == 2, true, keys.contentIV);
+            if (plain.size() != count)
+                return failContent("Content decryption failed");
+        } else {
+            plain.assign(input+pos, input+pos+count);
+        }
+        if (flags & 2) {
+            B8 calculated{};
+            if (flags & 1) {
+                // Encrypted-block MAC: XOR decrypted eight-byte words,
+                // then two-key EDE under the header signature keys.
+                for (std::size_t j=0; j<plain.size(); j+=8)
+                    for (int k=0; k<8; ++k) calculated[k]^=plain[j+k];
+                B16 macKeys{};
+                std::copy(keys.sigMaster.begin(), keys.sigMaster.end(), macKeys.begin());
+                std::copy(keys.sigHash.begin(), keys.sigHash.end(), macKeys.begin()+8);
+                toBe(ede2(fromBe(calculated.data()),macKeys,false),calculated.data());
+            } else {
+                // Unencrypted signed-block MAC: DES CBC, D(Khash), E(Kmaster).
+                B8 zero{};
+                const auto chain = cbc(plain.data(), plain.size(), keys.sigMaster.data(), false, false, zero);
+                if (chain.empty())
+                    return failContent("Invalid signed block");
+                std::uint64_t signature=fromBe(chain.data()+chain.size()-8);
+                signature=desBlock(signature,keys.sigHash.data(),true);
+                signature=desBlock(signature,keys.sigMaster.data(),false);
+                toBe(signature,calculated.data());
+            }
+            if (!eq(calculated.data(), desc+8, 8))
+                return failContent("Content block signature mismatch");
+        }
+        result.plaintext.insert(result.plaintext.end(),plain.begin(),plain.end());
+        pos += count;
+        cursor.blockOffset += static_cast<std::uint32_t>(count);
+        if (cursor.blockOffset == size) {
+            ++cursor.blockIndex;
+            cursor.blockOffset = 0;
+        }
+    }
+    result.next = cursor;
+    result.valid = true;
+    return true;
+}
+
 } // namespace MagicGateCrypto
