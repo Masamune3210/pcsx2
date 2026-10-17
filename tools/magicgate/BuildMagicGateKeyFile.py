@@ -19,14 +19,17 @@ REQUIRED = {
     "MG_ROOTSIG_HASH_KEY": 16,
     "MG_CONTENT_TABLE_IV": 8,
 }
+OPTIONAL = {"MG_CONTENT_IV": 8}
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("public_keys_json", type=Path)
     parser.add_argument("selected_bios_path", type=Path)
     args = parser.parse_args()
     keys = json.loads(args.public_keys_json.read_text(encoding="utf-8"))
-    for name, expected in REQUIRED.items():
+    for name, expected in {**REQUIRED, **OPTIONAL}.items():
         value = keys.get(name)
+        if name in OPTIONAL and value is None:
+            continue
         if not isinstance(value, str) or len(value) != expected * 2:
             raise SystemExit("Missing or wrong key length: " + name)
         try:
@@ -41,7 +44,7 @@ def main():
     try:
         with os.fdopen(fd, "w", encoding="ascii", newline="\n") as stream:
             stream.write("# User-supplied public PS2 KELF keys; do not add to Git.\n")
-            for name in REQUIRED:
+            for name in (*REQUIRED, *(name for name in OPTIONAL if name in keys)):
                 stream.write(name + "=" + keys[name].upper() + "\n")
     except BaseException:
         try:
