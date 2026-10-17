@@ -42,6 +42,30 @@ int main() {
         std::fputs("Accepted zero KELF header\n",stderr);++failures;
     }
 
+    // Header-only .mgkeys files remain valid; content IV is optional but validated.
+    const std::pair<const char*,int> fields[] = {
+        {"MG_SIG_MASTER_KEY",8}, {"MG_SIG_HASH_KEY",8},
+        {"MG_KBIT_MASTER_KEY",16}, {"MG_KBIT_IV",8},
+        {"MG_KC_MASTER_KEY",16}, {"MG_KC_IV",8},
+        {"MG_ROOTSIG_MASTER_KEY",8}, {"MG_ROOTSIG_HASH_KEY",16},
+        {"MG_CONTENT_TABLE_IV",8}
+    };
+    std::string config;
+    for(const auto& field:fields)
+        config+=std::string(field.first)+"="+std::string(field.second*2,'0')+"\\n";
+    if(!ParseKeys(config,parsed,why) || parsed.hasContentIV) {
+        std::fputs("Header-only key parsing FAILED\n",stderr);++failures;
+    }
+    const std::string withContentIV=config+"MG_CONTENT_IV=0011223344556677\\n";
+    if(!ParseKeys(withContentIV,parsed,why) || !parsed.hasContentIV ||
+       parsed.contentIV[0]!=0 || parsed.contentIV[7]!=0x77) {
+        std::fputs("Optional content IV parsing FAILED\n",stderr);++failures;
+    }
+    if(ParseKeys(withContentIV+"MG_CONTENT_IV=0011223344556677\\n",parsed,why) ||
+       ParseKeys(config+"MG_CONTENT_IV=00\\n",parsed,why)) {
+        std::fputs("Invalid optional IV accepted\n",stderr);++failures;
+    }
+
     // A synthetic two-descriptor BIT: authenticated EDE2-CBC content,
     // followed by an unprotected range that may cross transfer boundaries.
     Keys contentKeys{};
