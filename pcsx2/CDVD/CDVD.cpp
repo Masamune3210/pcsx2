@@ -40,8 +40,6 @@ struct MgVerifiedHeaderState {
     bool active = false;
     bool authenticated = false;
     bool returnedBusy = false;
-    // Legacy 0x80/0x81 card-handshake completion is distinct from KELF data authentication.
-    bool legacyAuthCompletionPending = false;
     bool contentBusy = false;
     bool contentVerified = false;
     bool contentOutputReady = false;
@@ -2916,14 +2914,12 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 			case 0x80: // secrman: __mechacon_auth_0x80
 				SetSCMDResultSize(1); //in:1
 				cdvd.mg_datatype = 0; //data
-				s_mgHeader.legacyAuthCompletionPending = true;
 				cdvd.SCMDResultBuff[0] = 0;
 				break;
 
 			case 0x81: // secrman: __mechacon_auth_0x81
 				SetSCMDResultSize(1); //in:1
 				cdvd.mg_datatype = 0; //data
-				s_mgHeader.legacyAuthCompletionPending = true;
 				cdvd.SCMDResultBuff[0] = 0;
 				break;
 
@@ -3040,23 +3036,9 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
                 cdvd.SCMDResultBuff[0] = 0;
                 break;
 
-            case 0x8F: // Complete legacy card handshake or authenticate KELF transfer
+            case 0x8F: // Independently verify the authentic encrypted KELF header
             {
                 SetSCMDResultSize(1);
-                // BIOS OSDSYS uses 0x80/0x81/0x82/0x83/0x8F with no staged
-                // KELF input. Previously 0x8F returned success; the KELF worker
-                // rejected it. The affected build also identifies PS2 cards as PocketStations.
-                // Keep this legacy response limited to an empty, non-content
-                // handshake. It does not claim cryptographic card verification.
-                if (cdvd.mg_datatype == 0 && s_mgHeader.legacyAuthCompletionPending &&
-                    cdvd.mg_size == 0 && cdvd.mg_maxsize == 0 &&
-                    !s_mgHeader.contentBusy && !s_mgHeader.contentVerified &&
-                    !s_mgHeader.contentOutputReady)
-                {
-                    s_mgHeader.legacyAuthCompletionPending = false;
-                    cdvd.SCMDResultBuff[0] = 0;
-                    break;
-                }
                 if (cdvd.mg_datatype == 0)
                 {
                     if (!s_mgHeader.authenticated || cdvd.mg_size <= 0)
