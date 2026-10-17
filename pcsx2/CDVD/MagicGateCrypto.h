@@ -351,9 +351,9 @@ struct ContentResult {
     bool valid = false;
 };
 
-// Process a SCmd92 input window. A signed/encrypted descriptor must arrive
-// complete so its authentication can finish before any plaintext is released.
-// Unsigned plaintext descriptors may be split across arbitrary windows.
+// Process a SCmd92 input window. Only protected BIT descriptors traverse
+// MechaCon; the loader copies unprotected descriptors directly. A protected
+// descriptor must arrive complete before authenticated output is released.
 inline bool DecryptContentTransfer(const std::uint8_t* input, std::size_t length,
                                    const Keys& keys, const HeaderResult& header,
                                    ContentCursor cursor, ContentResult& result) {
