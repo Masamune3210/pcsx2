@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'pcsx2/CDVD/MagicGateCrypto.h'
+      - 'pcsx2/CDVD/MagicGateCardAuth.h'
+      - 'tools/magicgate/SmokeMagicGateCardAuth_20261017_v1.cpp'
       - 'tools/magicgate/SmokeMagicGateCrypto.cpp'
       - 'tools/magicgate/VerifyMagicGateFirstBlock_20261017_v1.cpp'
       - '.github/workflows/magicgate-crypto-standalone-20261017-v1.yml'
@@ -18,5 +20,9 @@ jobs:
         run: c++ -std=c++20 -O2 -Wall -Wextra -Werror -Ipcsx2 tools/magicgate/SmokeMagicGateCrypto.cpp -o /tmp/magicgate-crypto-smoke
       - name: Compile private-fixture regression runner (fixture stays local)
         run: c++ -std=c++20 -O2 -Wall -Wextra -Werror -Ipcsx2 tools/magicgate/VerifyMagicGateFirstBlock_20261017_v1.cpp -o /tmp/magicgate-content-regression
+      - name: Compile independent card↔MechaCon authentication regression
+        run: c++ -std=c++20 -O2 -Wall -Wextra -Werror -Ipcsx2 tools/magicgate/SmokeMagicGateCardAuth_20261017_v1.cpp -o /tmp/magicgate-card-auth-smoke
       - name: Run public synthetic vectors and reject invalid headers
         run: /tmp/magicgate-crypto-smoke
+      - name: Verify two-stage card authentication and tamper rejection
+        run: /tmp/magicgate-card-auth-smoke
