@@ -90,7 +90,8 @@ static void RoundTrip(bool mutateResponse)
 int main()
 {
     Runtime r;
-    Check(!r.StartMecha(Keys{},3),"reject missing optional retail keys");
+    Check(r.StartMecha(Keys{},3),"hardware auth reset succeeds without external keys");
+    Check(!r.SelectCardKey(0,0,1),"reject retail card key selection without key material");
     Check(r.Poll()==0x80,"reject card completion without keys");
     Check(r.StartMecha(SyntheticKeys(),3),"start with synthetic keys");
     Check(!r.SelectCardKey(0,0,0),"reject unsupported DEX keymode");
