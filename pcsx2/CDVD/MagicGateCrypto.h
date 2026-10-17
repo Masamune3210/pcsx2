@@ -378,7 +378,10 @@ inline bool DecryptContentTransfer(const std::uint8_t* input, std::size_t length
         const std::uint32_t flags = u32(desc+4);
         if (cursor.blockOffset > size)
             return failContent("Invalid content cursor");
-        if (!size || cursor.blockOffset == size) {
+        // The loader copies unprotected BIT blocks itself. Only protected blocks
+        // are submitted to MechaCon via SCmd 0x92/0x8D. Advance the BIT cursor
+        // across those descriptors without consuming transfer bytes.
+        if (!size || cursor.blockOffset == size || flags == 0) {
             ++cursor.blockIndex;
             cursor.blockOffset = 0;
             continue;
