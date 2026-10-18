@@ -19,7 +19,6 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
-import ghidra.program.model.symbol.SymbolIterator;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -60,8 +59,8 @@ public class ReconcilePsbbnVmlinuxSymbols_20261018_v1 extends GhidraScript {
         return toAddr(offset);
     }
     private boolean hasNameAt(Address a,String name) {
-        SymbolIterator it=currentProgram.getSymbolTable().getSymbolsAsIterator(a);
-        while(it.hasNext()) if (it.next().getName().equals(name)) return true;
+        Symbol[] symbols=currentProgram.getSymbolTable().getSymbols(a);
+        for (Symbol symbol : symbols) if (symbol.getName().equals(name)) return true;
         return false;
     }
     private void label(Address a,String name) {
@@ -127,7 +126,7 @@ public class ReconcilePsbbnVmlinuxSymbols_20261018_v1 extends GhidraScript {
         }
         currentProgram.getBookmarkManager().setBookmark(addr,"Note",CATEGORY,note);
     }
-    private void checkBytes(long va, int... expected) {
+    private void checkBytes(long va, int... expected) throws Exception {
         Address a=at(va);
         for (int i=0;i<expected.length;i++) {
             if ((currentProgram.getMemory().getByte(a.add(i)) & 255) != expected[i])
