@@ -84,7 +84,7 @@ void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail, int selected, b
 	u32 target_handler = 0xffffffffu;
 	if (vtlb_private::vtlbdata.vmap)
 	{
-		const auto mapping = vtlb_private::vtlbdata.vmap[0xc0005000u >> VTLB_PAGE_BITS];
+		const auto mapping = vtlb_private::vtlbdata.vmap[0xc0005000u >> vtlb_private::VTLB_PAGE_BITS];
 		// FFFFFFFF means direct pointer; otherwise this is a handler ID, not a validity verdict.
 		if (mapping.isHandler(0xc0005000))
 			target_handler = mapping.assumeHandlerGetID();
