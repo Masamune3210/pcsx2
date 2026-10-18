@@ -518,6 +518,7 @@ void GoemonUnloadTlb(u32 key)
 // Generates a tlbMiss Exception
 static __ri void vtlb_Miss(u32 addr, u32 mode)
 {
+	PSBBNTraceTlb(PSBBNTlbEvent::Miss, addr, mode, -1, true);
 	if (EmuConfig.Gamefixes.GoemonTlbHack)
 		GoemonTlbMissDebug();
 
