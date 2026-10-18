@@ -1,6 +1,6 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
-Status: **note-working; research only; no emulator changes committed**
+Status: **note-working; PSBBN bounded diagnostic code present; compile verification pending**
 Created: 2026-10-17
 Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
@@ -74,6 +74,26 @@ Record first *observable* failure at the correct stage. Avoid assuming every ear
 - Prefer fixing shared emulator inaccuracies, not modifying Sony software just to avoid them; modified Definitive Project boot stages must be called out.
 - Keep detailed logs only in local test artifacts as appropriate; do not commit BIOS files, licensed system executables, keys, or disk images.
 - Rebase on `testing` when beginning implementation, preserving an identifiable experimental baseline.
+
+## PSBBN bounded observer build fix (2026-10-18)
+
+The opt-in TLB diagnostic observer from `ps2bbndecomp/patches/pcsx2/0001-psbbn-bounded-tlb-diagnostics.patch` has been applied to this branch. MSVC reported:
+
+```text
+pcsx2/COP0.cpp:87: error C2065: 'VTLB_PAGE_BITS': undeclared identifier
+```
+
+**Root cause:** `VTLB_PAGE_BITS` is declared inside the `vtlb_private` namespace in `pcsx2/vtlb.h`, which `COP0.cpp` already includes. The observer's raw vmap index referenced the constant without that namespace.
+
+Applied exact correction:
+
+```cpp
+const auto mapping = vtlb_private::vtlbdata.vmap[0xc0005000u >> vtlb_private::VTLB_PAGE_BITS];
+```
+
+The same correction was committed to `Masamune3210/ps2bbndecomp` on `note-working/psbbn-ghidra-analysis-20261018` in the original diagnostic patch, so new checkouts will not reintroduce it. All adjacent `VTLBVirtual` uses were checked against `vtlb.h` and have valid signatures (`isHandler(u32)`, `assumeHandlerGetID()`).
+
+**Verification:** Source/header checked; no PCSX2 Windows/MSVC build run in this session. User should rebuild the same branch and report any next compiler diagnostics. The fix changes a compile-time name lookup only, not TLB behavior or observer semantics. Do not infer successful PSBBN boot from compilation.
 
 ## First real PSBBN 0.32 boot trace (2026-10-17)
 
