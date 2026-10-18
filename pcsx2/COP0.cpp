@@ -3,6 +3,131 @@
 
 #include "Common.h"
 #include "COP0.h"
+#include "vtlb.h"
+
+#include <array>
+
+// Diagnostic observer only. Existing EE COP0 trace settings are the opt-in.
+// No guest memory reads: instruction_sample can be stale on fetch faults and JIT misses.
+namespace
+{
+struct PSBBNTraceState
+{
+	bool armed = false;
+	bool target_window = false;
+	struct Channel
+	{
+		std::array<u32, 32> last{};
+		u64 seen = 0;
+		u64 repeats = 0;
+		u32 emitted = 0;
+	};
+	std::array<Channel, static_cast<size_t>(PSBBNTlbEvent::Count)> channels{};
+};
+PSBBNTraceState s_psbbn_trace;
+}
+
+void PSBBNResetTlbTrace()
+{
+	s_psbbn_trace = {};
+}
+
+bool PSBBNTlbTraceEnabled()
+{
+	return EmuConfig.Trace.Enabled && EmuConfig.Trace.EE.cop0;
+}
+
+void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail, int selected, bool exact_interpreter_pc)
+{
+	if (!PSBBNTlbTraceEnabled())
+		return;
+	// Arm on the linked kernel or the reported KSEG2 region. Once armed, include copied vectors.
+	if (!s_psbbn_trace.armed)
+	{
+		if (!((cpuRegs.pc >= 0x80010000 && cpuRegs.pc < 0x8021db50) ||
+			(address >= 0xc0000000 && address < 0xc0010000)))
+			return;
+		s_psbbn_trace.armed = true;
+		Console.WriteLn("PSBBN-TLB armed; 64 snapshots/channel, then capped; pc/code/delay in JIT misses are samples");
+	}
+	// Preserve a separate bounded window for the first relevant miss after initialization.
+	if (!s_psbbn_trace.target_window && event == PSBBNTlbEvent::Miss &&
+		address >= 0xc0000000 && address < 0xc0010000)
+	{
+		s_psbbn_trace.target_window = true;
+		s_psbbn_trace.channels = {};
+		Console.WriteLn("PSBBN-TLB first KSEG2 target miss: begin final bounded window");
+	}
+	auto& channel = s_psbbn_trace.channels[static_cast<size_t>(event)];
+	if (channel.emitted >= 64)
+		return;
+
+	const auto& cp0 = cpuRegs.CP0.n;
+	// Observer's architectural candidate lookup, deliberately independent of TLBP's implementation.
+	// Counts overlapping candidates, including invalid entries; this does not replace vTLB lookup.
+	u32 matches = 0;
+	int candidate = -1;
+	for (int i = 0; i < 48; i++)
+	{
+		const auto& t = tlb[i];
+		if ((address & ~((t.Mask() << 13) | 0x1fffu)) == t.VPN2() &&
+			(t.isGlobal() || t.EntryHi.ASID == (cp0.EntryHi & 0xff)))
+		{
+			matches++;
+			if (candidate < 0)
+				candidate = i;
+		}
+	}
+	if (selected < 0)
+		selected = candidate;
+	const tlbs entry = (selected >= 0 && selected < 48) ? tlb[selected] : tlbs{};
+	u32 target_handler = 0xffffffffu;
+	if (vtlb_private::vtlbdata.vmap)
+	{
+		const auto mapping = vtlb_private::vtlbdata.vmap[0xc0005000u >> VTLB_PAGE_BITS];
+		// FFFFFFFF means direct pointer; otherwise this is a handler ID, not a validity verdict.
+		if (mapping.isHandler(0xc0005000))
+			target_handler = mapping.assumeHandlerGetID();
+	}
+	const u32 exact_pc = exact_interpreter_pc && Cpu == &intCpu ? cpuRegs.pc - 4 : 0xffffffffu;
+	const std::array<u32, 32> snapshot = {
+		cpuRegs.pc, exact_pc, cpuRegs.code, cp0.EPC, cp0.Cause, cp0.Status.val,
+		cp0.BadVAddr & ~0xfffu, cp0.Context, cp0.EntryHi, cp0.EntryLo0, cp0.EntryLo1, cp0.PageMask,
+		cp0.Index, cp0.Random, cp0.Wired, static_cast<u32>(cpuRegs.branch), cpuRegs.IsDelaySlot,
+		static_cast<u32>(selected), entry.PageMask.UL, entry.EntryHi.UL, entry.EntryLo0.UL,
+		entry.EntryLo1.UL, address >> 12, detail, cpuRegs.GPR.r[31].UL[0], cpuRegs.GPR.r[29].UL[0],
+		cpuRegs.GPR.r[4].UL[0], cpuRegs.GPR.r[5].UL[0], cpuRegs.GPR.r[6].UL[0], matches,
+		target_handler, cp0.ErrorEPC};
+	channel.seen++;
+	const bool changed = channel.seen == 1 || snapshot != channel.last;
+	channel.repeats = changed ? 1 : channel.repeats + 1;
+	channel.last = snapshot;
+	// Ignore cycle and low address offset when grouping; retain changes and sparse heartbeat repeats.
+	const u64 repeat = channel.repeats;
+	if (!changed && repeat != 2 && repeat != 3 && repeat != 8 && repeat != 64 &&
+		repeat != 512 && repeat != 4096 && repeat != 32768 && repeat != 262144)
+		return;
+	channel.emitted++;
+	static constexpr const char* names[] = {
+		"tlbwi-before", "tlbwi-after", "tlbwr-before", "tlbwr-after", "tlbp-before", "tlbp-after",
+		"vtlb-miss", "exception-before", "exception-after", "eret-before", "eret-after"};
+	Console.WriteLn("PSBBN-TLB %s window=%u n=%llu repeat=%llu sample=%u cpu=%s rawpc=%08x exactpc=%08x instruction_sample=%08x cycle=%llu address=%08x detail=%08x branch_sample=%u delay_sample=%u",
+		names[static_cast<size_t>(event)], static_cast<u32>(s_psbbn_trace.target_window), static_cast<unsigned long long>(channel.seen),
+		static_cast<unsigned long long>(repeat), channel.emitted, Cpu == &intCpu ? "int" : "jit",
+		cpuRegs.pc, exact_pc, cpuRegs.code, static_cast<unsigned long long>(cpuRegs.cycle), address, detail,
+		static_cast<u32>(cpuRegs.branch), cpuRegs.IsDelaySlot);
+	Console.WriteLn("PSBBN-TLB cp0 EPC=%08x Cause=%08x Status=%08x BadVAddr=%08x Context=%08x EntryHi=%08x Lo0=%08x Lo1=%08x Mask=%08x Index=%08x Random=%08x Wired=%08x ErrorEPC=%08x",
+		cp0.EPC, cp0.Cause, cp0.Status.val, cp0.BadVAddr, cp0.Context, cp0.EntryHi, cp0.EntryLo0,
+		cp0.EntryLo1, cp0.PageMask, cp0.Index, cp0.Random, cp0.Wired, cp0.ErrorEPC);
+	Console.WriteLn("PSBBN-TLB slot=%d matches=%u slotMask=%08x slotHi=%08x slotLo0=%08x slotLo1=%08x c0005000_handler=%08x ra_sample=%08x sp_sample=%08x a0_sample=%08x a1_sample=%08x a2_sample=%08x",
+		selected, matches, entry.PageMask.UL, entry.EntryHi.UL, entry.EntryLo0.UL, entry.EntryLo1.UL,
+		target_handler, cpuRegs.GPR.r[31].UL[0], cpuRegs.GPR.r[29].UL[0], cpuRegs.GPR.r[4].UL[0],
+		cpuRegs.GPR.r[5].UL[0], cpuRegs.GPR.r[6].UL[0]);
+	if (channel.emitted == 64)
+		Console.WriteLn("PSBBN-TLB %s capped for this window", names[static_cast<size_t>(event)]);
+}
+
+
 
 // Updates the CPU's mode of operation (either, Kernel, Supervisor, or User modes).
 // Currently the different modes are not implemented.
@@ -229,6 +354,7 @@ void MapTLB(const tlbs& t, int i)
 	u32 mask, addr;
 	u32 saddr, eaddr;
 
+	if (!PSBBNTlbTraceEnabled())
 	COP0_LOG("MAP TLB %d: 0x%08X-> [0x%08X 0x%08X] S=%d G=%d ASID=%d Mask=0x%03X EntryLo0 PFN=%x EntryLo0 Cache=%x EntryLo1 PFN=%x EntryLo1 Cache=%x VPN2=%x",
 		i, t.VPN2(), t.PFN0(), t.PFN1(), t.isSPR() >> 31, t.isGlobal(), t.EntryHi.ASID,
 		t.Mask(), t.EntryLo0.PFN, t.EntryLo0.C, t.EntryLo1.PFN, t.EntryLo1.C, t.VPN2());
@@ -396,6 +522,7 @@ namespace COP0 {
 
 	void TLBR()
 	{
+		if (!PSBBNTlbTraceEnabled())
 		COP0_LOG("COP0_TLBR %d:%x,%x,%x,%x",
 			cpuRegs.CP0.n.Index, cpuRegs.CP0.n.PageMask, cpuRegs.CP0.n.EntryHi,
 			cpuRegs.CP0.n.EntryLo0, cpuRegs.CP0.n.EntryLo1);
@@ -421,6 +548,7 @@ namespace COP0 {
 	void TLBWI()
 	{
 		const u8 j = cpuRegs.CP0.n.Index & 0x3f;
+		PSBBNTraceTlb(PSBBNTlbEvent::TlbwiBefore, cpuRegs.CP0.n.EntryHi, 0, j, true);
 
 		if (j > 47)
 		{
@@ -428,17 +556,20 @@ namespace COP0 {
 			return;
 		}
 
+		if (!PSBBNTlbTraceEnabled())
 		COP0_LOG("COP0_TLBWI %d:%x,%x,%x,%x",
 			cpuRegs.CP0.n.Index, cpuRegs.CP0.n.PageMask, cpuRegs.CP0.n.EntryHi,
 			cpuRegs.CP0.n.EntryLo0, cpuRegs.CP0.n.EntryLo1);
 
 		UnmapTLB(tlb[j], j);
 		WriteTLB(j);
+		PSBBNTraceTlb(PSBBNTlbEvent::TlbwiAfter, cpuRegs.CP0.n.EntryHi, 0, j, true);
 	}
 
 	void TLBWR()
 	{
 		const u8 j = cpuRegs.CP0.n.Random & 0x3f;
+		PSBBNTraceTlb(PSBBNTlbEvent::TlbwrBefore, cpuRegs.CP0.n.EntryHi, 0, j, true);
 
 		if (j > 47)
 		{
@@ -446,16 +577,19 @@ namespace COP0 {
 			return;
 		}
 
+		if (!PSBBNTlbTraceEnabled())
 		DevCon.Warning("COP0_TLBWR %d:%x,%x,%x,%x\n",
 			cpuRegs.CP0.n.Random, cpuRegs.CP0.n.PageMask, cpuRegs.CP0.n.EntryHi,
 			cpuRegs.CP0.n.EntryLo0, cpuRegs.CP0.n.EntryLo1);
 
 		UnmapTLB(tlb[j], j);
 		WriteTLB(j);
+		PSBBNTraceTlb(PSBBNTlbEvent::TlbwrAfter, cpuRegs.CP0.n.EntryHi, 0, j, true);
 	}
 
 	void TLBP()
 	{
+		PSBBNTraceTlb(PSBBNTlbEvent::TlbpBefore, cpuRegs.CP0.n.EntryHi, 0, -1, true);
 		int i;
 
 		union
@@ -483,6 +617,8 @@ namespace COP0 {
 		}
 		if (cpuRegs.CP0.n.Index == 0xFFFFFFFF)
 			cpuRegs.CP0.n.Index = 0x80000000;
+		PSBBNTraceTlb(PSBBNTlbEvent::TlbpAfter, cpuRegs.CP0.n.EntryHi, 0,
+			cpuRegs.CP0.n.Index & 0x80000000 ? -1 : static_cast<int>(cpuRegs.CP0.n.Index & 0x3f), true);
 	}
 
 	void MFC0()
@@ -627,6 +763,10 @@ cpuRegs.PERF.n.pccr, cpuRegs.PERF.n.pcr0, cpuRegs.PERF.n.pcr1, _Imm_ & 0x3F);*/
 
 	void ERET()
 	{
+		const u32 trace_cause = cpuRegs.CP0.n.Cause & 0x7c;
+		const bool trace_return = trace_cause == 4 || trace_cause == 8 || trace_cause == 12;
+		if (trace_return)
+			PSBBNTraceTlb(PSBBNTlbEvent::EretBefore, cpuRegs.CP0.n.BadVAddr, trace_cause, -1, true);
 #ifdef ENABLE_VTUNE
 		// Allow to stop vtune in a predictable way to compare runs
 		// Of course, the limit will depend on the game.
@@ -661,6 +801,8 @@ cpuRegs.PERF.n.pccr, cpuRegs.PERF.n.pcr0, cpuRegs.PERF.n.pcr1, _Imm_ & 0x3F);*/
 		cpuUpdateOperationMode();
 		cpuSetNextEventDelta(4);
 		intSetBranch();
+		if (trace_return)
+			PSBBNTraceTlb(PSBBNTlbEvent::EretAfter, cpuRegs.CP0.n.BadVAddr, trace_cause);
 	}
 
 	void DI()
