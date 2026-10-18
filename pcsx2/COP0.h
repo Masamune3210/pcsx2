@@ -14,3 +14,14 @@ extern void MapTLB(const tlbs& t, int i);
 
 extern void COP0_UpdatePCCR();
 extern void COP0_DiagnosticPCCR();
+
+// PSBBN diagnostic observer. Uses existing Trace.Enabled + Trace.EE.cop0.
+enum class PSBBNTlbEvent
+{
+	TlbwiBefore, TlbwiAfter, TlbwrBefore, TlbwrAfter, TlbpBefore, TlbpAfter,
+	Miss, ExceptionBefore, ExceptionAfter, EretBefore, EretAfter, Count
+};
+extern void PSBBNResetTlbTrace();
+extern bool PSBBNTlbTraceEnabled();
+extern void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail = 0,
+	int selected = -1, bool exact_interpreter_pc = false);
