@@ -15,17 +15,6 @@ extern void MapTLB(const tlbs& t, int i);
 extern void COP0_UpdatePCCR();
 extern void COP0_DiagnosticPCCR();
 
-// Interpreter instruction-step model; Wired values 0..47 define the range.
-// No private phase state is needed, so the existing CP0 savestate is sufficient.
-__fi void COP0_AdvanceRandom()
-{
-	const u32 wired = cpuRegs.CP0.n.Wired & 0x3f;
-	if (wired >= 48)
-		return; // Reserved/out-of-range Wired behavior is outside this candidate.
-	u32& random = cpuRegs.CP0.n.Random;
-	random = (random <= wired || random >= 48) ? 47 : random - 1;
-}
-
 // PSBBN diagnostic observer. Uses existing Trace.Enabled + Trace.EE.cop0.
 enum class PSBBNTlbEvent
 {
