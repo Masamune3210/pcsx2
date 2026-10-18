@@ -19,6 +19,19 @@ using namespace R5900;		// for OPCODE and OpcodeImpl
 extern int vu0branch, vu1branch;
 
 static int branch2 = 0;
+// Interpreter instruction-step model; Wired values 0..47 define the range.
+// Keep this inline in the interpreter hot path, after cpuRegs is declared;
+// COP0.h is also included from contexts where cpuRegs is not visible yet.
+// No private phase state is needed, so the existing CP0 savestate is sufficient.
+static __fi void COP0_AdvanceRandom()
+{
+	const u32 wired = cpuRegs.CP0.n.Wired & 0x3f;
+	if (wired >= 48)
+		return; // Reserved/out-of-range Wired behavior is outside this candidate.
+	u32& random = cpuRegs.CP0.n.Random;
+	random = (random <= wired || random >= 48) ? 47 : random - 1;
+}
+
 static u32 cpuBlockCycles = 0;		// 3 bit fixed point version of cycle count
 static std::string disOut;
 static bool intExitExecution = false;
