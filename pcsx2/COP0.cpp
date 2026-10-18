@@ -15,6 +15,7 @@ struct PSBBNTraceState
 {
 	bool armed = false;
 	bool target_window = false;
+	bool zero_window = false;
 	struct Channel
 	{
 		std::array<u32, 32> last{};
@@ -56,7 +57,17 @@ void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail, int selected, b
 	{
 		s_psbbn_trace.target_window = true;
 		s_psbbn_trace.channels = {};
-		Console.WriteLn("PSBBN-TLB first KSEG2 target miss: begin final bounded window");
+		Console.WriteLn("PSBBN-TLB first KSEG2 target miss: begin target bounded window");
+	}
+	// Valid refills can exhaust the target budget before the later invalid-entry loop.
+	// Reserve exactly one more observer window; never change guest state or mappings.
+	if (s_psbbn_trace.target_window && !s_psbbn_trace.zero_window &&
+		event == PSBBNTlbEvent::TlbwrBefore && cpuRegs.CP0.n.EntryLo0 == 0 &&
+		cpuRegs.CP0.n.EntryLo1 == 0)
+	{
+		s_psbbn_trace.zero_window = true;
+		s_psbbn_trace.channels = {};
+		Console.WriteLn("PSBBN-TLB first zero-entry TLBWR: begin final bounded window=2");
 	}
 	auto& channel = s_psbbn_trace.channels[static_cast<size_t>(event)];
 	if (channel.emitted >= 64)
@@ -112,7 +123,7 @@ void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail, int selected, b
 		"tlbwi-before", "tlbwi-after", "tlbwr-before", "tlbwr-after", "tlbp-before", "tlbp-after",
 		"vtlb-miss", "exception-before", "exception-after", "eret-before", "eret-after"};
 	Console.WriteLn("PSBBN-TLB %s window=%u n=%llu repeat=%llu sample=%u cpu=%s rawpc=%08x exactpc=%08x instruction_sample=%08x cycle=%llu address=%08x detail=%08x branch_sample=%u delay_sample=%u",
-		names[static_cast<size_t>(event)], static_cast<u32>(s_psbbn_trace.target_window), static_cast<unsigned long long>(channel.seen),
+		names[static_cast<size_t>(event)], s_psbbn_trace.zero_window ? 2u : static_cast<u32>(s_psbbn_trace.target_window), static_cast<unsigned long long>(channel.seen),
 		static_cast<unsigned long long>(repeat), channel.emitted, Cpu == &intCpu ? "int" : "jit",
 		cpuRegs.pc, exact_pc, cpuRegs.code, static_cast<unsigned long long>(cpuRegs.cycle), address, detail,
 		static_cast<u32>(cpuRegs.branch), cpuRegs.IsDelaySlot);
@@ -679,6 +690,15 @@ cpuRegs.PERF.n.pccr, cpuRegs.PERF.n.pcr0, cpuRegs.PERF.n.pcr1, _Imm_ & 0x3F);*/
 		//if(bExecBIOS == FALSE && _Rd_ == 25) Console.WriteLn("MTC0 _Rd_ %x = %x", _Rd_, cpuRegs.CP0.r[_Rd_]);
 		switch (_Rd_)
 		{
+			case 1:
+				// Random is read-only.
+				break;
+
+			case 6:
+				cpuRegs.CP0.n.Wired = cpuRegs.GPR.r[_Rt_].UL[0] & 0x3f;
+				cpuRegs.CP0.n.Random = 47;
+				break;
+
 			case 9:
 				cpuRegs.lastCOP0Cycle = cpuRegs.cycle;
 				cpuRegs.CP0.r[9] = cpuRegs.GPR.r[_Rt_].UL[0];

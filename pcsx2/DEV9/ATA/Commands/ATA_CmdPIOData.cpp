@@ -115,6 +115,8 @@ void ATA::HDD_ReadPIO(bool isLBA48)
 void ATA::HDD_ReadPIOS2()
 {
 	//Log_Info("HDD_ReadPIO Stage 2");
+	// A fresh PIO command starts at byte zero, including retries after partial DMA.
+	rdTransferred = 0;
 	pioDRQEndTransferFunc = &ATA::HDD_ReadPIOEndBlock;
 	DRQCmdPIODataToHost(readBuffer, readBufferLen, 0, 256 * 2, true);
 }

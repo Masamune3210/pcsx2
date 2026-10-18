@@ -69,6 +69,7 @@ void cpuReset()
 	cpuRegs.CP0.n.Config	= 0x440;
 	cpuRegs.CP0.n.Status.val= 0x70400004; //0x10900000 <-- wrong; // COP0 enabled | BEV = 1 | TS = 1
 	cpuRegs.CP0.n.PRid		= 0x00002e20; // PRevID = Revision ID, same as R5900
+	cpuRegs.CP0.n.Random	= 47;
 	fpuRegs.fprc[0]			= 0x00002e30; // fpu Revision..
 	fpuRegs.fprc[31]		= 0x01000001; // fpu Status/Control
 
@@ -93,7 +94,7 @@ void cpuReset()
 	CBreakPoints::ClearSkipFirst();
 }
 
-__ri void cpuException(u32 code, u32 bd)
+static __ri void cpuExceptionInternal(u32 code, u32 bd, bool tlbRefill)
 {
 	const u32 trace_cause = code & 0x7c;
 	const bool trace_exception = trace_cause == 4 || trace_cause == 8 || trace_cause == 12;
@@ -111,7 +112,7 @@ __ri void cpuException(u32 code, u32 bd)
 		errLevel2 = false;
 		checkStatus = (cpuRegs.CP0.n.Status.b.BEV == 0); //  for TLB/general exceptions
 
-		if (((code & 0x7C) >= 0x8) && ((code & 0x7C) <= 0xC))
+		if (tlbRefill && ((code & 0x7C) >= 0x8) && ((code & 0x7C) <= 0xC))
 			offset = 0x0; //TLB Refill
 		else if ((code & 0x7C) == 0x0)
 			offset = 0x200; //Interrupt
@@ -172,6 +173,33 @@ __ri void cpuException(u32 code, u32 bd)
 		PSBBNTraceTlb(PSBBNTlbEvent::ExceptionAfter, cpuRegs.CP0.n.BadVAddr, bd);
 }
 
+__ri void cpuException(u32 code, u32 bd)
+{
+	cpuExceptionInternal(code, bd, true);
+}
+
+// A matching ordinary entry with V=0 raises TLBL/TLBS at the general vector,
+// rather than the refill vector. Keep the public exception ABI unchanged.
+static bool cpuTlbMissIsInvalid(u32 addr)
+{
+	const u32 asid = cpuRegs.CP0.n.EntryHi & 0xff;
+	for (const tlbs& entry : tlb)
+	{
+		// Scratchpad translation has separate semantics; leave that path unchanged.
+		if (entry.isSPR())
+			continue;
+		const u32 pairMask = (entry.Mask() << 13) | 0x1fff;
+		if ((addr & ~pairMask) != entry.VPN2() ||
+			(!entry.isGlobal() && entry.EntryHi.ASID != asid))
+			continue;
+		const u32 halfSize = (entry.Mask() + 1) << 12;
+		const EntryLo_t& selected = (addr & halfSize) ? entry.EntryLo1 : entry.EntryLo0;
+		if (!selected.V)
+			return true;
+	}
+	return false;
+}
+
 void cpuTlbMiss(u32 addr, u32 bd, u32 excode)
 {
 	// Avoid too much spamming on the interpreter
@@ -186,7 +214,7 @@ void cpuTlbMiss(u32 addr, u32 bd, u32 excode)
 	cpuRegs.CP0.n.EntryHi = (addr & 0xFFFFE000) | (cpuRegs.CP0.n.EntryHi & 0x1FFF);
 
 	cpuRegs.pc -= 4;
-	cpuException(excode, bd);
+	cpuExceptionInternal(excode, bd, !cpuTlbMissIsInvalid(addr));
 }
 
 void cpuTlbMissR(u32 addr, u32 bd) {
