@@ -188,6 +188,34 @@ A raw 4-byte-aligned scan found **zero exact `TLBWR` opcodes (0x42000006) within
 
 **State:** source-level evidence only; no modifications to uploaded Ghidra archives, no emulator behavior changes, and no copyrighted binary artifacts committed.
 
+### Original PSBBN vmlinux extraction resolves exact fault PC (2026-10-17)
+
+User extracted three additional files from the BB Unit HDD image:
+- `pfs0:/p2lboot/vmlinux`: 3,038,863 bytes, SHA256 `07e44b50e2558d188caa306f60c138ad6015bbabcd3bc32fba35eeb6e8a870fc`.
+- `hdfill/hdfill.elf`: 541,248 bytes, SHA256 `ffb7f54fd437af7d68178803dfab9e6acea452d8a988e5dcbe708bfadcb00414`.
+- `hdfill/HDFILLER.PAK`: 4,142,080 bytes, SHA256 `999b9838eecafe6645f559c12b358ec033cc48db26b9300944ca1573c888fb7c`.
+
+**Critical finding:** `vmlinux` is an intact, unstripped ELF32 MIPS little-endian MIPS-III kernel, version **Linux 2.4.17_mvl21**, compiled by `inamoto@imo.sm.sony.co.jp` with gcc 2.95.2, build `#1 Tue Jun 17 18:36:14 JST 2003`. ELF entry=0x80010490 `kernel_entry`; LOAD at 0x80010000 (filesz 0x1E5000, memsz 0x20DB50). `.text` 0x80010000–0x801C5E5F, `.bss` 0x801F5000–0x8021DB4F, 9,385 total symbol-table entries; .mdebug is also present. **Import as ELF at linked addresses, not raw / arbitrary base**.
+
+Recompiler's previously opaque `pc=0x801A4930` resolves *exactly* to symbol `__bzero` (at 0x801A48FC), which is a second entry to optimized `memset` (at 0x801A48E0). `0x801A4930` is loop header `addiu a0,a0,0x40`. Starting at 0x801A4934, sixteen 4-byte `sw a1,-0x40(a0)` through `sw a1,-4(a0)` instructions form a 64-byte block fill. Back edge: `0x801A4974 bne t1,a0,0x801A4930`. This **perfectly accounts** for recorded repeated store misses at `0xC0005000, 0xC0005004, ...`: Linux was attempting to zero KSEG2 memory lacking usable virtual mapping in PCSX2. The precise caller, expected page-table state and first failed write are not captured; don't conclude this is simply a kernel bug or solely a recompiler bug.
+
+Searched the full kernel `.text` for instruction word `0x42000006` (TLBWR): exactly **two static sites**:
+- `0x800258B8`, `update_mmu_cache+0x128`, function begins 0x80025790; adjacent `tlbwi` at 0x800258BC.
+- `0x80025A08`, `except_vec0_r5900_spr+0x28`, function begins 0x800259E0; branch-delay-slot `tlbwr`, `eret` 0x80025A14. Earlier code explicitly stages `EntryLo0=0x80000006`, `EntryLo1=0x6`, then TLBWR. **Interpreter reports both entry-lo values=0**, so do not assume the repeated warning is from this particular site. The kernel may install copied vectors and relocated addresses at runtime.
+
+Other relevant kernel symbols:
+- `0x80025A20` `handle_tlbl` (refill/load), `0x80025BC0` `handle_tlbs` (refill/store), `0x80025D60` `handle_mod` (TLB modified exception).
+- `0x80025350` `local_flush_tlb_all`.
+- `0x801D0628` `start_kernel` (init text), `0x801D1C80` `setup_arch`.
+- `0x8021DB48` `pgd_current` (.bss, size 8).
+- `0x801E358C` `init_mm` (data, size 132).
+
+**HDFILL side files:** `hdfill.elf` is itself KELF, not a plaintext ELF: header size=0x3A0, declared content_size=0x83EA0, and 0x3A0+0x83EA0=0x84240 exact file size; flags at offset 0x18=0x022C. Additional MagicGate data would be required for static ELF recovery (not needed for the kernel failure). `HDFILLER.PAK` starts with `fpkr` magic and is not a standard ELF or ZIP; content has repetitive/highly compressible areas. Its format and role are **not established**; don't interpret as executable or assume its purpose from filename. These two files are separate from the now-identified vmlinux TLB path.
+
+**Actionable Ghidra metadata:** script `ghidra_scripts/AnnotatePsbbnVmlinuxTlb_20261017_v1.java` checks exact linked instruction bytes then adds comments/bookmarks at relevant kernel symbols and both TLBWR sites. Requires importing vmlinux correctly and analysis; do not automatically rename imported symbols or override resolved datatypes. Static verification only: no local Ghidra instance was run to compile/execute the script.
+
+**Next needed diagnostic:** bounded logs of interpreter TLBWR with **true executing guest PC** and `EPC, BadVAddr, Cause, Status, EntryHi, EntryLo0, EntryLo1, Random, Wired` plus context around first event. Capture preceding writes to `0xC0005000`, not the million-line print flood. Check whether COP0 Random advances and whether page-table mapping for target virtual page was ever installed. Compare to original Linux refill path before implementing fixes.
+
 ## First next step
 
 Collect a **non-destructive baseline run** of PSBBN (Definitive Project) on the current fork using a disposable HDD image, identifying whether the first failure occurs in HDD/ATA/MBR/KELF or at Linux EE TLB initialization. In parallel, inspect PCSX2's existing TLB logic and review closed PR #14847 *line by line* to extract hypotheses for testable fixes.
