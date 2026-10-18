@@ -59,6 +59,7 @@ uptr g_argPtrs[kMaxArgs];
 
 void cpuReset()
 {
+	PSBBNResetTlbTrace();
 	std::memset(&cpuRegs, 0, sizeof(cpuRegs));
 	std::memset(&fpuRegs, 0, sizeof(fpuRegs));
 	std::memset(&tlb, 0, sizeof(tlb));
@@ -94,6 +95,10 @@ void cpuReset()
 
 __ri void cpuException(u32 code, u32 bd)
 {
+	const u32 trace_cause = code & 0x7c;
+	const bool trace_exception = trace_cause == 4 || trace_cause == 8 || trace_cause == 12;
+	if (trace_exception)
+		PSBBNTraceTlb(PSBBNTlbEvent::ExceptionBefore, cpuRegs.CP0.n.BadVAddr, bd);
 	bool errLevel2, checkStatus;
 	u32 offset = 0;
 
@@ -163,6 +168,8 @@ __ri void cpuException(u32 code, u32 bd)
 		cpuRegs.pc = 0xBFC00200 + offset;
 
 	cpuUpdateOperationMode();
+	if (trace_exception)
+		PSBBNTraceTlb(PSBBNTlbEvent::ExceptionAfter, cpuRegs.CP0.n.BadVAddr, bd);
 }
 
 void cpuTlbMiss(u32 addr, u32 bd, u32 excode)
