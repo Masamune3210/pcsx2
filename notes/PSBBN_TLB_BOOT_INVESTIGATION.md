@@ -75,6 +75,14 @@ Record first *observable* failure at the correct stage. Avoid assuming every ear
 - Keep detailed logs only in local test artifacts as appropriate; do not commit BIOS files, licensed system executables, keys, or disk images.
 - Rebase on `testing` when beginning implementation, preserving an identifiable experimental baseline.
 
+## Interpreter Random/Wired compile correction (2026-10-18)
+
+User's local Windows/MSVC compile of the `0006` interpreter Random/Wired candidate reported `C2065 cpuRegs undeclared`, `C2737 wired const must be initialized`, and `C2530 random reference must be initialized` at `pcsx2/COP0.h:22–25`. The actual cause is that the `__fi COP0_AdvanceRandom()` inline **function body lived in COP0.h**, which can be included before `cpuRegs` is declared. The latter two messages are cascading parser errors, not separate uninitialized variables.
+
+Fix: **move the exact same 13-line inline implementation into `pcsx2/Interpreter.cpp`** (immediately after `static int branch2`), and remove it entirely from `COP0.h`. `Interpreter.cpp` already sees `cpuRegs`; keeping `static __fi` preserves the interpreter hot-path inlining instead of adding an out-of-line call per guest instruction. `COP0.cpp` still holds the `MTC0 Wired` reset/read-only `Random` behavior and `R5900.cpp` still initializes Random to 47. The runtime model and TLB behavior are not intentionally changed by this placement fix.
+
+The same placement correction is committed to `ps2bbndecomp/patches/pcsx2/0006-interpreter-random-wired-candidate.patch`. Its five hunk pre/post counts and source-context matches were mechanically checked against the original PCSX2 `testing` files (zero errors). **No local Windows/MSVC build was performed in this session; a user rebuild remains necessary.** Do not reapply the complete 0006 patch over a branch already containing it; update the branch instead.
+
 ## PSBBN bounded observer build fix (2026-10-18)
 
 The opt-in TLB diagnostic observer from `ps2bbndecomp/patches/pcsx2/0001-psbbn-bounded-tlb-diagnostics.patch` has been applied to this branch. MSVC reported:
