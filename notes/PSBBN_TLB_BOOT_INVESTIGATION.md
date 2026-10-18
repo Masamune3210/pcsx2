@@ -216,6 +216,37 @@ Other relevant kernel symbols:
 
 **Next needed diagnostic:** bounded logs of interpreter TLBWR with **true executing guest PC** and `EPC, BadVAddr, Cause, Status, EntryHi, EntryLo0, EntryLo1, Random, Wired` plus context around first event. Capture preceding writes to `0xC0005000`, not the million-line print flood. Check whether COP0 Random advances and whether page-table mapping for target virtual page was ever installed. Compare to original Linux refill path before implementing fixes.
 
+### Ghidra vmlinux analysis archive and CCC import warnings (2026-10-18)
+
+User's Ghidra import of original Sony vmlinux reported **4,769 imported functions**, **3,871 globals**, **161 skipped unmapped/unnamed functions**, **30 function-creation failures**, and **one unmapped label**. CCC's first ten discarded-address warnings include `profile_setup`, `trap_init`, `check_bugs`, `init_arch`, `init_generic_irq`, `null_rtc_get_time`, `paging_init`, `loadmmu`, `r5900_flush_cache_range_d64i64`, and `add_temporary_entry`.
+
+User subsequently supplied `vmlinux.gzf` (12,020,937 bytes, SHA256 `a26d015f0695e0a5a9fffa5dee65d34eac74ee6dc2bafdd01aa8cfd5d12108d0`). The archive is Java serialization with one local ZIP entry, `FOLDER_ITEM`. Raw DEFLATE successfully recovered its **41,451,520-byte** Ghidra packed DB payload; verified CRC32 `e7f2c302`, exactly matching the ZIP data descriptor. No archive corruption is indicated. Packed DB strings include all ten CCC-warning symbols as well as kernel TLB function names, but packed string presence alone does **not** establish their final symbol/function status in Ghidra. No local Ghidra runtime was available for direct DB or script execution.
+
+**Reason for warnings:** Verified CCC upstream source `chaoticgd/ccc/src/ccc/mdebug_importer.cpp`, around lines 575–604. Its `detect_fake_functions()` deliberately unassigns an **.mdebug function candidate's address when multiple function symbols collide at that address** and an external mdebug function record does not match its name. Therefore the warning is a *heuristic disambiguation*, not a Ghidra failure to load the ELF and not proof that the named kernel function doesn't exist. It might discard duplicate incorrect mdebug definitions even where a correct function name exists elsewhere. Avoid globally disabling the heuristic without verifying each duplicate. The user's installed CCC build matches this diagnostic site; the GitHub Java extension branch may be older than locally built CCC integration (runtime reports JSON v14), so don't blindly modify the older importer implementation.
+
+Independently verified via `readelf -sW vmlinux` that each of the first ten warned names has a **real, section-allocated ELF `.symtab` STT_FUNC record**:
+
+```text
+0x801D0000 profile_setup                     0x38  .text.init
+0x801D0860 trap_init                         0xAF4 .text.init
+0x801D1358 check_bugs                        0xA0  .text.init
+0x801D13F8 init_arch                         0x6F8 .text.init
+0x801D2120 init_generic_irq                  0x48  .text.init
+0x800213F0 null_rtc_get_time                 0x0C  .text
+0x801D22A8 paging_init                       0x64  .text.init
+0x801D2630 loadmmu                           0x5C  .text.init
+0x80023B90 r5900_flush_cache_range_d64i64  0x408 .text
+0x801D28C8 add_temporary_entry              0x104 .text.init
+0x801D0038 name_to_kdev_t                    0x100 .text.init
+0x801D0258 checksetup                        0xAC  .text.init
+```
+
+These should be Ghidra function labels at the corresponding addresses when the ELF itself is loaded. The native ELF `.symtab` has **4,711 size-positive FUNC rows at 4,711 unique addresses**, indicating no ambiguity for those addresses in that table (zero-size aliases are separate). **Do not recreate a second overlapping function for `__bzero`** at `0x801A48FC`: it is a zero-sized ELF function alias within `memset`. The sole logged unmapped symbol `_end` is an ELF `OBJECT` of zero size at `0x8021DB50`, which is precisely the **exclusive high boundary** of loaded `.bss`, not a lost executable or missing memory allocation. Do not extend a memory block solely to host `_end`.
+
+**Actionable new script:** `ghidra_scripts/ReconcilePsbbnVmlinuxSymbols_20261018_v1.java`. Prompt user for exact original ELF `vmlinux` (NOT gzipped archive); verify its SHA256, MIPS ELF class, entry and four known instruction encodings before edits. Read the ELF `SHT_SYMTAB` directly, reconcile mapped `STT_FUNC` and `STT_OBJECT` symbols into Ghidra: create missing functions where no existing body overlaps, fill generic names, add import labels when a valid function already has a separate non-generic name, leave user-chosen function names and signatures alone, mark zero-size aliases as labels. In addition, add read-only comments/bookmarks for verified TLB routines, `__bzero` stores, `pgd_current`, and `_end` boundary. Print applied, already-present, skipped and overlap counts so any residual gaps can be investigated exactly. No unknown datatypes or speculative calling conventions are applied. **Not run in Ghidra yet**, needs user execution/console output for validation. This is an exact ELF `.symtab` reconciliation, not a fix to CCC's upstream duplicate-function scoring.
+
+**Next check:** Run script on imported vmlinux Ghidra project, capture summary counts. Inspect any remaining skipped overlap/function-creation sites, especially `.text.init`, before altering the importer. For runtime PSBBN TLB issue, next gather true interpreter TLBWR guest PC+COP0 state and correlate with page table before modifying emulator logic.
+
 ## First next step
 
 Collect a **non-destructive baseline run** of PSBBN (Definitive Project) on the current fork using a disposable HDD image, identifying whether the first failure occurs in HDD/ATA/MBR/KELF or at Linux EE TLB initialization. In parallel, inspect PCSX2's existing TLB logic and review closed PR #14847 *line by line* to extract hypotheses for testable fixes.
