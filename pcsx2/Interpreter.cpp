@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Common.h"
+#include "COP0.h"
 #include "R5900OpcodeTables.h"
 #include "VMManager.h"
 #include "Elfheader.h"
@@ -171,6 +172,7 @@ static void execI()
 	CBreakPoints::CommitClearSkipFirst(BREAKPOINT_EE);
 #endif
 
+	COP0_AdvanceRandom();
 	const u32 pc = cpuRegs.pc;
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented
