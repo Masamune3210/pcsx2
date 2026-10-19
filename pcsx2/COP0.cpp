@@ -38,17 +38,102 @@ struct PSBBNLateTraceState
 	u64 next_heartbeat = 0;
 };
 PSBBNLateTraceState s_psbbn_late;
+
+// Deliberately fixed-size and allocated in host memory, not in the guest.
+// A user process can generate many thousands of refills during a normal boot.
+// Restart at each scheduled savestate so the late failure is not hidden by
+// early-boot trace quotas.
+struct PSBBNUserFaultEntry
+{
+	u32 pc = 0, address = 0, cause = 0, asid = 0;
+	u64 occurrences = 0;
+};
+struct PSBBNUserFaultWindow
+{
+	std::array<PSBBNUserFaultEntry, 256> entries{};
+	u32 used = 0, emitted = 0;
+	u64 dropped = 0;
+};
+PSBBNUserFaultWindow s_psbbn_user_faults;
 }
 
 void PSBBNResetTlbTrace()
 {
 	s_psbbn_trace = {};
 	s_psbbn_late = {};
+	s_psbbn_user_faults = {};
 }
 
 bool PSBBNTlbTraceEnabled()
 {
 	return EmuConfig.Trace.Enabled && EmuConfig.Trace.EE.cop0;
+}
+
+void PSBBNResetUserFaultWindow()
+{
+	if (!PSBBNTlbTraceEnabled())
+		return;
+	Console.WriteLn("PSBBN-FAULT window complete unique=%u emitted=%u overflow=%llu",
+		s_psbbn_user_faults.used, s_psbbn_user_faults.emitted,
+		static_cast<unsigned long long>(s_psbbn_user_faults.dropped));
+	s_psbbn_user_faults = {};
+}
+
+// Observes interpreter CPU address errors and TLB faults before EXL changes.
+// Do not read a stale saved EPC as the faulting PC; the caller supplies the
+// current cpuRegs.pc and branch-delay flag prior to cpuExceptionInternal.
+// Additionally sample Linux O32 sigreturn syscalls to detect signal storms.
+void PSBBNTraceUserFaultBefore(u32 code, u32 bd)
+{
+	if (!PSBBNTlbTraceEnabled() || Cpu != &intCpu)
+		return;
+	const u32 status = cpuRegs.CP0.n.Status.val;
+	if ((status & 0x1eu) != 0x10u) // guest user KSU=2, EXL/ERL clear
+		return;
+	const u32 cause = code & 0x7cu;
+	const bool sigreturn = cause == 0x20u && cpuRegs.GPR.n.v0.UL[0] == 4119u;
+	if (!(cause == 4u || cause == 8u || cause == 12u || sigreturn))
+		return;
+
+	const u32 pc = cpuRegs.pc;
+	const u32 bad = sigreturn ? 0 : cpuRegs.CP0.n.BadVAddr;
+	const u32 asid = cpuRegs.CP0.n.EntryHi & 0xffu;
+	auto& history = s_psbbn_user_faults;
+	PSBBNUserFaultEntry* entry = nullptr;
+	for (u32 i = 0; i < history.used; ++i)
+	{
+		auto& item = history.entries[i];
+		if (item.pc == pc && item.address == bad && item.cause == cause && item.asid == asid)
+		{
+			entry = &item;
+			break;
+		}
+	}
+	if (!entry)
+	{
+		if (history.used >= history.entries.size())
+		{
+			++history.dropped;
+			return;
+		}
+		entry = &history.entries[history.used++];
+		entry->pc = pc;
+		entry->address = bad;
+		entry->cause = cause;
+		entry->asid = asid;
+	}
+	const u64 count = ++entry->occurrences;
+	// One line per unique fault, then exponentially spaced samples. Limit the
+	// total output per autosave interval independent of exception frequency.
+	if (history.emitted >= 384 ||
+		(count > 1 && (count & (count - 1)) != 0))
+		return;
+	++history.emitted;
+	Console.WriteLn("PSBBN-FAULT pc=%08x bad=%08x code=%02x asid=%02x n=%llu bd=%u Status=%08x EntryHi=%08x v0=%08x s0=%08x s1=%08x sp=%08x ra=%08x",
+		pc, bad, cause, asid, static_cast<unsigned long long>(count), bd,
+		status, cpuRegs.CP0.n.EntryHi, cpuRegs.GPR.n.v0.UL[0],
+		cpuRegs.GPR.r[16].UL[0], cpuRegs.GPR.r[17].UL[0],
+		cpuRegs.GPR.n.sp.UL[0], cpuRegs.GPR.n.ra.UL[0]);
 }
 
 // CACHE 0x0b is IHIN (instruction-cache hit invalidate). The EE interpreter
