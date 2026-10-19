@@ -1215,6 +1215,10 @@ void vtlb_VMapBuffer(u32 vaddr, void* buffer, u32 size)
 	while (size > 0)
 	{
 		vtlbdata.vmap[vaddr >> VTLB_PAGE_BITS] = VTLBVirtual::fromPointer(bu8, vaddr);
+		// A scratchpad/buffer mapping is not a regular EE physical mapping.
+		// Do not expose a stale PFN through the parallel virtual->physical LUT.
+		if (vtlbdata.ppmap && !(vaddr & 0x80000000))
+			vtlbdata.ppmap[vaddr >> VTLB_PAGE_BITS] = vaddr & ~VTLB_PAGE_MASK;
 		vaddr += VTLB_PAGE_SIZE;
 		bu8 += VTLB_PAGE_SIZE;
 		size -= VTLB_PAGE_SIZE;
@@ -1231,6 +1235,11 @@ void vtlb_VMapUnmap(u32 vaddr, u32 size)
 	while (size > 0)
 	{
 		vtlbdata.vmap[vaddr >> VTLB_PAGE_BITS] = VTLBVirtual(VTLBPhysical::fromHandler(UnmappedVirtHandler), vaddr, vaddr);
+		// The physical-page lookup must follow ASID remaps too. An old PFN
+		// here would outlive the corresponding invalidated host vTLB entry.
+		// Restore the default identity sentinel for currently unmapped VPNs.
+		if (vtlbdata.ppmap && !(vaddr & 0x80000000))
+			vtlbdata.ppmap[vaddr >> VTLB_PAGE_BITS] = vaddr & ~VTLB_PAGE_MASK;
 		vaddr += VTLB_PAGE_SIZE;
 		size -= VTLB_PAGE_SIZE;
 	}
