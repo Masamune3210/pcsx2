@@ -482,4 +482,20 @@
     <Build Solution="Release Clang AVX2|ARM64" Project="false" />
     <Build Solution="Release|ARM64" Project="false" />
   </Project>
+  <Folder Name="/tests/">
+    <Project Path="tests/ctest/core/EEActiveTLBNative.vcxproj" Id="5f8b09e8-f1a0-491f-9d1a-2bc09a6e14a2">
+      <Build Solution="Debug|x64" Project="false" />
+      <Build Solution="Debug AVX2|x64" Project="false" />
+      <Build Solution="Debug Clang|x64" Project="false" />
+      <Build Solution="Debug Clang AVX2|x64" Project="false" />
+      <Build Solution="Devel|x64" Project="false" />
+      <Build Solution="Devel AVX2|x64" Project="false" />
+      <Build Solution="Devel Clang|x64" Project="false" />
+      <Build Solution="Devel Clang AVX2|x64" Project="false" />
+      <Build Solution="Release|x64" Project="false" />
+      <Build Solution="Release AVX2|x64" Project="false" />
+      <Build Solution="Release Clang|x64" Project="false" />
+      <Build Solution="Release Clang AVX2|x64" Project="false" />
+    </Project>
+  </Folder>
 </Solution>
