@@ -132,11 +132,13 @@ void PSBBNTraceUserFaultBefore(u32 code, u32 bd)
 		(count > 1 && (count & (count - 1)) != 0))
 		return;
 	++history.emitted;
-	Console.WriteLn("PSBBN-FAULT pc=%08x bad=%08x code=%02x asid=%02x n=%llu bd=%u Status=%08x EntryHi=%08x v0=%08x s0=%08x s1=%08x sp=%08x ra=%08x",
+	Console.WriteLn("PSBBN-FAULT pc=%08x bad=%08x code=%02x asid=%02x n=%llu bd=%u Status=%08x EntryHi=%08x v0=%08x s0=%08x s1=%08x sp=%08x ra=%08x gp=%08x t9=%08x a0=%08x a1=%08x",
 		pc, bad, cause, asid, static_cast<unsigned long long>(count), bd,
 		status, cpuRegs.CP0.n.EntryHi, cpuRegs.GPR.n.v0.UL[0],
 		cpuRegs.GPR.r[16].UL[0], cpuRegs.GPR.r[17].UL[0],
-		cpuRegs.GPR.n.sp.UL[0], cpuRegs.GPR.n.ra.UL[0]);
+		cpuRegs.GPR.n.sp.UL[0], cpuRegs.GPR.n.ra.UL[0],
+		cpuRegs.GPR.r[28].UL[0], cpuRegs.GPR.r[25].UL[0],
+		cpuRegs.GPR.r[4].UL[0], cpuRegs.GPR.r[5].UL[0]);
 }
 
 // The first post-ASID SIGSEGV fetched from 0x2AC24400 with $ra equal to
