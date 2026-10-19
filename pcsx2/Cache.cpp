@@ -3,6 +3,7 @@
 
 #include "Common.h"
 #include "Cache.h"
+#include "COP0.h"
 #include "vtlb.h"
 
 using namespace R5900;
@@ -487,6 +488,13 @@ namespace R5900
 						line.clear();
 						break;
 					}
+
+					case 0x0b: // IHIN (Instruction Cache Hit Invalidate)
+						// The interpreter fetches directly from backing memory and
+						// maintains no separate instruction-cache state.
+						// JIT instruction-cache coherence remains a separate task.
+						PSBBNTraceCacheIhin(addr);
+						break;
 
 					case 0x7: //IXIN (Instruction Cache Index Invalidate)
 					{
