@@ -29,11 +29,21 @@ struct PSBBNTraceState
 	std::array<Channel, static_cast<size_t>(PSBBNTlbEvent::Count)> channels{};
 };
 PSBBNTraceState s_psbbn_trace;
+struct PSBBNLateTraceState
+{
+	bool armed = false;
+	u32 ordinary_syscalls = 0, gs_syscalls = 0;
+	u32 linux_syscalls = 0;
+	u32 exception_before = 0, exception_after = 0, heartbeats = 0;
+	u64 next_heartbeat = 0;
+};
+PSBBNLateTraceState s_psbbn_late;
 }
 
 void PSBBNResetTlbTrace()
 {
 	s_psbbn_trace = {};
+	s_psbbn_late = {};
 }
 
 bool PSBBNTlbTraceEnabled()
@@ -162,6 +172,72 @@ void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail, int selected, b
 }
 
 
+
+// Independent budgets: the original TLB windows can cap before userspace stalls.
+// No guest memory reads, state writes, syscall suppression, or mode corrections.
+static bool PSBBNLateTraceEnabled()
+{
+	return s_psbbn_trace.armed && Cpu == &intCpu && PSBBNTlbTraceEnabled();
+}
+
+void PSBBNBeginLateTrace()
+{
+	if (!PSBBNLateTraceEnabled() || s_psbbn_late.armed)
+		return;
+	s_psbbn_late.armed = true;
+	Console.WriteLn("PSBBN-LATE armed reason=first-armed-setgscrt-classification pc=%08x", cpuRegs.pc);
+}
+
+void PSBBNTraceSyscall(u32 call)
+{
+	if (!PSBBNLateTraceEnabled())
+		return;
+	// Observe the BIOS classification without assuming this really is a BIOS call.
+	if (call == 2)
+		PSBBNBeginLateTrace();
+	u32& emitted = call == 0x100 ? s_psbbn_late.linux_syscalls :
+		(call == 2 ? s_psbbn_late.gs_syscalls : s_psbbn_late.ordinary_syscalls);
+	const u32 limit = call == 2 ? 32 : 16;
+	if (emitted >= limit)
+		return;
+	emitted++;
+	Console.WriteLn("PSBBN-SYSCALL call=%08x abi=%s n=%u syscallpc=%08x code=%08x cycle=%llu Status=%08x EPC=%08x EntryHi=%08x v0=%08x v1=%08x a0=%08x a1=%08x a2=%08x a3=%08x ra=%08x sp=%08x branch=%u delay=%u",
+		call, call == 0x100 ? "linux-o32" : "bios-v1", emitted, cpuRegs.pc - 4, cpuRegs.code, static_cast<unsigned long long>(cpuRegs.cycle),
+		cpuRegs.CP0.n.Status.val, cpuRegs.CP0.n.EPC, cpuRegs.CP0.n.EntryHi,
+		cpuRegs.GPR.r[2].UL[0], cpuRegs.GPR.r[3].UL[0], cpuRegs.GPR.r[4].UL[0],
+		cpuRegs.GPR.r[5].UL[0], cpuRegs.GPR.r[6].UL[0], cpuRegs.GPR.r[7].UL[0],
+		cpuRegs.GPR.r[31].UL[0], cpuRegs.GPR.r[29].UL[0], static_cast<u32>(cpuRegs.branch), cpuRegs.IsDelaySlot);
+}
+
+static void PSBBNWriteLateState(const char* event, u32 n, u32 detail)
+{
+	Console.WriteLn("PSBBN-LATE event=%s n=%u detail=%08x pc=%08x code_sample=%08x cycle=%llu EPC=%08x Cause=%08x Status=%08x BadVAddr=%08x EntryHi=%08x v0=%08x v1=%08x a0=%08x a1=%08x a2=%08x a3=%08x ra=%08x sp=%08x branch=%u delay=%u",
+		event, n, detail, cpuRegs.pc, cpuRegs.code, static_cast<unsigned long long>(cpuRegs.cycle),
+		cpuRegs.CP0.n.EPC, cpuRegs.CP0.n.Cause, cpuRegs.CP0.n.Status.val, cpuRegs.CP0.n.BadVAddr, cpuRegs.CP0.n.EntryHi,
+		cpuRegs.GPR.r[2].UL[0], cpuRegs.GPR.r[3].UL[0], cpuRegs.GPR.r[4].UL[0],
+		cpuRegs.GPR.r[5].UL[0], cpuRegs.GPR.r[6].UL[0], cpuRegs.GPR.r[7].UL[0],
+		cpuRegs.GPR.r[31].UL[0], cpuRegs.GPR.r[29].UL[0], static_cast<u32>(cpuRegs.branch), cpuRegs.IsDelaySlot);
+}
+
+void PSBBNTraceLateException(u32 code, u32 bd, bool after)
+{
+	if (!s_psbbn_late.armed || !PSBBNLateTraceEnabled())
+		return;
+	u32& emitted = after ? s_psbbn_late.exception_after : s_psbbn_late.exception_before;
+	if (emitted >= 64)
+		return;
+	PSBBNWriteLateState(after ? "exception-after" : "exception-before", ++emitted, code | (bd ? 0x80000000u : 0));
+}
+
+void PSBBNTraceLateHeartbeat()
+{
+	if (!s_psbbn_late.armed || s_psbbn_late.heartbeats >= 64 || !PSBBNLateTraceEnabled() ||
+		cpuRegs.cycle < s_psbbn_late.next_heartbeat)
+		return;
+	// One sample per nominal EE second; this is guest-cycle time, not wall time.
+	s_psbbn_late.next_heartbeat = cpuRegs.cycle + 294912000ULL;
+	PSBBNWriteLateState("heartbeat", ++s_psbbn_late.heartbeats, 0);
+}
 
 // Updates the CPU's mode of operation (either, Kernel, Supervisor, or User modes).
 // Currently the different modes are not implemented.
@@ -637,24 +713,13 @@ namespace COP0 {
 		PSBBNTraceTlb(PSBBNTlbEvent::TlbpBefore, cpuRegs.CP0.n.EntryHi, 0, -1, true);
 		int i;
 
-		union
-		{
-			struct
-			{
-				u32 VPN2 : 19;
-				u32 VPN2X : 2;
-				u32 G : 3;
-				u32 ASID : 8;
-			} s;
-			u32 u;
-		} EntryHi32;
-
-		EntryHi32.u = cpuRegs.CP0.n.EntryHi;
+		EntryHi_t entry_hi;
+		entry_hi.UL = cpuRegs.CP0.n.EntryHi;
 
 		cpuRegs.CP0.n.Index = 0xFFFFFFFF;
 		for (i = 0; i < 48; i++)
 		{
-			if (tlb[i].VPN2() == ((~tlb[i].Mask()) & (EntryHi32.s.VPN2)) && ((tlb[i].isGlobal()) || ((tlb[i].EntryHi.ASID & 0xff) == EntryHi32.s.ASID)))
+			if (tlb[i].VPN2() == ((entry_hi.VPN2 & ~tlb[i].Mask()) << 13) && (tlb[i].isGlobal() || tlb[i].EntryHi.ASID == entry_hi.ASID))
 			{
 				cpuRegs.CP0.n.Index = i;
 				break;
