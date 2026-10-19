@@ -882,7 +882,8 @@ void SyncActiveTLBMappings()
 	{
 		const auto match = desired.find(page);
 		if (match == desired.end() || match->second.physicalAddress != old.physicalAddress ||
-			match->second.scratchpad != old.scratchpad)
+			match->second.scratchpad != old.scratchpad ||
+			match->second.writable != old.writable)
 		{
 			memClearPageAddr(page << 12);
 			Cpu->Clear(page << 12, 0x400);
@@ -893,7 +894,8 @@ void SyncActiveTLBMappings()
 	{
 		const auto old = s_active_tlb_pages.find(page);
 		if (old != s_active_tlb_pages.end() && old->second.physicalAddress == now.physicalAddress &&
-			old->second.scratchpad == now.scratchpad)
+			old->second.scratchpad == now.scratchpad &&
+			old->second.writable == now.writable)
 			continue;
 		if (now.scratchpad)
 		{
@@ -940,6 +942,21 @@ void SyncActiveTLBMappings()
 		}
 	}
 	s_active_tlb_pages.swap(desired);
+}
+
+// This is an interpreter-only write-permission predicate. All active
+// translations remain readable through the existing vTLB mapping; a matched
+// valid EntryLo with D=0 must fault *before* the interpreter writes RAM.
+// Absence from this map is not a TLB Modification: existing vTLB miss
+// handling determines whether the address has no entry or an invalid entry.
+// Direct-mapped kernel pages are not in the active-TLB projection.
+bool EEInterpreterTLBStoreNeedsModification(u32 address)
+{
+	if (Cpu != &intCpu)
+		return false;
+	const auto match = s_active_tlb_pages.find(address >> 12);
+	return match != s_active_tlb_pages.end() && !match->second.scratchpad &&
+		!match->second.writable;
 }
 
 void ResetActiveTLBMappings()
