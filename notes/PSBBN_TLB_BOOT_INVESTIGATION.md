@@ -6,6 +6,10 @@ Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
 Branch: `note-working/psbbn-tlb-boot-20261017`
 
+## User-confirmed visible result after 0008 (2026-10-19)
+
+The locally tested experimental Linux O32 syscall guard (0008) stopped the recorded spurious BIOS SetGsCrt interception and preserved the genuine stage2 BIOS call. **The user explicitly confirms that the screen did not change: the centered PlayStation 2 logo remains.** This is a negative *visible boot outcome*, even though the syscall classification experiment corrected an observable erroneous side effect. Do not ask the user to reconfirm or repeat the 0008 baseline. Investigate the remaining boot blocker independently, without assuming IHIN warning suppression will fix it or accepting the Sony-kernel fingerprint as a permanent syscall solution. The EE recompiler MMU/exception parity remains required for eventual support.
+
 ## CACHE IHIN interpreter observer and JIT gap (2026-10-19)
 
 **Source review and implementation committed:** PCSX2 EE `CACHE 0x0B` is **IHIN (instruction-cache hit invalidate)**, documented in the EE Core Instruction Set Manual v6.0, page 308. The uploaded capture10 logged 14,202 generic unsupported-CACHE warnings during 138.4629–142.0333s, but the kernel continued executing to at least 187.4967s. The warnings are not evidence of a permanent CPU hang.
