@@ -214,6 +214,22 @@ void PSBBNTraceReturnSlotTranslation(u32 pc, u32 opcode, u32 sp, const char* pha
 		  (pc == 0x2ab0f3a4u && opcode == 0x8fbf0040u)))
 		return;
 
+	// This is a diagnostic only. VM memory may have been released while
+	// execution is being stopped, so never dereference a null EE RAM base.
+	// Keep one bounded marker to distinguish teardown/lifetime problems from
+	// guest TLB translation differences in the next debugger run.
+	if (eeMem == nullptr)
+	{
+		static bool s_reportedMissingEEMemory = false;
+		if (!s_reportedMissingEEMemory)
+		{
+			s_reportedMissingEEMemory = true;
+			Console.WriteLn("PSBBN-RA-PHYS-SKIP reason=eeMem-null phase=%s pc=%08x sp=%08x",
+				phase, pc, sp);
+		}
+		return;
+	}
+
 	const u32 slot = sp + 0x40u;
 	const u32 asid = cpuRegs.CP0.n.EntryHi & 0xffu;
 	const auto active = BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(asid));
