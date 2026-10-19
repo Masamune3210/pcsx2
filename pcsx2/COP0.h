@@ -29,3 +29,7 @@ extern bool PSBBNTlbTraceEnabled();
 extern void PSBBNTraceCacheIhin(u32 effectiveAddress);
 extern void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail = 0,
 	int selected = -1, bool exact_interpreter_pc = false);
+extern void PSBBNTraceSyscall(u32 call);
+extern void PSBBNBeginLateTrace();
+extern void PSBBNTraceLateException(u32 code, u32 bd, bool after);
+extern void PSBBNTraceLateHeartbeat();

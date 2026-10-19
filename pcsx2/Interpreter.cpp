@@ -186,6 +186,7 @@ static void execI()
 #endif
 
 	COP0_AdvanceRandom();
+	PSBBNTraceLateHeartbeat();
 	const u32 pc = cpuRegs.pc;
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented

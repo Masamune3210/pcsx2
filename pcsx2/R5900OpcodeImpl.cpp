@@ -4,8 +4,10 @@
 #include "Common.h"
 
 #include <float.h>
+#include <cstring>
 
 #include "R5900.h"
+#include "COP0.h"
 #include "R5900OpcodeTables.h"
 #include "GS.h"
 #include "ps2/BiosTools.h"
@@ -905,8 +907,47 @@ void MOVN() {
 // This function is the only one that uses Sifcmd.h in Pcsx2.
 #include "Sifcmd.h"
 
+// PSBBN Linux uses v0 syscall numbers; v1 is not a BIOS request selector.
+// Match the installed dispatcher and native handler, not just a number range.
+// Constant physical RAM reads cannot invoke guest virtual-miss handlers.
+static bool PSBBNIsLinuxO32Syscall()
+{
+	const u32 status = cpuRegs.CP0.n.Status.val;
+	const u32 number = cpuRegs.GPR.n.v0.UL[0];
+	// User mode, EXL/ERL clear, and ordinary (non-BEV) exception vectors.
+	if ((status & 0x0040001eu) != 0x10u || number < 4000 || number >= 4236)
+		return false;
+	static constexpr u32 signature[][2] = {
+		{0x80000180, 0x401b6800}, {0x80000184, 0x3c1a801f},
+		{0x80000188, 0x275a506c}, {0x8000018c, 0x337b007c},
+		{0x80000190, 0x035bd021}, {0x80000194, 0x8f5a0000},
+		{0x80000198, 0x03400008}, {0x8000019c, 0x00000000},
+		{0x801f508c, 0x8001f280}, {0x8001f280, 0x401a6000},
+		{0x8001f310, 0x2c48108c}, {0x8001f320, 0x00024080},
+		{0x8001f32c, 0x8d4a382c}};
+	for (const auto& expected : signature)
+	{
+		const u8* pointer = static_cast<const u8*>(PSM(expected[0]));
+		if (!pointer)
+			return false;
+		u32 actual;
+		std::memcpy(&actual, pointer, sizeof(actual));
+		if (actual != expected[1])
+			return false;
+	}
+	return true;
+}
+
 void SYSCALL()
 {
+	if (PSBBNIsLinuxO32Syscall())
+	{
+		// 0x100 is the observer's Linux-ABI tag, outside the BIOS u8 range.
+		PSBBNTraceSyscall(0x100);
+		cpuRegs.pc -= 4;
+		cpuException(0x20, cpuRegs.branch);
+		return;
+	}
 	u8 call;
 
 	if (cpuRegs.GPR.n.v1.SL[0] < 0)
@@ -914,6 +955,7 @@ void SYSCALL()
 	else
 		call = cpuRegs.GPR.n.v1.UC[0];
 
+	PSBBNTraceSyscall(call);
 	BIOS_LOG("Bios call: %s (%x)", R5900::bios[call], call);
 
 
