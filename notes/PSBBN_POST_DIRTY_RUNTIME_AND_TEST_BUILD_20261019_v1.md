@@ -1,5 +1,10 @@
 # Post-Dirty interpreter runtime and missing core_test.exe (2026-10-19)
 
+## Native observer null-ppmap crash correction is on PCSX2 branch
+
+PCSX2 commit [`cb4d9cd`](https://github.com/Masamune3210/pcsx2/commit/cb4d9cd02f306e244446c47f032bf2231dbf812f) implements the Codex-staged `vtlbdata.ppmap != nullptr` guard in `COP0.cpp::PSBBNTraceReturnSlotTranslation`. Prior null-`eeMem` guard alone could not prevent a null optional Goemon LUT dereference via `vtlb_V2P`, and source-extracted ASan reproduced the recorded host read at `0x001FFFDC`. Patched fixture **9/9 PASS**; genuine Windows PCSX2 build and fresh interpreter PSBBN boot **NOT YET TESTED**. This fixes a diagnostic observer's host access, not necessarily a guest TLB defect or PSBBN boot. Full work/fixture notes: [research checkpoint](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_NATIVE_CRASH_CODEX_CHECKPOINT_20261019_v1.md).
+
+
 ## Native EEActiveTLB regression tests: 12/12 PASS (2026-10-19)
 
 **User-verified, compiled execution:** In the native Visual Studio/MSBuild `Release AVX2|x64` test harness, the user successfully ran `bin/tests/EEActiveTLBNative-x64-Release AVX2.exe --gtest_filter=EEActiveTLB.*`. GoogleTest reported **12 tests run, 12 passed, 0 failures** (3 ms test suite, 4 ms total); all individual `EEActiveTLB` tests passed.
