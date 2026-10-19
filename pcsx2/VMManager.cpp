@@ -1957,9 +1957,9 @@ void VMManager::ResetPSBBNScheduledSaves()
 	}
 
 	const int max_captures = Host::GetBaseIntSettingValue("EmuCore/PSBBN", "AutoSaveMaxCaptures", 48);
-	if (max_captures < 1 || max_captures > 200)
+	if (max_captures < 1 || max_captures > 1000000)
 	{
-		Console.Warning("PSBBN autosave: AutoSaveMaxCaptures=%d outside 1..200; disabled.", max_captures);
+		Console.Warning("PSBBN autosave: AutoSaveMaxCaptures=%d outside 1..1000000; disabled.", max_captures);
 		return;
 	}
 
