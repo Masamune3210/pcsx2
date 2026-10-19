@@ -240,7 +240,8 @@ static void execI()
 	if (traceRa)
 	{
 		const u32 op = currentOpcode >> 26;
-		if (pc == 0x2ab0f2d8u || (op >= 0x28u && op <= 0x2eu) || op == 0x3fu)
+		if (pc == 0x2ab0f2bcu || pc == 0x2ab0f2d8u || pc == 0x2ab0f3a4u ||
+			(op >= 0x28u && op <= 0x2eu) || op == 0x3fu)
 			PSBBNTraceReturnStackAccess(pc, currentOpcode);
 	}
 
