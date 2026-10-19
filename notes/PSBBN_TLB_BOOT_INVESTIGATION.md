@@ -6,6 +6,27 @@ Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
 Branch: `note-working/psbbn-tlb-boot-20261017`
 
+## Optional scheduled savestates for diagnosing later PSBBN failures (2026-10-19)
+
+**Code commit:** `6d05802d58e80759056309e607810aa89c095042`, `pcsx2/VMManager.cpp`, branch `note-working/psbbn-tlb-boot-20261017`.
+
+Configure via **base `PCSX2.ini`**, not environment variables:
+
+```ini
+[EmuCore/PSBBN]
+AutoSaveIntervalSeconds = 15
+AutoSaveMaxCaptures = 48
+```
+
+- `AutoSaveIntervalSeconds` defaults to `0` (off), accepts `1..3600`. `AutoSaveMaxCaptures` defaults to `48`, accepts `1..200`. Invalid values disable the scheduler with a console warning. Read on **each new VM initialization** via `Host::GetBaseIntSettingValue`; change the INI and start a new VM to apply it.
+- Wall-clock timer uses `std::chrono::steady_clock`. The poll runs at `VMManager::Internal::VSyncOnCPUThread()`, so captures happen on the VM CPU thread at the first VSync after their due time. The scheduler does **not** run during pause, GS dump playback or memory-card busy state, and doesn't produce catch-up bursts. It depends on guest VSync; if the VM stops VSync entirely there may be no additional snapshots.
+- Captures go to the existing `EmuFolders::Savestates` directory, named `PSBBN-auto-<wall-clock-microseconds>-001.p2s` etc., with a unique boot-session prefix. No normal manual slots or existing files are overwritten.
+- Each save uses PCSX2's existing synchronous state capture and asynchronous ZIP write. It defers the next capture while a save worker is active; stops after the configured number; logs PC and output path; reports save failures. Compression is the existing savestate setting: **user plans Deflate**, but this branch does not forcibly change that setting.
+- The source-level checks confirmed `Host::GetBaseIntSettingValue`, interval and maximum entries, reset-on-boot, VSync poll, non-overlap guard, standard save path, and absence of environment-variable access. **Windows/MSVC build and live automated capture remain unverified.**
+- This is instrumentation, not a boot fix. We need state transitions and task exit/parent relationships (especially the likely userspace child `PID 14`, zombie, code `0x0B`), not merely an increased quantity of uncorrelated logs. Keep the saved BIOS/kernel/IOP memory intact when sharing. Analyze with `ps2bbndecomp/tools/inspect_psbbn_savestates_20261018_v1.py`.
+
+**Branch boundary:** No code merges into `testing`; no change to `ghidra-emotionengine-reloaded` required. Never assume a snapshot finished compressing merely because its initial console message appeared.
+
 ## User-confirmed visible result after 0008 (2026-10-19)
 
 The locally tested experimental Linux O32 syscall guard (0008) stopped the recorded spurious BIOS SetGsCrt interception and preserved the genuine stage2 BIOS call. **The user explicitly confirms that the screen did not change: the centered PlayStation 2 logo remains.** This is a negative *visible boot outcome*, even though the syscall classification experiment corrected an observable erroneous side effect. Do not ask the user to reconfirm or repeat the 0008 baseline. Investigate the remaining boot blocker independently, without assuming IHIN warning suppression will fix it or accepting the Sony-kernel fingerprint as a permanent syscall solution. The EE recompiler MMU/exception parity remains required for eventual support.
