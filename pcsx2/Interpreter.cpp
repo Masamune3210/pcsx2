@@ -243,10 +243,13 @@ static void execI()
 	if (traceStack)
 	{
 		const u32 op = currentOpcode >> 26;
-		const bool isStore = (op >= 0x28u && op <= 0x2eu) || op == 0x3fu;
+		const bool isStore = op == 0x1fu || (op >= 0x28u && op <= 0x2eu) ||
+			(op >= 0x39u && op <= 0x3fu);
 		if (isStore || (traceRa && (pc == 0x2ab0f2bcu ||
 			pc == 0x2ab0f2d8u || pc == 0x2ab0f3a4u)))
 			PSBBNTraceReturnStackAccess(pc, currentOpcode);
+		if (isStore || (traceRa && pc == 0x2abb7048u))
+			PSBBNTraceGpFrameBefore(pc, currentOpcode);
 	}
 
 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
@@ -255,6 +258,8 @@ static void execI()
 
 	if (traceRa && cpuRegs.GPR.r[31].UL[0] != oldRa)
 		PSBBNTraceReturnAddressWrite(pc, currentOpcode, oldRa, oldGp);
+	if (traceRa && pc == 0x2abb7248u)
+		PSBBNTraceGpFrameAfter(pc, currentOpcode, oldGp);
 }
 
 static __fi void _doBranch_shared(u32 tar)
