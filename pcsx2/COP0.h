@@ -12,6 +12,7 @@ extern void WriteTLB(int i);
 extern void UnmapTLB(const tlbs& t, int i);
 extern void MapTLB(const tlbs& t, int i);
 extern void SyncActiveTLBMappings();
+extern bool EEInterpreterTLBStoreNeedsModification(u32 address);
 extern void ResetActiveTLBMappings();
 extern void WriteCP0EntryHi(u32 value);
 
