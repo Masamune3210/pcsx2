@@ -76,6 +76,7 @@ struct PSBBNTrackedGpFrame { u32 address = 0; u32 asid = 0; u32 savedGp = 0; boo
 std::array<PSBBNTrackedGpFrame, 64> s_psbbn_gp_frames{};
 u32 s_psbbn_gp_frame_cursor = 0;
 u32 s_psbbn_gp_frame_events = 0;
+u32 s_psbbn_gp_mismatch_events = 0;
 }
 
 void PSBBNResetTlbTrace()
@@ -92,6 +93,7 @@ void PSBBNResetTlbTrace()
 	s_psbbn_gp_frames = {};
 	s_psbbn_gp_frame_cursor = 0;
 	s_psbbn_gp_frame_events = 0;
+	s_psbbn_gp_mismatch_events = 0;
 }
 
 bool PSBBNTlbTraceEnabled()
@@ -115,6 +117,7 @@ void PSBBNResetUserFaultWindow()
 	s_psbbn_focus_other_events = 0;
 	// Retain watched guest GP frames across scheduled savestates.
 	s_psbbn_gp_frame_events = 0;
+	s_psbbn_gp_mismatch_events = 0;
 }
 
 // Observes interpreter CPU address errors and TLB faults before EXL changes.
@@ -393,12 +396,21 @@ void PSBBNTraceGpFrameAfter(u32 pc, u32 opcode, u32 priorGp)
 	{
 		if (!frame.valid || frame.address != slot || frame.asid != asid)
 			continue;
-		if (s_psbbn_gp_frame_events < 96)
+		const bool mismatch = gp != frame.savedGp;
+		// A busy function can consume the routine quota before the fatal call.
+		// Preserve a separate budget specifically for the bad GP restoration.
+		if (mismatch && s_psbbn_gp_mismatch_events < 32)
+		{
+			++s_psbbn_gp_mismatch_events;
+			Console.WriteLn("PSBBN-GP-MISMATCH pc=%08x asid=%02x sp=%08x slot=%08x expectedGP=%08x priorGP=%08x restoredGP=%08x EntryHi=%08x",
+				pc, asid, sp, slot, frame.savedGp, priorGp, gp, cpuRegs.CP0.n.EntryHi);
+		}
+		else if (s_psbbn_gp_frame_events < 96)
 		{
 			++s_psbbn_gp_frame_events;
 			Console.WriteLn("PSBBN-GP-RESTORE pc=%08x asid=%02x sp=%08x slot=%08x expectedGP=%08x priorGP=%08x restoredGP=%08x mismatch=%u EntryHi=%08x",
 				pc, asid, sp, slot, frame.savedGp, priorGp, gp,
-				(gp != frame.savedGp) ? 1u : 0u, cpuRegs.CP0.n.EntryHi);
+				mismatch ? 1u : 0u, cpuRegs.CP0.n.EntryHi);
 		}
 		return;
 	}
