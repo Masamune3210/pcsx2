@@ -483,7 +483,7 @@ void WriteCP0EntryHi(u32 value)
 		SyncActiveTLBMappings();
 }
 
-void MapTLB(const tlbs& t, int i)
+void MapTLB(const tlbs&, int)
 {
 	// The caller has already installed tlb[i]. Update only the physical pages
 	// visible under the selected ASID instead of flattening *every* TLB entry.
@@ -499,7 +499,7 @@ __inline u32 ConvertPageMask(const u32 PageMask)
 	return (1 << (12 + mask)) - 1;
 }
 
-void UnmapTLB(const tlbs& t, int i)
+void UnmapTLB(const tlbs& t, int)
 {
 	// TLBWI/TLBWR remove the old cache-mode descriptor here. Live vTLB page
 	// mappings are reconciled once the replacement TLB entry is installed by
