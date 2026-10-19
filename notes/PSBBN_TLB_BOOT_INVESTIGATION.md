@@ -1,5 +1,16 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Native EEActiveTLB regression tests: 12/12 PASS (2026-10-19)
+
+**User-verified, compiled execution:** In the native Visual Studio/MSBuild `Release AVX2|x64` test harness, the user successfully ran `bin/tests/EEActiveTLBNative-x64-Release AVX2.exe --gtest_filter=EEActiveTLB.*`. GoogleTest reported **12 tests run, 12 passed, 0 failures** (3 ms test suite, 4 ms total); all individual `EEActiveTLB` tests passed.
+
+The native harness comprises `tests/ctest/core/ee_active_tlb_asid_tests_20261018.cpp`, bundled GoogleTest sources, and a test-local `_cpuRegistersPack` definition (`EEActiveTLBNativeGlobals.cpp`) so it does not need to link production `R5900.cpp`. This is the **first actual compiled/executed validation** of the production header-inline `BuildEEActiveTLBPageMap` and `EEActiveTLBStoreNeedsModification` behavior on Windows. Prior notes saying the 12 tests were unexecuted have now been superseded for this test target.
+
+**Coverage:** ASID isolation, global/invalid selection, larger pages, scratchpad, distinct even/odd Dirty permissions, protected shared PFN across three ASIDs, independent COW replacement PFN/writable permission, permission-only TLB rewrite and read-only global behavior. This is **unit-level proof, not full interpreter end-to-end proof**: the suite does not directly execute `vtlb_memWrite`, `cpuTlbModification`, guest EPC/BD exception dispatch, Linux fault repair/retry, or a complete PSBBN boot.
+
+**Next gate:** Run a fresh interpreter-only PSBBN boot after rebuilding with diagnostic null-dereference guard commits [`8dde4ac`](https://github.com/Masamune3210/pcsx2/commit/8dde4ac9992c558401ea198f288be037132cc8b2) and [`d614b1f`](https://github.com/Masamune3210/pcsx2/commit/d614b1f88a054fbea2b69db8cc0a80fd3f4e52d6). Confirm whether `PSBBN-RA-PHYS-SKIP reason=eeMem-null` occurs and whether PCSX2 remains running, and compare guest fault progress to the previously captured first TLB Modification event around 170.5199 s. A test-pass does not establish a host crash fix. JIT remains explicitly deferred.
+
+
 ## Native EEActiveTLB linker dependency resolved in source (2026-10-19)
 
 The user's first native MSVC `Release AVX2|x64` build of `EEActiveTLBNative` failed with `LNK2001` (`?\_cpuRegistersPack@@3UcpuRegistersPack@@A`) from `ee_active_tlb_asid_tests_20261018.obj`, followed by `LNK1120`. Root cause: `R5900.h` defines translation-unit-static references `cpuRegs`/`fpuRegs` to the global `_cpuRegistersPack`. The real emulator defines that global in `pcsx2/R5900.cpp`, which should not be linked wholesale into the standalone selector test. 
