@@ -55,6 +55,7 @@ struct PSBBNUserFaultWindow
 	u64 dropped = 0;
 };
 PSBBNUserFaultWindow s_psbbn_user_faults;
+u32 s_psbbn_badreturn_emitted = 0;
 }
 
 void PSBBNResetTlbTrace()
@@ -62,6 +63,7 @@ void PSBBNResetTlbTrace()
 	s_psbbn_trace = {};
 	s_psbbn_late = {};
 	s_psbbn_user_faults = {};
+	s_psbbn_badreturn_emitted = 0;
 }
 
 bool PSBBNTlbTraceEnabled()
@@ -77,6 +79,7 @@ void PSBBNResetUserFaultWindow()
 		s_psbbn_user_faults.used, s_psbbn_user_faults.emitted,
 		static_cast<unsigned long long>(s_psbbn_user_faults.dropped));
 	s_psbbn_user_faults = {};
+	s_psbbn_badreturn_emitted = 0;
 }
 
 // Observes interpreter CPU address errors and TLB faults before EXL changes.
@@ -134,6 +137,28 @@ void PSBBNTraceUserFaultBefore(u32 code, u32 bd)
 		status, cpuRegs.CP0.n.EntryHi, cpuRegs.GPR.n.v0.UL[0],
 		cpuRegs.GPR.r[16].UL[0], cpuRegs.GPR.r[17].UL[0],
 		cpuRegs.GPR.n.sp.UL[0], cpuRegs.GPR.n.ra.UL[0]);
+}
+
+// The first post-ASID SIGSEGV fetched from 0x2AC24400 with $ra equal to
+// that address, outside the mapped text/data VMA. Log the first instruction
+// *changing* $ra into that suspicious range. Never overwrite guest registers.
+void PSBBNTraceReturnAddressWrite(u32 pc, u32 opcode, u32 oldRa, u32 oldGp)
+{
+	if (!PSBBNTlbTraceEnabled() || Cpu != &intCpu ||
+		s_psbbn_badreturn_emitted >= 64)
+		return;
+
+	const u32 ra = cpuRegs.GPR.r[31].UL[0];
+	const u32 gp = cpuRegs.GPR.r[28].UL[0];
+	// The range is an opt-in PSBBN investigative watch, not an EE MMU rule.
+	// A matching gp/ra transition is especially relevant to the bad return.
+	if (ra < 0x2ac23000u || ra >= 0x2ad00000u)
+		return;
+	++s_psbbn_badreturn_emitted;
+	Console.WriteLn("PSBBN-RA-WRITE n=%u pc=%08x opcode=%08x oldRA=%08x newRA=%08x oldGP=%08x newGP=%08x t9=%08x sp=%08x nextPC=%08x EntryHi=%08x",
+		s_psbbn_badreturn_emitted, pc, opcode, oldRa, ra, oldGp, gp,
+		cpuRegs.GPR.r[25].UL[0], cpuRegs.GPR.r[29].UL[0], cpuRegs.pc,
+		cpuRegs.CP0.n.EntryHi);
 }
 
 // CACHE 0x0b is IHIN (instruction-cache hit invalidate). The EE interpreter
