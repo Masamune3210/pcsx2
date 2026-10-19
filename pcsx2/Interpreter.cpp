@@ -236,13 +236,14 @@ static void execI()
 		(cpuRegs.CP0.n.Status.val & 0x1eu) == 0x10u;
 	const u32 oldRa = traceRa ? cpuRegs.GPR.r[31].UL[0] : 0;
 	const u32 oldGp = traceRa ? cpuRegs.GPR.r[28].UL[0] : 0;
+	const u32 currentOpcode = cpuRegs.code; // delay-slot execution can replace cpuRegs.code
 
 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
 
 	opcode.interpret();
 
 	if (traceRa && cpuRegs.GPR.r[31].UL[0] != oldRa)
-		PSBBNTraceReturnAddressWrite(pc, cpuRegs.code, oldRa, oldGp);
+		PSBBNTraceReturnAddressWrite(pc, currentOpcode, oldRa, oldGp);
 }
 
 static __fi void _doBranch_shared(u32 tar)
