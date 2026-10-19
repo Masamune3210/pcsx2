@@ -37,3 +37,5 @@ extern void PSBBNTraceUserFaultBefore(u32 code, u32 bd);
 extern void PSBBNResetUserFaultWindow();
 extern void PSBBNTraceReturnAddressWrite(u32 pc, u32 opcode, u32 oldRa, u32 oldGp);
 extern void PSBBNTraceReturnStackAccess(u32 pc, u32 opcode);
+extern void PSBBNTraceGpFrameBefore(u32 pc, u32 opcode);
+extern void PSBBNTraceGpFrameAfter(u32 pc, u32 opcode, u32 priorGp);
