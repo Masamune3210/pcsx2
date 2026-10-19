@@ -35,3 +35,4 @@ extern void PSBBNTraceLateException(u32 code, u32 bd, bool after);
 extern void PSBBNTraceLateHeartbeat();
 extern void PSBBNTraceUserFaultBefore(u32 code, u32 bd);
 extern void PSBBNResetUserFaultWindow();
+extern void PSBBNTraceReturnAddressWrite(u32 pc, u32 opcode, u32 oldRa, u32 oldGp);
