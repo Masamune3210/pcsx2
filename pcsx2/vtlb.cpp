@@ -1286,6 +1286,7 @@ void vtlb_Reset()
 void vtlb_Shutdown()
 {
 	vtlb_RemoveFastmemMappings();
+	ResetActiveTLBMappings();
 	s_fastmem_backpatch_info.clear();
 	s_fastmem_faulting_pcs.clear();
 }
