@@ -3,10 +3,10 @@
 
 #include "Common.h"
 #include "COP0.h"
+#include "EEActiveTLB.h"
 #include "vtlb.h"
 
 #include <array>
-#include <unordered_map>
 
 // Diagnostic observer only. Existing EE COP0 trace settings are the opt-in.
 // No guest memory reads: instruction_sample can be stale on fetch faults and JIT misses.
@@ -382,68 +382,24 @@ __fi void COP0_UpdatePCCR()
 //
 
 
-// The vTLB uses a flat array indexed only by guest VPN. It cannot keep
-// non-global entries for multiple ASIDs live at the same time. Maintain the
-// *active* ASID's translations there, plus global entries; nonmatching entries
-// stay in the architectural 48-entry TLB until the guest selects their ASID.
+// The vTLB is a flat, VPN-indexed host cache. The architectural TLB retains
+// all entries, but only global or active-ASID entries may occupy this cache.
 namespace
 {
-struct ActiveTLBPage
-{
-	u32 paddr = 0;
-	bool scratchpad = false;
-};
-std::unordered_map<u32, ActiveTLBPage> s_active_tlb_pages;
-
-void AppendActiveTLBPages(std::unordered_map<u32, ActiveTLBPage>& desired,
-	const tlbs& t, u8 asid)
-{
-	if (!t.isGlobal() && t.EntryHi.ASID != asid)
-		return;
-
-	if (t.isSPR())
-	{
-		if (t.VPN2() != 0x70000000)
-			Console.Warning("COP0: Mapping Scratchpad to non-default address 0x%08X", t.VPN2());
-		for (u32 n = 0; n < Ps2MemSize::Scratch / 0x1000; n++)
-			desired.try_emplace((t.VPN2() >> 12) + n, ActiveTLBPage{n << 12, true});
-		return;
-	}
-
-	const u32 halfPages = t.Mask() + 1;
-	const u32 firstPage = t.VPN2() >> 12;
-	const u32 compareMask = ((~t.Mask()) << 1) & 0xfffff;
-	const u32 compareVpn = firstPage & compareMask;
-	for (u32 half = 0; half < 2; half++)
-	{
-		const EntryLo_t& lo = half ? t.EntryLo1 : t.EntryLo0;
-		if (!lo.V)
-			continue;
-		const u32 basePage = firstPage + half * halfPages;
-		const u32 basePhysical = half ? t.PFN1() : t.PFN0();
-		for (u32 n = 0; n < halfPages; n++)
-		{
-			const u32 page = basePage + n;
-			if ((page & compareMask) == compareVpn)
-				desired.try_emplace(page, ActiveTLBPage{basePhysical + (n << 12), false});
-		}
-	}
-}
+EEActiveTLBPageMap s_active_tlb_pages;
 }
 
 void SyncActiveTLBMappings()
 {
-	std::unordered_map<u32, ActiveTLBPage> desired;
-	const u8 asid = static_cast<u8>(cpuRegs.CP0.n.EntryHi);
-	for (const tlbs& entry : tlb)
-		AppendActiveTLBPages(desired, entry, asid);
+	EEActiveTLBPageMap desired =
+		BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi));
 
 	// Remove obsolete mappings first. Every removal also invalidates generated
 	// guest code and fastmem aliases through the existing PCSX2 machinery.
 	for (const auto& [page, old] : s_active_tlb_pages)
 	{
 		const auto match = desired.find(page);
-		if (match == desired.end() || match->second.paddr != old.paddr ||
+		if (match == desired.end() || match->second.physicalAddress != old.physicalAddress ||
 			match->second.scratchpad != old.scratchpad)
 		{
 			memClearPageAddr(page << 12);
@@ -453,13 +409,13 @@ void SyncActiveTLBMappings()
 	for (const auto& [page, now] : desired)
 	{
 		const auto old = s_active_tlb_pages.find(page);
-		if (old != s_active_tlb_pages.end() && old->second.paddr == now.paddr &&
+		if (old != s_active_tlb_pages.end() && old->second.physicalAddress == now.physicalAddress &&
 			old->second.scratchpad == now.scratchpad)
 			continue;
 		if (now.scratchpad)
-			vtlb_VMapBuffer(page << 12, eeMem->Scratch + now.paddr, 0x1000);
+			vtlb_VMapBuffer(page << 12, eeMem->Scratch + now.physicalAddress, 0x1000);
 		else
-			memSetPageAddr(page << 12, now.paddr);
+			memSetPageAddr(page << 12, now.physicalAddress);
 		Cpu->Clear(page << 12, 0x400);
 	}
 	s_active_tlb_pages.swap(desired);
