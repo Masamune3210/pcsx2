@@ -215,6 +215,11 @@ void recMTC0()
 				xFastCall((void*)WriteCP0Config, g_cpuConstRegs[_Rt_].UL[0]);
 				break;
 
+			case 10:
+				iFlushCall(FLUSH_INTERPRETER);
+				xFastCall((void*)WriteCP0EntryHi, g_cpuConstRegs[_Rt_].UL[0]);
+				break;
+
 			case 9:
 				xMOV(rcx, ptr64[&cpuRegs.cycle]);
 				xADD(rcx, scaleblockcycles_clear());
@@ -281,6 +286,12 @@ void recMTC0()
 				_eeMoveGPRtoR(arg1reg, _Rt_);
 				iFlushCall(FLUSH_INTERPRETER);
 				xFastCall((void*)WriteCP0Config);
+				break;
+
+			case 10:
+				_eeMoveGPRtoR(arg1reg, _Rt_);
+				iFlushCall(FLUSH_INTERPRETER);
+				xFastCall((void*)WriteCP0EntryHi);
 				break;
 
 			case 9:
