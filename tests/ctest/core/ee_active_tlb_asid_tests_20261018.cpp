@@ -85,3 +85,24 @@ TEST(EEActiveTLB, ScratchpadAndHalfGlobalBits)
 	EXPECT_TRUE(m.at(0x70000).scratchpad);
 	EXPECT_EQ(m.at(0x70003).physicalAddress, 0x3000U);
 }
+
+TEST(EEActiveTLB, CapturedLinuxCodeNodeAndSentinelCannotShareAnASID)
+{
+	// Synthetic page frames at the VPNs recorded in the 21 PSBBN captures.
+	// The architecture must not expose the ASID 0x18 code/sentinel alongside
+	// the separate non-global ASID 0x05 node.
+	tlbs table[48]{};
+	table[2] = MakeEntry(0x2ad00000, 0x18, 0x01ed0000, 0x01ed1000);
+	table[4] = MakeEntry(0x2ab20000, 0x18, 0x01e81000, 0x01e82000);
+	table[35] = MakeEntry(0x2ac1a000, 0x05, 0x01ec1000, 0x01ec2000);
+
+	const auto current18 = BuildEEActiveTLBPageMap(table, 48, 0x18);
+	EXPECT_TRUE(current18.contains(0x2ab21));
+	EXPECT_TRUE(current18.contains(0x2ad00));
+	EXPECT_FALSE(current18.contains(0x2ac1a));
+
+	const auto current05 = BuildEEActiveTLBPageMap(table, 48, 0x05);
+	EXPECT_FALSE(current05.contains(0x2ab21));
+	EXPECT_FALSE(current05.contains(0x2ad00));
+	EXPECT_TRUE(current05.contains(0x2ac1a));
+}
