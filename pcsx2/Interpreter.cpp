@@ -240,6 +240,12 @@ static void execI()
 	const u32 oldRa = traceRa ? cpuRegs.GPR.r[31].UL[0] : 0;
 	const u32 oldGp = traceRa ? cpuRegs.GPR.r[28].UL[0] : 0;
 	const u32 currentOpcode = cpuRegs.code; // delay-slot execution can replace cpuRegs.code
+	const bool traceRaSlot = traceRa &&
+		((pc == 0x2ab0f2d8u && currentOpcode == 0xafbf0040u) ||
+		 (pc == 0x2ab0f3a4u && currentOpcode == 0x8fbf0040u));
+	const u32 raSlotSp = traceRaSlot ? cpuRegs.GPR.r[29].UL[0] : 0;
+	if (traceRaSlot)
+		PSBBNTraceReturnSlotTranslation(pc, currentOpcode, raSlotSp, "before");
 	if (traceStack)
 	{
 		const u32 op = currentOpcode >> 26;
@@ -256,6 +262,8 @@ static void execI()
 
 	opcode.interpret();
 
+	if (traceRaSlot)
+		PSBBNTraceReturnSlotTranslation(pc, currentOpcode, raSlotSp, "after");
 	if (traceRa && cpuRegs.GPR.r[31].UL[0] != oldRa)
 		PSBBNTraceReturnAddressWrite(pc, currentOpcode, oldRa, oldGp);
 	if (traceRa && pc == 0x2abb7248u)
