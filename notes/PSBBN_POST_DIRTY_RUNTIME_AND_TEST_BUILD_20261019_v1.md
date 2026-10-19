@@ -1,5 +1,14 @@
 # Post-Dirty interpreter runtime and missing core_test.exe (2026-10-19)
 
+## Native Visual Studio EEActiveTLB test target added (2026-10-19)
+
+User's PCSX2 checkout uses `PCSX2_qt.slnx` and native MSBuild outputs (`build/obj-pcsx2-x64-Release AVX2`), **not a CMake-configured build directory**. Earlier directions to look for `CMakeCache.txt` in the existing `build` directory were inapplicable. Preserve the user's native `build` folder; do not overwrite/reconfigure it for CMake. The CMake `core_test` target is excluded from the default build and has no corresponding native .exe.
+
+PCSX2 changes on branch `note-working/psbbn-tlb-boot-20261017`: new `tests/ctest/core/EEActiveTLBNative.vcxproj` (`181233d`) and solution integration `PCSX2_qt.slnx` (`f27be10`). This is a **standalone native MSBuild console GoogleTest executable** compiling the same 12-source-case file `ee_active_tlb_asid_tests_20261018.cpp` with bundled `gtest-all.cc` and `gtest_main.cc`. It exercises production **header-inline selector and Dirty-bit predicate** without linking the whole emulator. It **does not** execute integrated guest fault delivery, RAM-store cancellation or Linux COW; these still require runtime tests.
+
+The VS solution lists `EEActiveTLBNative` under the `tests` folder, excluded from Build Solution by default. After pulling, choose `Release AVX2|x64`, right-click the test project and Build. Executable: `bin/tests/EEActiveTLBNative-x64-Release AVX2.exe` (if it compiles), run with `--gtest_filter=EEActiveTLB.*`. The native project exists in GitHub and its referenced paths/solution entries were statically checked; **MSVC compile and twelve tests remain unverified**. The CMake tests stay unchanged for users of that build system.
+
+
 The current PCSX2 branch tip is `833a0d3008eb5742eac331815c14e1427b774f60`; user's new log `emulog(5).txt` reports `v2.9.92-107-g833a0d300`, so this run uses the committed Dirty-bit implementation.
 
 ## Unit tests are source-only until explicitly built
