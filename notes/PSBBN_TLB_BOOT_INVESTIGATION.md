@@ -1,5 +1,14 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Runtime after null-ppmap guard: host crash passed, first animation (2026-10-19)
+
+**User-built and executed `PCSX2 v2.9.92-124-gcb4d9cd02`** (EE interpreter). The observer guard in `cb4d9cd` is confirmed successful at runtime: 8 `PSBBN-RA-PHYS` records, all `vtlbAvailable=0`, no native crash through **294s**. The formerly fatal `2AB0F2BC` prologue was crossed; at **176.883–176.976s**, ASID04 stored/restored RA `00403F58` at `7FFF7390` (archPhys `001DB390`), and at **213.366–213.367s**, ASID57 stored/restored RA `004093B4` at `7FFF7C70` (archPhys `01BB0C70`). Host VM paused and shut down normally around 294–295s.
+
+**Visible change:** savestate images 004–019 show static PlayStation 2 logo, 020 black, 021–028 a **moving ring of blue-white orbs** at ~222–292s; no completed BB Navigator menu yet. Guest remains active through transition. Diagnostic reported 4397 TLBL (`code=08`), 596 TLBS (`0C`), 26 Mod (`04`), 45 syscall (`20`) records plus capped overflows, and 4311 `branch delay!!` lines. Counters are rate-limited; these do not independently prove a hang.
+
+User supplied `emulog(7).txt` (SHA256 `74851f351a6f0ab40f2c1ebb0039354eef92d384f6e8ece3d1f255810f128d03`, 61,659,844 bytes) and `sstates(6).zip` (SHA256 `a8c6813e6bbc572a12d60c564499bb25f30d3f512d73c27f774591a5d33d579c`, 28 states, 80,487,276 bytes). Full extracted evidence summary in [ps2bbndecomp research note](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_POST_PPMAP_GUARD_RUN8_20261019_v1.md). Raw new attachments not yet in Git. Next: establish whether orbit animation progresses to BB Navigator UI, or identify true guest-side barrier. Do not re-open solved null-ppmap fault or modify JIT until interpreter is validated.
+
+
 ## Codex native observer ppmap crash fix applied (2026-10-19)
 
 **Applied to this branch:** [`cb4d9cd02f306e244446c47f032bf2231dbf812f`](https://github.com/Masamune3210/pcsx2/commit/cb4d9cd02f306e244446c47f032bf2231dbf812f), changing **only** `pcsx2/COP0.cpp::PSBBNTraceReturnSlotTranslation`. This is the exact research patch `ps2bbndecomp/patches/pcsx2/20261019-guard-optional-ppmap-return-observer.patch`. It checks optional `vtlb_private::vtlbdata.ppmap` before calling `vtlb_V2P(slot)`, emits `vtlbAvailable=0` and unavailable sentinel instead of dereferencing a nonexistent Goemon LUT. Do not interpret `samePhys=0` as a real discrepancy when no lookup exists. It does not allocate the optional LUT, change guest CPU state, or alter general TLB/Dirty-bit semantics.
