@@ -237,19 +237,23 @@ void PSBBNTraceReturnSlotTranslation(u32 pc, u32 opcode, u32 sp, const char* pha
 	const auto expected = active.find(slot >> 12);
 	const bool archValid = expected != active.end() && !expected->second.scratchpad;
 	const u32 archPhysical = archValid ? expected->second.physicalAddress + (slot & 0xfffu) : 0xffffffffu;
-	const u32 vtlbPhysical = vtlb_V2P(slot);
+	// vtlb_V2P uses the optional Goemon gamefix LUT, not the always-live
+	// vmap. Normal interpreter runs leave ppmap null. Do not allocate a
+	// gamefix LUT for tracing or claim an unavailable lookup is a mapping.
+	const bool vtlbAvailable = vtlb_private::vtlbdata.ppmap != nullptr;
+	const u32 vtlbPhysical = vtlbAvailable ? vtlb_V2P(slot) : 0xffffffffu;
 	u32 archWord = 0xffffffffu;
 	u32 vtlbWord = 0xffffffffu;
 	if (archValid && archPhysical <= Ps2MemSize::MainRam - sizeof(u32))
 		std::memcpy(&archWord, sampledMemory->Main + archPhysical, sizeof(archWord));
 	if (vtlbPhysical <= Ps2MemSize::MainRam - sizeof(u32))
 		std::memcpy(&vtlbWord, sampledMemory->Main + vtlbPhysical, sizeof(vtlbWord));
-	Console.WriteLn("PSBBN-RA-PHYS phase=%s pc=%08x asid=%02x sp=%08x slot=%08x opcode=%08x archValid=%u archPhys=%08x archWord=%08x vtlbPhys=%08x vtlbWord=%08x samePhys=%u ra=%08x gp=%08x status=%08x",
+	Console.WriteLn("PSBBN-RA-PHYS phase=%s pc=%08x asid=%02x sp=%08x slot=%08x opcode=%08x archValid=%u archPhys=%08x archWord=%08x vtlbPhys=%08x vtlbWord=%08x samePhys=%u ra=%08x gp=%08x status=%08x vtlbAvailable=%u",
 		phase, pc, asid, sp, slot, opcode, archValid ? 1u : 0u, archPhysical,
 		archWord, vtlbPhysical, vtlbWord,
-		(archValid && archPhysical == vtlbPhysical) ? 1u : 0u,
+		(vtlbAvailable && archValid && archPhysical == vtlbPhysical) ? 1u : 0u,
 		cpuRegs.GPR.r[31].UL[0], cpuRegs.GPR.r[28].UL[0],
-		cpuRegs.CP0.n.Status.val);
+		cpuRegs.CP0.n.Status.val, vtlbAvailable ? 1u : 0u);
 }
 
 // Debug witness for the specific saved-RA corruption. The linked user image
