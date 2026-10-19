@@ -1,5 +1,12 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Sixth-run independent COW/Dirty-bit crosscheck (2026-10-19)
+
+**Read [PSBBN_SIXTH_BOOT_COW_DIRTY_GAP_20261019_v1.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_SIXTH_BOOT_COW_DIRTY_GAP_20261019_v1.md) before changing MMU semantics.** New direct independent scan of 19 states, specifically **015**: `0x7FFF7190` (GP stack save/restore slot) matches three **non-global, valid, Dirty=0** TLB entries: index26 ASID05 `EntryHi=7FFF6005`, index35 ASID08 `EntryHi=7FFF6108`, index45 ASID06 `EntryHi=7FFF6006`. Each has `EntryLo1=000076DA` and maps stack address to **physical `0x001DB190`**. PID12 and PID13 distinct page directories both hold PTE **`0x001DB69B`** for this page, consistent with Linux fork/COW sharing. The earlier RA stack slot `0x7FFF7120` is within the very same guest/physical page.
+
+Direct code audit establishes a **general emulator defect**: `EEActiveTLB.h::BuildEEActiveTLBPageMap` projects valid/ASID but **drops EntryLo.D**, `COP0.cpp::SyncActiveTLBMappings` installs `memSetPageAddr()`, and `vtlb_VMap()` makes a host pointer mapping without guest write-permission checking. A D=0 guest **store should raise TLB Modification (ExcCode 1) before touching physical memory**; otherwise Linux cannot safely handle COW, and stack contents can leak across processes. This is a stronger architectural mechanism than generic memory corruption. **Specific causation of the 167.5139s GP restore is still unproven**; capture015 TLB state precedes the fault, and physical page after process death may have been reclaimed. The existing sixth-run GP save/restore tracer is pushed but unbuilt. Required implementation: write-protect active TLB mappings, deliver precise guest TLB Mod for interpreter **and JIT**, invalidate mapping/code caches as Dirty changes, test global and ASID alias cases; no guest-specific memory/register patch.
+
+
 ## Sixth cold boot: GP restore-zero SIGSEGV before bad-RA hypothesis (2026-10-19)
 
 **Latest canonical analysis:** [PSBBN_SIXTH_BOOT_GP_RESTORE_FAULT_20261019_v4.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_SIXTH_BOOT_GP_RESTORE_FAULT_20261019_v4.md). Log `emulog(4).txt` SHA256 `e2f241b804dadf0131b0207b69c69421fccb5623a2a95ef8708e487447601fab`, binary `v2.9.92-84-gc4a8e1006`. New 19/19 Deflate savestates CRC-verified, prefix `1792408073646415`; capture 015 **166.7700s** and 016 **176.8090s** straddle first fatal signal.
