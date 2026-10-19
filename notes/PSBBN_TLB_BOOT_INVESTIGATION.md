@@ -1,5 +1,14 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Native EEActiveTLB linker dependency resolved in source (2026-10-19)
+
+The user's first native MSVC `Release AVX2|x64` build of `EEActiveTLBNative` failed with `LNK2001` (`?\_cpuRegistersPack@@3UcpuRegistersPack@@A`) from `ee_active_tlb_asid_tests_20261018.obj`, followed by `LNK1120`. Root cause: `R5900.h` defines translation-unit-static references `cpuRegs`/`fpuRegs` to the global `_cpuRegistersPack`. The real emulator defines that global in `pcsx2/R5900.cpp`, which should not be linked wholesale into the standalone selector test. 
+
+PCSX2 commits [`a614be3`](https://github.com/Masamune3210/pcsx2/commit/a614be326302357f6118773323263ae44cf75275) and [`ae7ec73`](https://github.com/Masamune3210/pcsx2/commit/ae7ec73e7f07a2a44426c517ceaf89d498cf06a2) add `tests/ctest/core/EEActiveTLBNativeGlobals.cpp` containing just an aligned zero-initialized `cpuRegistersPack _cpuRegistersPack{}`, and include it **only** in `EEActiveTLBNative.vcxproj`. Production `R5900.cpp`, production TLB/exception code and CMake test targets are unchanged. This is an **isolated test linking dependency**, not an attempt to mock actual guest state for integration tests.
+
+The user's MSVC link error is explained and its missing definition is now present. **Rebuild and execution of all twelve tests have not been observed**. Next: pull, rebuild `EEActiveTLBNative`, run with `--gtest_filter=EEActiveTLB.*`, and retain any new compiler/linker/test diagnostics. 
+
+
 ## Native Visual Studio EEActiveTLB test target added (2026-10-19)
 
 User's PCSX2 checkout uses `PCSX2_qt.slnx` and native MSBuild outputs (`build/obj-pcsx2-x64-Release AVX2`), **not a CMake-configured build directory**. Earlier directions to look for `CMakeCache.txt` in the existing `build` directory were inapplicable. Preserve the user's native `build` folder; do not overwrite/reconfigure it for CMake. The CMake `core_test` target is excluded from the default build and has no corresponding native .exe.
