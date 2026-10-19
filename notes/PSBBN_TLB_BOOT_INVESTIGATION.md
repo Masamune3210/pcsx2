@@ -6,6 +6,16 @@ Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
 Branch: `note-working/psbbn-tlb-boot-20261017`
 
+## 21 savestates expose genuine userspace infinite loop and ASID-blind MMU (2026-10-19)
+
+**Latest canonical evidence:** [PSBBN user-RAM/ASID forensic report](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_AUTOSAVES_ASID_LINK_LOOP_20261019_v1.md), from 21 original scheduled `.p2s` snapshots and the matching user's log. User build `v2.9.92-36-g9cd9f9199`; autosave succeeded at 10-second intervals (`900000` configured maximum). All 20 screenshots in slots 2..21 are binary-identical. Userspace task PID12 `init` enters at slot13; subsequent EE PCs repeatedly fall into the code sequence `0x2AB210E8..0x2AB21168` and only 24..29 RAM pages change per interval.
+
+**Proximate stalled behavior:** In slots 13..21 `$s0=0x2AC1A774`, `$s1=0x2AD00010`, `[s0+0x408]=s0`, `[s0+0x410]=1`, `[s1+0x408]=s0`. The raw linked userspace code `bnel v0,zero` / delay-slot `lw s0,0x408(s0)` / `bne s0,s1` traverses **the same node forever**. The writer and origin of the self-link are unknown; **never patch the link in guest memory** as an emulator fix.
+
+**Independent architectural correctness bug:** A saved non-global TLB entry `0x2AB20118` (ASID `0x18`) maps the executing code page, but current CP0 `EntryHi=0x105` (ASID `0x05`) in six snapshots. `COP0.cpp::MapTLB()` maps valid entries unconditionally through `memSetPageAddr(vaddr,paddr)` without filtering ASID; `Memory.cpp` uses a flat `vtlb_VMap` indexed only by VPN. This does not implement the architected ASID address space separation for overlapping guest VPNs. This could cause cross-ASID stale mapping and data corruption, but **there is not yet proof it specifically caused the self-link**.
+
+**Next engineering work:** Build a deterministic two-ASID/same-VPN/different-PFN guest regression, plus global and invalid-entry cases; then fix MMU mapping ownership, ASID switching and cache invalidation for both interpreter and JIT. After validating, trace the writer of the self-link and compare new boot snapshots. Do not merge speculative semantic edits into `testing`. Old PID14 zombie claim belongs to a previous distinct run: **PID14 does not appear in the newest 21-state sequence**. The experimental Linux-syscall fingerprint `0008` is a separate, incomplete issue.
+
 ## Optional scheduled savestates for diagnosing later PSBBN failures (2026-10-19)
 
 **Code commit:** `6d05802d58e80759056309e607810aa89c095042`, `pcsx2/VMManager.cpp`, branch `note-working/psbbn-tlb-boot-20261017`.
