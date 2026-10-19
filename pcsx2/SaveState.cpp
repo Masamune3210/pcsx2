@@ -46,7 +46,6 @@
 
 using namespace R5900;
 
-static tlbs s_tlb_backup[std::size(tlb)];
 
 static void PreLoadPrep()
 {
@@ -55,8 +54,6 @@ static void PreLoadPrep()
 		vu1Thread.WaitVU();
 	MTGS::WaitGS(false);
 
-	// backup current TLBs, since we're going to overwrite them all
-	std::memcpy(s_tlb_backup, tlb, sizeof(s_tlb_backup));
 
 	// clear protected pages, since we don't want to fault loading EE memory
 	mmap_ResetBlockTracking();
