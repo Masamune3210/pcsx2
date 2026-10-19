@@ -7,6 +7,7 @@
 #include "vtlb.h"
 
 #include <array>
+#include <unordered_set>
 
 // Diagnostic observer only. Existing EE COP0 trace settings are the opt-in.
 // No guest memory reads: instruction_sample can be stale on fetch faults and JIT misses.
@@ -406,6 +407,7 @@ void SyncActiveTLBMappings()
 			Cpu->Clear(page << 12, 0x400);
 		}
 	}
+	std::unordered_set<u32> scratchBasesToUpdate;
 	for (const auto& [page, now] : desired)
 	{
 		const auto old = s_active_tlb_pages.find(page);
@@ -413,10 +415,48 @@ void SyncActiveTLBMappings()
 			old->second.scratchpad == now.scratchpad)
 			continue;
 		if (now.scratchpad)
-			vtlb_VMapBuffer(page << 12, eeMem->Scratch + now.physicalAddress, 0x1000);
-		else
-			memSetPageAddr(page << 12, now.physicalAddress);
+		{
+			// Preserve the existing 16KB scratchpad fastmem path; mapping it
+			// one 4KB page at a time would unnecessarily force JIT slowmem.
+			scratchBasesToUpdate.insert(page - (now.physicalAddress >> 12));
+			continue;
+		}
+		memSetPageAddr(page << 12, now.physicalAddress);
 		Cpu->Clear(page << 12, 0x400);
+	}
+	for (const u32 basePage : scratchBasesToUpdate)
+	{
+		bool contiguous = true;
+		for (u32 i = 0; i < Ps2MemSize::Scratch / 0x1000; i++)
+		{
+			const auto it = desired.find(basePage + i);
+			if (it == desired.end() || !it->second.scratchpad ||
+				it->second.physicalAddress != (i << 12))
+			{
+				contiguous = false;
+				break;
+			}
+		}
+		if (contiguous)
+		{
+			vtlb_VMapBuffer(basePage << 12, eeMem->Scratch, Ps2MemSize::Scratch);
+			for (u32 i = 0; i < Ps2MemSize::Scratch / 0x1000; i++)
+				Cpu->Clear((basePage + i) << 12, 0x400);
+		}
+		else
+		{
+			// Multiple matching TLB entries are architecturally undefined.
+			// Preserve the selected per-page view without assuming a contiguous
+			// scratchpad fastmem mapping in that exceptional case.
+			for (const auto& [page, now] : desired)
+			{
+				if (now.scratchpad && page - (now.physicalAddress >> 12) == basePage)
+				{
+					vtlb_VMapBuffer(page << 12, eeMem->Scratch + now.physicalAddress, 0x1000);
+					Cpu->Clear(page << 12, 0x400);
+				}
+			}
+		}
 	}
 	s_active_tlb_pages.swap(desired);
 }
