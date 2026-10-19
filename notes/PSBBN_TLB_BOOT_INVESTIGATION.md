@@ -1,5 +1,16 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## EE interpreter Dirty-bit enforcement implemented, JIT explicitly deferred (2026-10-19)
+
+**Latest implementation reference:** [PSBBN_INTERPRETER_DIRTY_MOD_IMPLEMENTED_20261019_v1.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_INTERPRETER_DIRTY_MOD_IMPLEMENTED_20261019_v1.md). The user explicitly directed fixing the **EE interpreter first**, postponing JIT work until interpreter correctness is established.
+
+**Source code on PCSX2 PSBBN branch:** `0273f9d`, `eba103e`, `237fd77`, `c86de77`, `cba0adb`, `54179ea`, `af17acf`, `c656aab`, `73f1b4a`. The active TLB page model retains `EntryLo.D`; writable changes participate in synchronization. Interpreter stores of **8/16/32/64/128 bits** through `vtlb_memWrite` and `vtlb_memWrite128` check a valid matching D=0 page **before write**. They deliver `cpuTlbModification` / `EXC_CODE_Mod`, using existing CP0 fault register, exception-vector, EPC and branch-delay handling, then cancel the faulting instruction. Reads remain mapped; unmapped entries retain existing TLB miss logic; scratchpad and direct-mapped kernel aliases retain their behavior. No JIT implementation made.
+
+**Regression suite:** 5 newly added `EEActiveTLB` GoogleTests for even/odd D halves, the three-ASID COW shared stack PFN from sixth boot, D-only permission rewrite, read-only global translation, scratchpad exemption; 11 tests total. **12/12 cross-file static integration checks passed. The new unit tests were committed but NOT actually compiled or executed.** Windows/MSVC build and a PSBBN cold boot have NOT been run for this revision. Do not claim the COW defect or logo is runtime-resolved until the user tests it.
+
+**Next step:** build PCSX2 on Windows, execute EEActiveTLB tests, then **cold boot with interpreter**. Check that writes through `D=0` raise Mod (`Cause.ExcCode=1`), preserve physical RAM and let Linux's COW handler retry after installing a writable mapping. Compare the previous ASID05 zero-GP, ASID08 zero-RA, user SIGSEGV and kernel-idle failure. Do not load corrupted old savestates. The *JIT* requires its own independently tested write checks and precise exception delivery **later**, not as part of this interpreter checkpoint.
+
+
 ## Sixth-run ASID08 zero return plus physical mapping witness (2026-10-19)
 
 **New independent evidence:** [PSBBN_SIXTH_BOOT_RA_ZERO_AND_SIGNAL_STORM_20261019_v1.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_SIXTH_BOOT_RA_ZERO_AND_SIGNAL_STORM_20261019_v1.md). Direct analysis of all 19 user-uploaded `PSBBN-auto-1792408073646415-001..019.p2s` (all ZIP CRC checks pass) and `emulog(4).txt` SHA256 `e2f241b804dadf0131b0207b69c69421fccb5623a2a95ef8708e487447601fab`, PCSX2 binary `v2.9.92-84-gc4a8e1006`. **Do not conflate this with older fifth-run frame logs.**
