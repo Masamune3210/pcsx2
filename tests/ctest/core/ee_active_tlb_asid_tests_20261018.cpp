@@ -147,6 +147,38 @@ TEST(EEActiveTLB, CowSharedFrameIsWriteProtectedIndependentlyPerASID)
 		BuildEEActiveTLBPageMap(table, 3, 0x18), 0x7fff7190));
 }
 
+TEST(EEActiveTLB, CowFaultReplacementSeparatesPhysicalFramesAndWritePermissions)
+{
+	// Guest Linux may have two ASIDs reading a shared D=0 stack page.
+	// After TLB Mod, the faulting process can install its *new* writable PFN
+	// without granting writes to the other process's original shared PFN.
+	tlbs table[] = {
+		MakeEntry(0x7fff6000, 0x05, 0x001da000, 0x001db000),
+		MakeEntry(0x7fff6000, 0x06, 0x001dc000, 0x001db000),
+	};
+	for (tlbs& t : table)
+		t.EntryLo1.D = 0;
+
+	const auto beforeFive = BuildEEActiveTLBPageMap(table, 2, 0x05);
+	const auto beforeSix = BuildEEActiveTLBPageMap(table, 2, 0x06);
+	EXPECT_TRUE(EEActiveTLBStoreNeedsModification(beforeFive, 0x7fff7190));
+	EXPECT_TRUE(EEActiveTLBStoreNeedsModification(beforeSix, 0x7fff7190));
+	EXPECT_EQ(beforeFive.at(0x7fff7).physicalAddress, 0x001db000U);
+	EXPECT_EQ(beforeSix.at(0x7fff7).physicalAddress, 0x001db000U);
+
+	// Emulates Linux resolving COW for ASID 05: change both PFN and D.
+	// The production active-map synchronization must notice either change.
+	table[0].EntryLo1.UL = ((0x002ab000U >> 12) << 6) | 0x6;
+	const auto afterFive = BuildEEActiveTLBPageMap(table, 2, 0x05);
+	const auto afterSix = BuildEEActiveTLBPageMap(table, 2, 0x06);
+	EXPECT_EQ(afterFive.at(0x7fff7).physicalAddress, 0x002ab000U);
+	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(afterFive, 0x7fff7190));
+	EXPECT_EQ(afterSix.at(0x7fff7).physicalAddress, 0x001db000U);
+	EXPECT_TRUE(EEActiveTLBStoreNeedsModification(afterSix, 0x7fff7190));
+	EXPECT_NE(beforeFive.at(0x7fff7), afterFive.at(0x7fff7));
+	EXPECT_EQ(beforeSix.at(0x7fff7), afterSix.at(0x7fff7));
+}
+
 TEST(EEActiveTLB, TlbDirtyRewriteChangesPermissionWithoutChangingPFN)
 {
 	tlbs t = MakeEntry(0x7fff6000, 0x05, 0x001da000, 0x001db000);
