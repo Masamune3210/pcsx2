@@ -1,5 +1,14 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Third cold boot: unmapped-PC return and RA provenance (2026-10-19)
+
+Latest forensic report in [ps2bbndecomp/docs/PSBBN_POST_ASID_RA_ORIGIN_20261019_v1.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_POST_ASID_RA_ORIGIN_20261019_v1.md). Inputs `sstates(2).zip` SHA256 `a3fe167b28ded2d179049ede5f7fbb9034f035d1a9c4969286452d7e5d25f7c2`, `emulog(1).txt` SHA256 `e4f0c90a811b8e18be63f819cef39284b3f0cadd5a52e1de4fb94c3c2ad2a9d7`. The ZIP includes 21+21 older entries; **only 20 new prefix `1792383328013097`** for this run. PCSX2 binary **`v2.9.92-65-ga4886a00e`** ran interpreter with 10s autosaves.
+
+**Before** the recursive NULL-pointer signal frames, at **136.9811s**, `PSBBN-FAULT pc=2ac24400 bad=2ac24400 code=08 asid=07 ra=2ac24400`; kernel `PSBBN-IHIN` immediately reports `EPC=2ac24400`. This is an instruction-fetch/load TLB miss, not a signal number. Slot13 PID12 `mm=0x801D1120 pgd=0x803FE000` has its highest userspace data VMA ending **0x2AC23000**, and **PTE for 0x2AC24400 is zero** (PGD[0xAB] -> 0x803E3000, PTE[0x24]=0). The previous mapped page has PTE `0x0021E68B`. The offending `$ra` equals the attempted PC, a value previously seen as a module GP base but GP at this exact fault was not logged. This makes a bad RA restoration or wrong register-indirect jump a **specific hypothesis**, not yet a proven emulator bug. Then at **136.9824s**, `PC=0x2AB291B0 BadVAddr=0` recurs with stack consumption (IHIN reaches 4096 by 137.3471s), and PID12 dies SIGSEGV, kernel idle by slot14. `0x2AD00420` access is a *later* event at 208.3197s after state20, not this cascade's first fault.
+
+**Code instrumentation added on PSBBN branch (diagnostic-only):** `9a84711` header API; `11cfe1c` tracks `$ra` writes into the unmapped nearby address range with separate 64-event budget per autosave; `c275fb5` + `6891d43` interpreter `execI()` hooks before/after instruction, preserves original opcode despite delay-slot recursion; `2004a38` adds GP/T9/call args to original pre-exception `PSBBN-FAULT`. The new `PSBBN-RA-WRITE` event includes source guest PC/opcode, old/new RA/GP, T9, SP, next guest PC and EntryHi. Existing Trace.Enabled + EE.cop0 and autosaves remain the only opt-ins. No register/mapping/syscall/guest RAM modification. **Windows build/runtime for this latest diagnostic revision not yet verified.** Do not guess or overwrite the supposedly bad pointer. Goal is identifying the *origin* of the return target before proposing a semantic fix.
+
+
 Status: **note-working; local interpreter traces acquired with additional experimental patches; general syscall fix and EE JIT MMU parity pending**
 Created: 2026-10-17
 Repository: `Masamune3210/pcsx2`
