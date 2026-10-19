@@ -18,7 +18,7 @@ AutoSaveIntervalSeconds = 15
 AutoSaveMaxCaptures = 48
 ```
 
-- `AutoSaveIntervalSeconds` defaults to `0` (off), accepts `1..3600`. `AutoSaveMaxCaptures` defaults to `48`, accepts `1..200`. Invalid values disable the scheduler with a console warning. Read on **each new VM initialization** via `Host::GetBaseIntSettingValue`; change the INI and start a new VM to apply it.
+- `AutoSaveIntervalSeconds` defaults to `0` (off), accepts `1..3600`. `AutoSaveMaxCaptures` defaults to `48`, accepts `1..4294967295` with no separate arbitrary ceiling. Invalid values disable the scheduler with a console warning. Read on **each new VM initialization** via the base settings getters; change the INI and start a new VM to apply it.
 - Wall-clock timer uses `std::chrono::steady_clock`. The poll runs at `VMManager::Internal::VSyncOnCPUThread()`, so captures happen on the VM CPU thread at the first VSync after their due time. The scheduler does **not** run during pause, GS dump playback or memory-card busy state, and doesn't produce catch-up bursts. It depends on guest VSync; if the VM stops VSync entirely there may be no additional snapshots.
 - Captures go to the existing `EmuFolders::Savestates` directory, named `PSBBN-auto-<wall-clock-microseconds>-001.p2s` etc., with a unique boot-session prefix. No normal manual slots or existing files are overwritten.
 - Each save uses PCSX2's existing synchronous state capture and asynchronous ZIP write. It defers the next capture while a save worker is active; stops after the configured number; logs PC and output path; reports save failures. Compression is the existing savestate setting: **user plans Deflate**, but this branch does not forcibly change that setting.
