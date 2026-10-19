@@ -1,5 +1,14 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Codex native observer ppmap crash fix applied (2026-10-19)
+
+**Applied to this branch:** [`cb4d9cd02f306e244446c47f032bf2231dbf812f`](https://github.com/Masamune3210/pcsx2/commit/cb4d9cd02f306e244446c47f032bf2231dbf812f), changing **only** `pcsx2/COP0.cpp::PSBBNTraceReturnSlotTranslation`. This is the exact research patch `ps2bbndecomp/patches/pcsx2/20261019-guard-optional-ppmap-return-observer.patch`. It checks optional `vtlb_private::vtlbdata.ppmap` before calling `vtlb_V2P(slot)`, emits `vtlbAvailable=0` and unavailable sentinel instead of dereferencing a nonexistent Goemon LUT. Do not interpret `samePhys=0` as a real discrepancy when no lookup exists. It does not allocate the optional LUT, change guest CPU state, or alter general TLB/Dirty-bit semantics.
+
+**Cause and evidence:** The debugger's previous host AV read at `0x001FFFDC` matches accessing null `ppmap[0x7FFF7]` for the adjusted frame's RA slot `0x7FFF7390`. Codex's extracted-production-source ASan reproduction failed at that exact address before the fix, then **9/9** synthetic observer cases passed after it. Independent savestate reader tests passed **4/4**. This is strong source-level host-crash evidence, not a new Windows debugger stack.
+
+**Verification still required:** User must pull and compile PCSX2 with VS/MSBuild `Release AVX2|x64`, then cold-boot PSBBN with EE interpreter. Expect `PSBBN-RA-PHYS ... vtlbAvailable=0` rather than a host AV when the tracked SW RA executes. Prior user-confirmed `EEActiveTLBNative` 12/12 tests remain valid and need not be rerun for this observer-only change. If a host crash persists, capture its *new* host fault address/stack. PSBBN guest GP/RA provenance, Mod retry/COW, and boot hang remain unresolved; JIT is still deferred.
+
+
 ## Native EEActiveTLB regression tests: 12/12 PASS (2026-10-19)
 
 **User-verified, compiled execution:** In the native Visual Studio/MSBuild `Release AVX2|x64` test harness, the user successfully ran `bin/tests/EEActiveTLBNative-x64-Release AVX2.exe --gtest_filter=EEActiveTLB.*`. GoogleTest reported **12 tests run, 12 passed, 0 failures** (3 ms test suite, 4 ms total); all individual `EEActiveTLB` tests passed.
