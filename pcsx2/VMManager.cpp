@@ -1956,10 +1956,12 @@ void VMManager::ResetPSBBNScheduledSaves()
 		return;
 	}
 
-	const int max_captures = Host::GetBaseIntSettingValue("EmuCore/PSBBN", "AutoSaveMaxCaptures", 48);
-	if (max_captures < 1 || max_captures > 1000000)
+	// The INI value itself is the capture limit. Do not impose a second
+	// arbitrary ceiling: unsigned 32-bit count is sufficient for billions of states.
+	const u32 max_captures = Host::GetBaseUIntSettingValue("EmuCore/PSBBN", "AutoSaveMaxCaptures", 48);
+	if (max_captures == 0)
 	{
-		Console.Warning("PSBBN autosave: AutoSaveMaxCaptures=%d outside 1..1000000; disabled.", max_captures);
+		Console.Warning("PSBBN autosave: AutoSaveMaxCaptures=0 is not valid; disabled.");
 		return;
 	}
 
