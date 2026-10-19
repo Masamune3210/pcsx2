@@ -6,6 +6,7 @@
 #include "CDVD/CDVD.h"
 #include "CDVD/IsoReader.h"
 #include "Counters.h"
+#include "COP0.h"
 #include "DEV9/DEV9.h"
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/SymbolImporter.h"
@@ -2014,6 +2015,9 @@ void VMManager::PollPSBBNScheduledSaves()
 	schedule.captures = next;
 	Console.WriteLn("PSBBN autosave: capture %u/%u PC=%08X -> %s",
 		next, schedule.max_captures, cpuRegs.pc, path.c_str());
+	// The previous interval's exact user fault PCs must be reported before
+	// the next interval resets its bounded, opt-in observer.
+	PSBBNResetUserFaultWindow();
 	DoSaveState(path.c_str(), -1, true, false, [next](const std::string& error) {
 		Console.Error("PSBBN autosave: capture %u failed: %s", next, error.c_str());
 	});
