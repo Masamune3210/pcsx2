@@ -15,6 +15,9 @@ struct EEActiveTLBPage
 {
 	u32 physicalAddress = 0;
 	bool scratchpad = false;
+	// Hardware EntryLo.D is write permission, not a host page-protection bit.
+	// Preserve it even when two ASIDs select the same physical page (Linux COW).
+	bool writable = true;
 
 	bool operator==(const EEActiveTLBPage&) const = default;
 };
@@ -59,7 +62,7 @@ inline EEActiveTLBPageMap BuildEEActiveTLBPageMap(const tlbs* entries, std::size
 			{
 				const u32 virtualPage = basePage + n;
 				if ((virtualPage & compareMask) == compareVpn)
-					result.try_emplace(virtualPage, EEActiveTLBPage{basePhysical + (n << 12), false});
+					result.try_emplace(virtualPage, EEActiveTLBPage{basePhysical + (n << 12), false, lo.D != 0});
 			}
 		}
 	}
