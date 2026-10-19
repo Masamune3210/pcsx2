@@ -13,6 +13,7 @@ namespace
 {
 struct PSBBNTraceState
 {
+	u64 ihin_seen = 0;
 	bool armed = false;
 	bool target_window = false;
 	bool zero_window = false;
@@ -36,6 +37,27 @@ void PSBBNResetTlbTrace()
 bool PSBBNTlbTraceEnabled()
 {
 	return EmuConfig.Trace.Enabled && EmuConfig.Trace.EE.cop0;
+}
+
+// CACHE 0x0b is IHIN (instruction-cache hit invalidate). The EE interpreter
+// fetches directly from backing memory, so it has no separate I-cache line to
+// invalidate. Record exact issuing PCs/effective addresses, with a hard cap,
+// until the independent EE JIT instruction-cache coherence issue is addressed.
+void PSBBNTraceCacheIhin(u32 effectiveAddress)
+{
+	if (!PSBBNTlbTraceEnabled() || Cpu != &intCpu)
+		return;
+	const u64 observed = ++s_psbbn_trace.ihin_seen;
+	// First 32 observations, then powers of two: at most 50 lines per reset
+	// before a 2^63 counter rollover. Unlike a raw DevCon warning, this
+	// remains manageable even during bulk cache invalidation.
+	if (observed > 32 && (observed & (observed - 1)) != 0)
+		return;
+	Console.WriteLn("PSBBN-IHIN n=%llu syscallpc=%08x opcode=%08x effective=%08x Status=%08x EPC=%08x EntryHi=%08x base=%08x rs=%u offset=%d",
+		static_cast<unsigned long long>(observed), cpuRegs.pc - 4, cpuRegs.code,
+		effectiveAddress, cpuRegs.CP0.n.Status.val, cpuRegs.CP0.n.EPC,
+		cpuRegs.CP0.n.EntryHi, cpuRegs.GPR.r[(cpuRegs.code >> 21) & 31].UL[0],
+		(cpuRegs.code >> 21) & 31, static_cast<s16>(cpuRegs.code));
 }
 
 void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail, int selected, bool exact_interpreter_pc)
