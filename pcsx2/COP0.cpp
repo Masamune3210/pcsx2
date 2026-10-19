@@ -48,12 +48,11 @@ void PSBBNTraceCacheIhin(u32 effectiveAddress)
 	if (!PSBBNTlbTraceEnabled() || Cpu != &intCpu)
 		return;
 	const u64 observed = ++s_psbbn_trace.ihin_seen;
-	// First 32 observations, then powers of two: at most 50 lines per reset
-	// before a 2^63 counter rollover. Unlike a raw DevCon warning, this
-	// remains manageable even during bulk cache invalidation.
-	if (observed > 32 && (observed & (observed - 1)) != 0)
+	// First 32 observations, then powers of two up to 65,536:
+	// at most 43 lines per reset, even during bulk invalidations.
+	if (observed > 65536 || (observed > 32 && (observed & (observed - 1)) != 0))
 		return;
-	Console.WriteLn("PSBBN-IHIN n=%llu syscallpc=%08x opcode=%08x effective=%08x Status=%08x EPC=%08x EntryHi=%08x base=%08x rs=%u offset=%d",
+	Console.WriteLn("PSBBN-IHIN n=%llu pc=%08x opcode=%08x effective=%08x Status=%08x EPC=%08x EntryHi=%08x base=%08x rs=%u offset=%d",
 		static_cast<unsigned long long>(observed), cpuRegs.pc - 4, cpuRegs.code,
 		effectiveAddress, cpuRegs.CP0.n.Status.val, cpuRegs.CP0.n.EPC,
 		cpuRegs.CP0.n.EntryHi, cpuRegs.GPR.r[(cpuRegs.code >> 21) & 31].UL[0],
