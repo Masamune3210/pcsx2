@@ -6,6 +6,10 @@ Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
 Branch: `note-working/psbbn-tlb-boot-20261017`
 
+## vTLB physical lookup coherence follow-up (2026-10-19)
+
+**Code commit:** `66831a0b766ecfa32d1052c96e05168c0fea5255` in `pcsx2/vtlb.cpp`. The existing `vtlbdata.ppmap` cache (guest VPN to physical page, used by `vtlb_V2P`) was populated on `vtlb_VMap()`, but `vtlb_VMapUnmap()` previously removed only the primary `vmap` and fastmem mapping, leaving `ppmap` pointing at the old ASID's physical frame. The ASID projection correction makes unmap/remap a normal event, so stale auxiliary PFNs would defeat consistent translation. `vtlb_VMapUnmap()` now restores the table's initialized identity sentinel on unmapped low-address pages. `vtlb_VMapBuffer()` similarly discards stale physical PFNs when installing special buffer mappings such as EE scratchpad. Ordinary `vtlb_VMap()` continues assigning its new PFN. High kernel direct-mapped pages keep their existing direct-map behavior. **No MSVC build or runtime of this follow-up is claimed.** This is general vTLB mapping coherence, not a guest-specific data patch.
+
 ## General EE TLB ASID mapping correction IMPLEMENTED (2026-10-18)
 
 **Current code branch:** `note-working/psbbn-tlb-boot-20261017`. This is real emulator source code, not another proposal or a PSBBN address-band-aid. Root evidence in [21-state ASID/link-loop report](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_AUTOSAVES_ASID_LINK_LOOP_20261019_v1.md).
