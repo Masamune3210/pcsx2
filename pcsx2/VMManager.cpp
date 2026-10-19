@@ -63,6 +63,7 @@
 #include "fmt/format.h"
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <sstream>
 #include <common/RedtapeWilCom.h>
@@ -124,6 +125,8 @@ namespace VMManager
 	static void ZipSaveStateOnThread(std::unique_ptr<ArchiveEntryList> elist,
 		std::unique_ptr<SaveStateScreenshotData> screenshot, std::string filename,
 		s32 slot_for_message, std::function<void(const std::string&)> error_callback);
+	static void ResetPSBBNScheduledSaves();
+	static void PollPSBBNScheduledSaves();
 
 	static void LoadSettings();
 	static void LoadCoreSettings(SettingsInterface& si);
@@ -164,6 +167,17 @@ static Threading::ThreadHandle s_vm_thread_handle;
 
 static std::deque<std::thread> s_save_state_threads;
 static std::mutex s_save_state_threads_mutex;
+
+// Investigative savestates: disabled unless enabled in the base PCSX2.ini.
+struct PSBBNScheduledSaveState
+{
+	u32 seconds = 0;
+	u32 max_captures = 0;
+	u32 captures = 0;
+	std::string session_prefix;
+	std::chrono::steady_clock::time_point next_due{};
+};
+static PSBBNScheduledSaveState s_psbbn_scheduled_saves;
 
 static std::recursive_mutex s_info_mutex;
 static std::string s_disc_serial;
@@ -1372,6 +1386,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	s_vm_thread_handle = Threading::ThreadHandle::GetForCallingThread();
 	Host::OnVMStarting();
 	VMManager::Internal::ResetVMHotkeyState();
+	ResetPSBBNScheduledSaves();
 
 	ScopedGuard close_state = [] {
 		if (GSDumpReplayer::IsReplayingDump())
@@ -1689,6 +1704,7 @@ void VMManager::Shutdown(bool save_resume_state)
 	s_state.store(VMState::Stopping, std::memory_order_release);
 
 	SetTimerResolutionIncreased(false);
+	s_psbbn_scheduled_saves.seconds = 0;
 
 	// sync everything
 	if (THREAD_VU1)
@@ -1920,6 +1936,90 @@ bool VMManager::HasSaveStateInSlot(const char* game_serial, u32 game_crc, s32 sl
 {
 	std::string filename(GetSaveStateFileName(game_serial, game_crc, slot));
 	return (!filename.empty() && FileSystem::FileExists(filename.c_str()));
+}
+
+// PCSX2.ini:
+//   [EmuCore/PSBBN]
+//   AutoSaveIntervalSeconds = 15
+//   AutoSaveMaxCaptures = 48
+// The scheduler reads only the base INI once per new VM. The ordinary F1/F2
+// savestate slots are never used or overwritten.
+void VMManager::ResetPSBBNScheduledSaves()
+{
+	s_psbbn_scheduled_saves = {};
+	const int interval = Host::GetBaseIntSettingValue("EmuCore/PSBBN", "AutoSaveIntervalSeconds", 0);
+	if (interval == 0)
+		return; // Explicit opt-in, disabled by default.
+	if (interval < 1 || interval > 3600)
+	{
+		Console.Warning("PSBBN autosave: AutoSaveIntervalSeconds=%d outside 1..3600; disabled.", interval);
+		return;
+	}
+
+	const int max_captures = Host::GetBaseIntSettingValue("EmuCore/PSBBN", "AutoSaveMaxCaptures", 48);
+	if (max_captures < 1 || max_captures > 200)
+	{
+		Console.Warning("PSBBN autosave: AutoSaveMaxCaptures=%d outside 1..200; disabled.", max_captures);
+		return;
+	}
+
+	auto& schedule = s_psbbn_scheduled_saves;
+	schedule.seconds = static_cast<u32>(interval);
+	schedule.max_captures = static_cast<u32>(max_captures);
+	schedule.next_due = std::chrono::steady_clock::now() + std::chrono::seconds(interval);
+	const auto timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
+		std::chrono::system_clock::now().time_since_epoch()).count();
+	schedule.session_prefix = fmt::format("PSBBN-auto-{}", timestamp);
+	Console.WriteLn("PSBBN autosave: one state every %u wall-clock seconds, up to %u; prefix %s",
+		schedule.seconds, schedule.max_captures, schedule.session_prefix.c_str());
+}
+
+void VMManager::PollPSBBNScheduledSaves()
+{
+	auto& schedule = s_psbbn_scheduled_saves;
+	if (schedule.seconds == 0 || GetState() != VMState::Running ||
+		GSDumpReplayer::IsReplayingDump())
+		return;
+
+	const auto now = std::chrono::steady_clock::now();
+	if (now < schedule.next_due)
+		return;
+	// Never queue a burst of catch-up snapshots after a pause or slow frame.
+	schedule.next_due = now + std::chrono::seconds(schedule.seconds);
+	if (MemcardBusy::IsBusy())
+		return;
+
+	// ZipSaveStateOnThread() removes itself from this deque when finished.
+	// Recheck on the next VSync instead of stacking large RAM snapshots.
+	{
+		std::unique_lock lock(s_save_state_threads_mutex);
+		if (!s_save_state_threads.empty())
+			return;
+	}
+
+	const u32 next = schedule.captures + 1;
+	const std::string filename = fmt::format("{}-{:03d}.p2s", schedule.session_prefix, next);
+	const std::string path = Path::Combine(EmuFolders::Savestates, filename);
+	if (FileSystem::FileExists(path.c_str()))
+	{
+		Console.Error("PSBBN autosave: refusing to overwrite existing %s; scheduler disabled.", path.c_str());
+		schedule.seconds = 0;
+		return;
+	}
+
+	// DoSaveState collects the VM state synchronously on the CPU thread and
+	// compresses/writes it asynchronously, like an ordinary user savestate.
+	schedule.captures = next;
+	Console.WriteLn("PSBBN autosave: capture %u/%u PC=%08X -> %s",
+		next, schedule.max_captures, cpuRegs.pc, path.c_str());
+	DoSaveState(path.c_str(), -1, true, false, [next](const std::string& error) {
+		Console.Error("PSBBN autosave: capture %u failed: %s", next, error.c_str());
+	});
+	if (schedule.captures >= schedule.max_captures)
+	{
+		Console.WriteLn("PSBBN autosave: capture limit reached.");
+		schedule.seconds = 0;
+	}
 }
 
 std::string VMManager::GetCurrentSaveStateFileName(s32 slot, bool backup)
@@ -2962,6 +3062,7 @@ void VMManager::Internal::VSyncOnCPUThread()
 
 	Achievements::FrameUpdate();
 
+	PollPSBBNScheduledSaves();
 	PollDiscordPresence();
 }
 
