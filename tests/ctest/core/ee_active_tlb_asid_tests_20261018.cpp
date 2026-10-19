@@ -106,3 +106,80 @@ TEST(EEActiveTLB, CapturedLinuxCodeNodeAndSentinelCannotShareAnASID)
 	EXPECT_FALSE(current05.contains(0x2ad00));
 	EXPECT_TRUE(current05.contains(0x2ac1a));
 }
+
+
+TEST(EEActiveTLB, DirtyBitSeparatesEvenAndOddWritePermissions)
+{
+	tlbs t = MakeEntry(0x20000000, 0x05, 0x00100000, 0x00101000);
+	t.EntryLo0.D = 0;
+	t.EntryLo1.D = 1;
+	const auto m = BuildEEActiveTLBPageMap(&t, 1, 0x05);
+	ASSERT_TRUE(m.contains(0x20000));
+	ASSERT_TRUE(m.contains(0x20001));
+	EXPECT_FALSE(m.at(0x20000).writable);
+	EXPECT_TRUE(m.at(0x20001).writable);
+	EXPECT_TRUE(EEActiveTLBStoreNeedsModification(m, 0x20000040));
+	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(m, 0x20001040));
+	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(m, 0x20002040)); // no valid translation
+}
+
+TEST(EEActiveTLB, CowSharedFrameIsWriteProtectedIndependentlyPerASID)
+{
+	// Linux-like distinct ASIDs share the same physical stack page in COW mode.
+	// This reproduces the virtual page and PFN observed in PSBBN capture 015.
+	tlbs table[] = {
+		MakeEntry(0x7fff6000, 0x05, 0x001da000, 0x001db000),
+		MakeEntry(0x7fff6000, 0x06, 0x001dc000, 0x001db000),
+		MakeEntry(0x7fff6000, 0x08, 0x001dd000, 0x001db000),
+	};
+	for (tlbs& t : table)
+		t.EntryLo1.D = 0;
+	for (const u8 asid : {0x05, 0x06, 0x08})
+	{
+		const auto m = BuildEEActiveTLBPageMap(table, 3, asid);
+		ASSERT_TRUE(m.contains(0x7fff7));
+		EXPECT_EQ(m.at(0x7fff7).physicalAddress, 0x001db000U);
+		EXPECT_FALSE(m.at(0x7fff7).writable);
+		EXPECT_TRUE(EEActiveTLBStoreNeedsModification(m, 0x7fff7190));
+		EXPECT_TRUE(EEActiveTLBStoreNeedsModification(m, 0x7fff7120));
+	}
+	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(
+		BuildEEActiveTLBPageMap(table, 3, 0x18), 0x7fff7190));
+}
+
+TEST(EEActiveTLB, TlbDirtyRewriteChangesPermissionWithoutChangingPFN)
+{
+	tlbs t = MakeEntry(0x7fff6000, 0x05, 0x001da000, 0x001db000);
+	t.EntryLo1.D = 0;
+	const auto before = BuildEEActiveTLBPageMap(&t, 1, 0x05);
+	t.EntryLo1.D = 1; // guest TLBWI/TLBWR after resolving COW
+	const auto after = BuildEEActiveTLBPageMap(&t, 1, 0x05);
+	EXPECT_EQ(before.at(0x7fff7).physicalAddress, after.at(0x7fff7).physicalAddress);
+	EXPECT_NE(before.at(0x7fff7), after.at(0x7fff7));
+	EXPECT_TRUE(EEActiveTLBStoreNeedsModification(before, 0x7fff7190));
+	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(after, 0x7fff7190));
+}
+
+TEST(EEActiveTLB, ReadOnlyGlobalEntryTrapsForEveryASID)
+{
+	tlbs t = MakeEntry(0x00400000, 0x05, 0x00100000, 0x00101000, true);
+	t.EntryLo0.D = 0;
+	for (const u8 asid : {0x00, 0x05, 0x18, 0xff})
+	{
+		const auto m = BuildEEActiveTLBPageMap(&t, 1, asid);
+		EXPECT_TRUE(EEActiveTLBStoreNeedsModification(m, 0x00400048));
+		EXPECT_FALSE(EEActiveTLBStoreNeedsModification(m, 0x00401048));
+	}
+}
+
+TEST(EEActiveTLB, ScratchpadMappingDoesNotUseNormalDirtyFaults)
+{
+	tlbs t = MakeEntry(0x70000000, 0x07, 0, 0);
+	t.EntryLo0.S = 1;
+	t.EntryLo0.D = 0;
+	t.EntryLo1.D = 0;
+	const auto m = BuildEEActiveTLBPageMap(&t, 1, 0x07);
+	ASSERT_EQ(m.size(), 4U);
+	for (u32 offset = 0; offset < 0x4000; offset += 0x1000)
+		EXPECT_FALSE(EEActiveTLBStoreNeedsModification(m, 0x70000000 + offset));
+}
