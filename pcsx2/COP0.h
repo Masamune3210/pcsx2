@@ -23,5 +23,6 @@ enum class PSBBNTlbEvent
 };
 extern void PSBBNResetTlbTrace();
 extern bool PSBBNTlbTraceEnabled();
+extern void PSBBNTraceCacheIhin(u32 effectiveAddress);
 extern void PSBBNTraceTlb(PSBBNTlbEvent event, u32 address, u32 detail = 0,
 	int selected = -1, bool exact_interpreter_pc = false);
