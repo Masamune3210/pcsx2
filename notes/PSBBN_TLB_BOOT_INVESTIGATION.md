@@ -1,5 +1,14 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Fourth cold boot: RA restored from GP-valued stack slot (2026-10-19)
+
+**Latest canonical forensic report:** [PSBBN_POST_ASID_RA_FRAME_PROVENANCE_20261019_v2.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_POST_ASID_RA_FRAME_PROVENANCE_20261019_v2.md). New `sstates(3).zip` SHA256 `da3cdea68bfcd9a2d2efb48dbfde9446d7a426239033f5df31fd94088415fac2` includes **four separate runs** (21+21+20+25 savestates): **only** prefix `1792385099348561` (25 snapshots) is current; accompanying pasted log SHA256 `8fe14374e4ad3e846745ea1504906fed0c35408812c2a7729d293f380545a7c9`, binary **v2.9.92-71-gcea5363cb**. New slot014 at 151.2639s (kernel) and slot015 at 161.2651s (back idle) straddle failure.
+
+**Direct cause of invalid return PC:** at **157.4604s**, `PSBBN-RA-WRITE pc=2ab0f3a4 opcode=8fbf0040 oldRA=2ab0f36c newRA=2ac24400 sp=7fff70e0 gp=2ac24400 asid=07`. Thus guest `lw ra,0x40(sp)` loads GP value from **0x7FFF7120**, then `jr ra` leads to `EPC=2AC24400` on the next `PSBBN-IHIN` signal-delivery trace. Recovered actual function bytes in new slot015 `eeMemory.bin` at physical offset `0x01E033A4` establish **entry `0x2AB0F2BC: addiu sp,-0x50`, save `0x2AB0F2D8: sw ra,0x40(sp)`, exit `0x2AB0F3A4: lw ra,0x40(sp)`, `0x2AB0F3B4: jr ra`**. The frame layout agrees! Its PIC gp reconstruction gives `0x2AB0F2B0+0x00115150=0x2AC24400`. The saved RA slot is either wrong at function entry or overwritten later; current evidence cannot distinguish. **Do not modify emulator guest registers or invent VMA mappings.**
+
+**Diagnostic-only additions already committed to PCSX2 branch:** `542c7dd` declaration, `bc02dbd` bounded 64-frame/128-line per-autosave stack provenance observer, and `40cffe8` interpreter pre-execution integration. New `PSBBN-FRAME-SAVE` captures original RA at **prologue**; new `PSBBN-FRAME-STORE` records ordinary guest stores overlapping that saved RA word for same ASID. Uses existing COP0 trace opt-in and 10s scheduled savestates, no new envvar or INI. 12 static consistency checks pass; Windows build and **new** diagnostic runtime unverified. Next cold boot only needs to include the prologue through the first invalid return, not another prolonged idle session.
+
+
 ## Third cold boot: unmapped-PC return and RA provenance (2026-10-19)
 
 Latest forensic report in [ps2bbndecomp/docs/PSBBN_POST_ASID_RA_ORIGIN_20261019_v1.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_POST_ASID_RA_ORIGIN_20261019_v1.md). Inputs `sstates(2).zip` SHA256 `a3fe167b28ded2d179049ede5f7fbb9034f035d1a9c4969286452d7e5d25f7c2`, `emulog(1).txt` SHA256 `e4f0c90a811b8e18be63f819cef39284b3f0cadd5a52e1de4fb94c3c2ad2a9d7`. The ZIP includes 21+21 older entries; **only 20 new prefix `1792383328013097`** for this run. PCSX2 binary **`v2.9.92-65-ga4886a00e`** ran interpreter with 10s autosaves.
