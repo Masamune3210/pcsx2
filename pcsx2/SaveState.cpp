@@ -68,14 +68,10 @@ static void PostLoadPrep()
 {
 	resetCache();
 //	WriteCP0Status(cpuRegs.CP0.n.Status.val);
-	for (int i = 0; i < 48; i++)
-	{
-		if (std::memcmp(&s_tlb_backup[i], &tlb[i], sizeof(tlbs)) != 0)
-		{
-			UnmapTLB(s_tlb_backup[i], i);
-			MapTLB(tlb[i], i);
-		}
-	}
+	// The saved CP0 EntryHi ASID may differ even when all 48 TLB slots match.
+	// Rebuild the active virtual map from the restored architectural TLB,
+	// rather than iterating changed slots with an ASID-blind flattened map.
+	SyncActiveTLBMappings();
 
 	if (EmuConfig.Gamefixes.GoemonTlbHack) GoemonPreloadTlb();
 	CBreakPoints::SetSkipFirst(BREAKPOINT_EE, 0);
