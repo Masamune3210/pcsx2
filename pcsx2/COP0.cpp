@@ -6,6 +6,7 @@
 #include "vtlb.h"
 
 #include <array>
+#include <unordered_map>
 
 // Diagnostic observer only. Existing EE COP0 trace settings are the opt-in.
 // No guest memory reads: instruction_sample can be stale on fetch faults and JIT misses.
@@ -381,61 +382,112 @@ __fi void COP0_UpdatePCCR()
 //
 
 
-void MapTLB(const tlbs& t, int i)
+// The vTLB uses a flat array indexed only by guest VPN. It cannot keep
+// non-global entries for multiple ASIDs live at the same time. Maintain the
+// *active* ASID's translations there, plus global entries; nonmatching entries
+// stay in the architectural 48-entry TLB until the guest selects their ASID.
+namespace
 {
-	u32 mask, addr;
-	u32 saddr, eaddr;
+struct ActiveTLBPage
+{
+	u32 paddr = 0;
+	bool scratchpad = false;
+};
+std::unordered_map<u32, ActiveTLBPage> s_active_tlb_pages;
 
-	if (!PSBBNTlbTraceEnabled())
-	COP0_LOG("MAP TLB %d: 0x%08X-> [0x%08X 0x%08X] S=%d G=%d ASID=%d Mask=0x%03X EntryLo0 PFN=%x EntryLo0 Cache=%x EntryLo1 PFN=%x EntryLo1 Cache=%x VPN2=%x",
-		i, t.VPN2(), t.PFN0(), t.PFN1(), t.isSPR() >> 31, t.isGlobal(), t.EntryHi.ASID,
-		t.Mask(), t.EntryLo0.PFN, t.EntryLo0.C, t.EntryLo1.PFN, t.EntryLo1.C, t.VPN2());
+void AppendActiveTLBPages(std::unordered_map<u32, ActiveTLBPage>& desired,
+	const tlbs& t, u8 asid)
+{
+	if (!t.isGlobal() && t.EntryHi.ASID != asid)
+		return;
 
-	// According to the manual
-	// 'It [SPR] must be mapped into a contiguous 16 KB of virtual address space that is
-	// aligned on a 16KB boundary.Results are not guaranteed if this restriction is not followed.'
-	// Assume that the game isn't doing anything less-than-ideal with the scratchpad mapping and map it directly to eeMem->Scratch.
 	if (t.isSPR())
 	{
 		if (t.VPN2() != 0x70000000)
 			Console.Warning("COP0: Mapping Scratchpad to non-default address 0x%08X", t.VPN2());
-
-		vtlb_VMapBuffer(t.VPN2(), eeMem->Scratch, Ps2MemSize::Scratch);
+		for (u32 n = 0; n < Ps2MemSize::Scratch / 0x1000; n++)
+			desired.try_emplace((t.VPN2() >> 12) + n, ActiveTLBPage{n << 12, true});
+		return;
 	}
-	else
+
+	const u32 halfPages = t.Mask() + 1;
+	const u32 firstPage = t.VPN2() >> 12;
+	const u32 compareMask = ((~t.Mask()) << 1) & 0xfffff;
+	const u32 compareVpn = firstPage & compareMask;
+	for (u32 half = 0; half < 2; half++)
 	{
-		if (t.EntryLo0.V)
+		const EntryLo_t& lo = half ? t.EntryLo1 : t.EntryLo0;
+		if (!lo.V)
+			continue;
+		const u32 basePage = firstPage + half * halfPages;
+		const u32 basePhysical = half ? t.PFN1() : t.PFN0();
+		for (u32 n = 0; n < halfPages; n++)
 		{
-			mask = ((~t.Mask()) << 1) & 0xfffff;
-			saddr = t.VPN2() >> 12;
-			eaddr = saddr + t.Mask() + 1;
-
-			for (addr = saddr; addr < eaddr; addr++)
-			{
-				if ((addr & mask) == ((t.VPN2() >> 12) & mask))
-				{ //match
-					memSetPageAddr(addr << 12, t.PFN0() + ((addr - saddr) << 12));
-					Cpu->Clear(addr << 12, 0x400);
-				}
-			}
-		}
-
-		if (t.EntryLo1.V)
-		{
-			mask = ((~t.Mask()) << 1) & 0xfffff;
-			saddr = (t.VPN2() >> 12) + t.Mask() + 1;
-			eaddr = saddr + t.Mask() + 1;
-
-			for (addr = saddr; addr < eaddr; addr++)
-			{
-				if ((addr & mask) == ((t.VPN2() >> 12) & mask))
-				{ //match
-					memSetPageAddr(addr << 12, t.PFN1() + ((addr - saddr) << 12));
-					Cpu->Clear(addr << 12, 0x400);
-				}
-			}
+			const u32 page = basePage + n;
+			if ((page & compareMask) == compareVpn)
+				desired.try_emplace(page, ActiveTLBPage{basePhysical + (n << 12), false});
 		}
 	}
+}
+}
+
+void SyncActiveTLBMappings()
+{
+	std::unordered_map<u32, ActiveTLBPage> desired;
+	const u8 asid = static_cast<u8>(cpuRegs.CP0.n.EntryHi);
+	for (const tlbs& entry : tlb)
+		AppendActiveTLBPages(desired, entry, asid);
+
+	// Remove obsolete mappings first. Every removal also invalidates generated
+	// guest code and fastmem aliases through the existing PCSX2 machinery.
+	for (const auto& [page, old] : s_active_tlb_pages)
+	{
+		const auto match = desired.find(page);
+		if (match == desired.end() || match->second.paddr != old.paddr ||
+			match->second.scratchpad != old.scratchpad)
+		{
+			memClearPageAddr(page << 12);
+			Cpu->Clear(page << 12, 0x400);
+		}
+	}
+	for (const auto& [page, now] : desired)
+	{
+		const auto old = s_active_tlb_pages.find(page);
+		if (old != s_active_tlb_pages.end() && old->second.paddr == now.paddr &&
+			old->second.scratchpad == now.scratchpad)
+			continue;
+		if (now.scratchpad)
+			vtlb_VMapBuffer(page << 12, eeMem->Scratch + now.paddr, 0x1000);
+		else
+			memSetPageAddr(page << 12, now.paddr);
+		Cpu->Clear(page << 12, 0x400);
+	}
+	s_active_tlb_pages.swap(desired);
+}
+
+void ResetActiveTLBMappings()
+{
+	for (const auto& [page, mapping] : s_active_tlb_pages)
+	{
+		memClearPageAddr(page << 12);
+		Cpu->Clear(page << 12, 0x400);
+	}
+	s_active_tlb_pages.clear();
+}
+
+void WriteCP0EntryHi(u32 value)
+{
+	const u8 previousAsid = static_cast<u8>(cpuRegs.CP0.n.EntryHi);
+	cpuRegs.CP0.n.EntryHi = value;
+	if (static_cast<u8>(value) != previousAsid)
+		SyncActiveTLBMappings();
+}
+
+void MapTLB(const tlbs& t, int i)
+{
+	// The caller has already installed tlb[i]. Update only the physical pages
+	// visible under the selected ASID instead of flattening *every* TLB entry.
+	SyncActiveTLBMappings();
 }
 
 __inline u32 ConvertPageMask(const u32 PageMask)
@@ -449,47 +501,11 @@ __inline u32 ConvertPageMask(const u32 PageMask)
 
 void UnmapTLB(const tlbs& t, int i)
 {
-	//Console.WriteLn("Clear TLB %d: %08x-> [%08x %08x] S=%d G=%d ASID=%d Mask= %03X", i,t.VPN2,t.PFN0,t.PFN1,t.S,t.G,t.ASID,t.Mask);
-	u32 mask, addr;
-	u32 saddr, eaddr;
-
+	// TLBWI/TLBWR remove the old cache-mode descriptor here. Live vTLB page
+	// mappings are reconciled once the replacement TLB entry is installed by
+	// MapTLB(), so replacing an inactive ASID cannot erase an active mapping.
 	if (t.isSPR())
-	{
-		vtlb_VMapUnmap(t.VPN2(), 0x4000);
 		return;
-	}
-
-	if (t.EntryLo0.V)
-	{
-		mask = ((~t.Mask()) << 1) & 0xfffff;
-		saddr = t.VPN2() >> 12;
-		eaddr = saddr + t.Mask() + 1;
-		//	Console.WriteLn("Clear TLB: %08x ~ %08x",saddr,eaddr-1);
-		for (addr = saddr; addr < eaddr; addr++)
-		{
-			if ((addr & mask) == ((t.VPN2() >> 12) & mask))
-			{ //match
-				memClearPageAddr(addr << 12);
-				Cpu->Clear(addr << 12, 0x400);
-			}
-		}
-	}
-
-	if (t.EntryLo1.V)
-	{
-		mask = ((~t.Mask()) << 1) & 0xfffff;
-		saddr = (t.VPN2() >> 12) + t.Mask() + 1;
-		eaddr = saddr + t.Mask() + 1;
-		//	Console.WriteLn("Clear TLB: %08x ~ %08x",saddr,eaddr-1);
-		for (addr = saddr; addr < eaddr; addr++)
-		{
-			if ((addr & mask) == ((t.VPN2() >> 12) & mask))
-			{ //match
-				memClearPageAddr(addr << 12);
-				Cpu->Clear(addr << 12, 0x400);
-			}
-		}
-	}
 
 	for (size_t i = 0; i < cachedTlbs.count; i++)
 	{
@@ -568,7 +584,7 @@ namespace COP0 {
 		}
 
 		cpuRegs.CP0.n.PageMask = tlb[i].PageMask.Mask << 13;
-		cpuRegs.CP0.n.EntryHi = tlb[i].EntryHi.UL & ~((tlb[i].PageMask.Mask << 13) | 0x1f00);
+		WriteCP0EntryHi(tlb[i].EntryHi.UL & ~((tlb[i].PageMask.Mask << 13) | 0x1f00));
 		cpuRegs.CP0.n.EntryLo0 = tlb[i].EntryLo0.UL & ~(0xFC000000) & ~1;
 		cpuRegs.CP0.n.EntryLo1 = tlb[i].EntryLo1.UL & ~(0x7C000000) & ~1;
 		// "If both the Global bit of EntryLo0 and EntryLo1 are set to 1, the processor ignores the ASID during TLB lookup."
@@ -718,6 +734,10 @@ cpuRegs.PERF.n.pccr, cpuRegs.PERF.n.pcr0, cpuRegs.PERF.n.pcr1, _Imm_ & 0x3F);*/
 			case 6:
 				cpuRegs.CP0.n.Wired = cpuRegs.GPR.r[_Rt_].UL[0] & 0x3f;
 				cpuRegs.CP0.n.Random = 47;
+				break;
+
+			case 10:
+				WriteCP0EntryHi(cpuRegs.GPR.r[_Rt_].UL[0]);
 				break;
 
 			case 9:
