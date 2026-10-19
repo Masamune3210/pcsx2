@@ -97,8 +97,8 @@ void PSBBNResetUserFaultWindow()
 		static_cast<unsigned long long>(s_psbbn_user_faults.dropped));
 	s_psbbn_user_faults = {};
 	s_psbbn_badreturn_emitted = 0;
-	s_psbbn_tracked_returns = {};
-	s_psbbn_tracked_return_cursor = 0;
+	// The observed function can span an autosave. Keep its tracked return
+	// slot across intervals; rotate the output budget, not the provenance.
 	s_psbbn_tracked_return_emitted = 0;
 }
 
