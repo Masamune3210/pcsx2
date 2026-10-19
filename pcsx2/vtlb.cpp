@@ -248,6 +248,16 @@ void vtlb_memWrite(u32 addr, DataType data)
 {
 	static const uint DataSize = sizeof(DataType) * 8;
 
+	// Check the guest TLB permission before even the interpreter's cache
+	// write path. Host page protection is not the MIPS EntryLo.D bit.
+	// With D=0 the Mod exception must leave guest RAM untouched.
+	if (EEInterpreterTLBStoreNeedsModification(addr))
+	{
+		cpuTlbModification(addr, cpuRegs.branch);
+		Cpu->CancelInstruction();
+		return;
+	}
+
 	auto vmv = vtlbdata.vmap[addr >> VTLB_PAGE_BITS];
 
 	if (!vmv.isHandler(addr))
@@ -287,6 +297,14 @@ void vtlb_memWrite(u32 addr, DataType data)
 
 void TAKES_R128 vtlb_memWrite128(u32 mem, r128 value)
 {
+	// A 128-bit interpreter store is subject to the same EntryLo.D rule.
+	if (EEInterpreterTLBStoreNeedsModification(mem))
+	{
+		cpuTlbModification(mem, cpuRegs.branch);
+		Cpu->CancelInstruction();
+		return;
+	}
+
 	auto vmv = vtlbdata.vmap[mem >> VTLB_PAGE_BITS];
 
 	if (!vmv.isHandler(mem))
