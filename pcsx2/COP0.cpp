@@ -70,6 +70,7 @@ struct PSBBNTrackedReturnSlot
 std::array<PSBBNTrackedReturnSlot, 64> s_psbbn_tracked_returns{};
 u32 s_psbbn_tracked_return_cursor = 0;
 u32 s_psbbn_tracked_return_emitted = 0;
+u32 s_psbbn_focus_events = 0;
 }
 
 void PSBBNResetTlbTrace()
@@ -81,6 +82,7 @@ void PSBBNResetTlbTrace()
 	s_psbbn_tracked_returns = {};
 	s_psbbn_tracked_return_cursor = 0;
 	s_psbbn_tracked_return_emitted = 0;
+	s_psbbn_focus_events = 0;
 }
 
 bool PSBBNTlbTraceEnabled()
@@ -100,6 +102,7 @@ void PSBBNResetUserFaultWindow()
 	// The observed function can span an autosave. Keep its tracked return
 	// slot across intervals; rotate the output budget, not the provenance.
 	s_psbbn_tracked_return_emitted = 0;
+	s_psbbn_focus_events = 0;
 }
 
 // Observes interpreter CPU address errors and TLB faults before EXL changes.
@@ -199,6 +202,30 @@ void PSBBNTraceReturnStackAccess(u32 pc, u32 opcode)
 	const u32 ra = cpuRegs.GPR.r[31].UL[0];
 	const u32 gp = cpuRegs.GPR.r[28].UL[0];
 
+	// Observe function entry and exit in *every* process. The fifth boot
+	// executed the epilogue in ASID 07, but the only witnessed prologue
+	// belonged to ASID 04. Do not conflate their stack frames.
+	if (pc == 0x2ab0f2bcu || (pc == 0x2ab0f3a4u && opcode == 0x8fbf0040u))
+	{
+		if (s_psbbn_focus_events < 96)
+		{
+			++s_psbbn_focus_events;
+			Console.WriteLn("PSBBN-FRAME-PATH pc=%08x opcode=%08x asid=%02x sp=%08x slot=%08x ra=%08x gp=%08x t9=%08x EntryHi=%08x",
+				pc, opcode, asid, sp, sp + 0x40u, ra, gp,
+				cpuRegs.GPR.r[25].UL[0], cpuRegs.CP0.n.EntryHi);
+		}
+		if (pc == 0x2ab0f3a4u)
+		{
+			// A completed frame can be recycled. Retire its original watch.
+			for (auto& frame : s_psbbn_tracked_returns)
+			{
+				if (frame.valid && frame.asid == asid && frame.address == sp + 0x40u)
+					frame.valid = false;
+			}
+		}
+		return;
+	}
+
 	if (pc == 0x2ab0f2d8u && opcode == 0xafbf0040u)
 	{
 		// A reused stack address starts a fresh invocation. Do not attribute
@@ -241,6 +268,18 @@ void PSBBNTraceReturnStackAccess(u32 pc, u32 opcode)
 	const u32 base = cpuRegs.GPR.r[(opcode >> 21) & 31].UL[0];
 	const u32 address = base + static_cast<s16>(opcode);
 	const u32 rt = (opcode >> 16) & 31;
+	// Independent focus watch: no prologue was recorded in ASID 07 on the
+	// fifth boot. Observe attempts to write the *actual* failing stack slot
+	// even if there is no corresponding active host-side frame record.
+	// The address is a diagnostic target only, never a new memory rule.
+	if (address <= 0x7fff7123u && (address + width - 1u) >= 0x7fff7120u &&
+		s_psbbn_focus_events < 96)
+	{
+		++s_psbbn_focus_events;
+		Console.WriteLn("PSBBN-STACK-FOCUS pc=%08x opcode=%08x addr=%08x width=%u asid=%02x rt=%u value=%08x ra=%08x gp=%08x sp=%08x EntryHi=%08x attempted=1",
+			pc, opcode, address, width, asid, rt, cpuRegs.GPR.r[rt].UL[0],
+			ra, gp, sp, cpuRegs.CP0.n.EntryHi);
+	}
 	for (const auto& frame : s_psbbn_tracked_returns)
 	{
 		if (!frame.valid || frame.asid != asid ||
