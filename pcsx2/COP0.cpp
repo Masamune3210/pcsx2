@@ -56,6 +56,20 @@ struct PSBBNUserFaultWindow
 };
 PSBBNUserFaultWindow s_psbbn_user_faults;
 u32 s_psbbn_badreturn_emitted = 0;
+
+// PSBBN-specific diagnostic: track return-address stack slots created by
+// 0x2AB0F2D8 (sw ra, 0x40(sp)), and record later guest stores overlapping
+// those slots. Kept entirely in host memory; no guest memory is modified.
+struct PSBBNTrackedReturnSlot
+{
+	u32 address = 0;
+	u32 asid = 0;
+	u32 entryRa = 0;
+	bool valid = false;
+};
+std::array<PSBBNTrackedReturnSlot, 64> s_psbbn_tracked_returns{};
+u32 s_psbbn_tracked_return_cursor = 0;
+u32 s_psbbn_tracked_return_emitted = 0;
 }
 
 void PSBBNResetTlbTrace()
@@ -64,6 +78,9 @@ void PSBBNResetTlbTrace()
 	s_psbbn_late = {};
 	s_psbbn_user_faults = {};
 	s_psbbn_badreturn_emitted = 0;
+	s_psbbn_tracked_returns = {};
+	s_psbbn_tracked_return_cursor = 0;
+	s_psbbn_tracked_return_emitted = 0;
 }
 
 bool PSBBNTlbTraceEnabled()
@@ -80,6 +97,9 @@ void PSBBNResetUserFaultWindow()
 		static_cast<unsigned long long>(s_psbbn_user_faults.dropped));
 	s_psbbn_user_faults = {};
 	s_psbbn_badreturn_emitted = 0;
+	s_psbbn_tracked_returns = {};
+	s_psbbn_tracked_return_cursor = 0;
+	s_psbbn_tracked_return_emitted = 0;
 }
 
 // Observes interpreter CPU address errors and TLB faults before EXL changes.
@@ -161,6 +181,74 @@ void PSBBNTraceReturnAddressWrite(u32 pc, u32 opcode, u32 oldRa, u32 oldGp)
 		s_psbbn_badreturn_emitted, pc, opcode, oldRa, ra, oldGp, gp,
 		cpuRegs.GPR.r[25].UL[0], cpuRegs.GPR.r[29].UL[0], cpuRegs.pc,
 		cpuRegs.CP0.n.EntryHi);
+}
+
+// Debug witness for the specific saved-RA corruption. The linked user image
+// has the ordinary 0x50-byte function frame:
+//   2AB0F2D8: sw ra,0x40(sp)   (entry)
+//   2AB0F3A4: lw ra,0x40(sp)   (exit)
+// In the fourth cold boot the exit read GP (0x2AC24400), causing a bad jump.
+// Trace the entry value and any guest CPU store overwriting its tracked slot.
+void PSBBNTraceReturnStackAccess(u32 pc, u32 opcode)
+{
+	if (!PSBBNTlbTraceEnabled() || Cpu != &intCpu)
+		return;
+
+	const u32 asid = cpuRegs.CP0.n.EntryHi & 0xffu;
+	const u32 sp = cpuRegs.GPR.r[29].UL[0];
+	const u32 ra = cpuRegs.GPR.r[31].UL[0];
+	const u32 gp = cpuRegs.GPR.r[28].UL[0];
+
+	if (pc == 0x2ab0f2d8u && opcode == 0xafbf0040u)
+	{
+		auto& frame = s_psbbn_tracked_returns[
+		(s_psbbn_tracked_return_cursor++) % s_psbbn_tracked_returns.size()];
+		frame = {sp + 0x40u, asid, ra, true};
+		if (s_psbbn_tracked_return_emitted < 128)
+		{
+			++s_psbbn_tracked_return_emitted;
+			Console.WriteLn("PSBBN-FRAME-SAVE pc=%08x slot=%08x sp=%08x savedRA=%08x gp=%08x t9=%08x asid=%02x sameGP=%u",
+				pc, frame.address, sp, ra, gp, cpuRegs.GPR.r[25].UL[0], asid,
+				ra == gp ? 1u : 0u);
+		}
+		return;
+	}
+
+	// Check only actual store-class instruction opcodes. The source GPR and
+	// effective address are sampled BEFORE execution, so a later exception
+	// does not destroy the provenance of the attempted write.
+	const u32 op = opcode >> 26;
+	u32 width;
+	switch (op)
+	{
+		case 0x28: width = 1; break; // SB
+		case 0x29: width = 2; break; // SH
+		case 0x2a: // SWL
+		case 0x2b: // SW
+		case 0x2e: width = 4; break; // SWR
+		case 0x2c: // SDL
+		case 0x2d: // SDR
+		case 0x3f: width = 8; break; // SD
+		default: return;
+	}
+	const u32 base = cpuRegs.GPR.r[(opcode >> 21) & 31].UL[0];
+	const u32 address = base + static_cast<s16>(opcode);
+	const u32 rt = (opcode >> 16) & 31;
+	for (const auto& frame : s_psbbn_tracked_returns)
+	{
+		if (!frame.valid || frame.asid != asid ||
+			address > frame.address + 3u ||
+			address + width - 1u < frame.address)
+			continue;
+		if (s_psbbn_tracked_return_emitted < 128)
+		{
+			++s_psbbn_tracked_return_emitted;
+			Console.WriteLn("PSBBN-FRAME-STORE pc=%08x opcode=%08x addr=%08x width=%u slot=%08x rt=%u value=%08x entryRA=%08x currentRA=%08x gp=%08x sp=%08x asid=%02x",
+				pc, opcode, address, width, frame.address, rt,
+				cpuRegs.GPR.r[rt].UL[0], frame.entryRa, ra, gp, sp, asid);
+		}
+		break;
+	}
 }
 
 // CACHE 0x0b is IHIN (instruction-cache hit invalidate). The EE interpreter
