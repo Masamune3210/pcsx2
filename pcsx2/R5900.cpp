@@ -96,6 +96,7 @@ void cpuReset()
 
 static __ri void cpuExceptionInternal(u32 code, u32 bd, bool tlbRefill)
 {
+	PSBBNTraceLateException(code, bd, false);
 	const u32 trace_cause = code & 0x7c;
 	const bool trace_exception = trace_cause == 4 || trace_cause == 8 || trace_cause == 12;
 	if (trace_exception)
@@ -171,6 +172,7 @@ static __ri void cpuExceptionInternal(u32 code, u32 bd, bool tlbRefill)
 	cpuUpdateOperationMode();
 	if (trace_exception)
 		PSBBNTraceTlb(PSBBNTlbEvent::ExceptionAfter, cpuRegs.CP0.n.BadVAddr, bd);
+	PSBBNTraceLateException(code, bd, true);
 }
 
 __ri void cpuException(u32 code, u32 bd)
