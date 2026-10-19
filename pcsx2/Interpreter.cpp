@@ -237,6 +237,12 @@ static void execI()
 	const u32 oldRa = traceRa ? cpuRegs.GPR.r[31].UL[0] : 0;
 	const u32 oldGp = traceRa ? cpuRegs.GPR.r[28].UL[0] : 0;
 	const u32 currentOpcode = cpuRegs.code; // delay-slot execution can replace cpuRegs.code
+	if (traceRa)
+	{
+		const u32 op = currentOpcode >> 26;
+		if (pc == 0x2ab0f2d8u || (op >= 0x28u && op <= 0x2eu) || op == 0x3fu)
+			PSBBNTraceReturnStackAccess(pc, currentOpcode);
+	}
 
 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
 
