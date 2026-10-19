@@ -33,3 +33,5 @@ extern void PSBBNTraceSyscall(u32 call);
 extern void PSBBNBeginLateTrace();
 extern void PSBBNTraceLateException(u32 code, u32 bd, bool after);
 extern void PSBBNTraceLateHeartbeat();
+extern void PSBBNTraceUserFaultBefore(u32 code, u32 bd);
+extern void PSBBNResetUserFaultWindow();
