@@ -312,6 +312,104 @@ void PSBBNTraceReturnStackAccess(u32 pc, u32 opcode)
 	}
 }
 
+// Diagnostic only: witness the GP stack frame in the shared MIPS PIC function
+// at 0x2ABB7038. Do not read/modify guest memory or change CPU semantics.
+// A traced store is *attempted*; an exception/DMA write is not ruled out.
+void PSBBNTraceGpFrameBefore(u32 pc, u32 opcode)
+{
+	if (!PSBBNTlbTraceEnabled() || Cpu != &intCpu)
+		return;
+	const u32 asid = cpuRegs.CP0.n.EntryHi & 0xffu;
+	const u32 sp = cpuRegs.GPR.r[29].UL[0];
+	const u32 gp = cpuRegs.GPR.r[28].UL[0];
+	if (pc == 0x2abb7048u && opcode == 0xafbc0010u)
+	{
+		const u32 slot = sp + 0x10u;
+		for (auto& old : s_psbbn_gp_frames)
+		{
+			if (old.valid && old.asid == asid && old.address == slot)
+				old.valid = false;
+		}
+		auto& frame = s_psbbn_gp_frames[
+			(s_psbbn_gp_frame_cursor++) % s_psbbn_gp_frames.size()];
+		frame = {slot, asid, gp, true};
+		if (s_psbbn_gp_frame_events < 96)
+		{
+			++s_psbbn_gp_frame_events;
+			Console.WriteLn("PSBBN-GP-SAVE pc=%08x asid=%02x sp=%08x slot=%08x gp=%08x ra=%08x t9=%08x EntryHi=%08x attempted=1",
+				pc, asid, sp, slot, gp, cpuRegs.GPR.r[31].UL[0],
+				cpuRegs.GPR.r[25].UL[0], cpuRegs.CP0.n.EntryHi);
+		}
+		return;
+	}
+	const u32 op = opcode >> 26;
+	u32 width = 0;
+	switch (op)
+	{
+		case 0x1f: width = 16; break; // SQ
+		case 0x28: width = 1; break; // SB
+		case 0x29: width = 2; break; // SH
+		case 0x2a: // SWL (conservative overlap window)
+		case 0x2b: // SW
+		case 0x2e: width = 4; break; // SWR
+		case 0x2c: // SDL (conservative overlap window)
+		case 0x2d: width = 8; break; // SDR
+		case 0x39: // SWC1
+		case 0x3a: width = 4; break; // SWC2
+		case 0x3d: // SDC1
+		case 0x3f: width = 8; break; // SD
+		case 0x3e: width = 16; break; // SQC2
+		default: return;
+	}
+	const u32 base = cpuRegs.GPR.r[(opcode >> 21) & 31].UL[0];
+	const u32 addr = base + static_cast<s16>(opcode);
+	const u32 rt = (opcode >> 16) & 31;
+	for (const auto& frame : s_psbbn_gp_frames)
+	{
+		if (!frame.valid || frame.asid != asid ||
+			addr > frame.address + 3u || (addr + width - 1u) < frame.address)
+			continue;
+		if (s_psbbn_gp_frame_events < 96)
+		{
+			++s_psbbn_gp_frame_events;
+			Console.WriteLn("PSBBN-GP-STORE pc=%08x opcode=%08x asid=%02x addr=%08x width=%u slot=%08x expectedGP=%08x srcReg=%u srcGprLo=%08x currentGP=%08x sp=%08x Status=%08x attempted=1",
+				pc, opcode, asid, addr, width, frame.address, frame.savedGp,
+				rt, cpuRegs.GPR.r[rt].UL[0], gp, sp, cpuRegs.CP0.n.Status.val);
+		}
+		break;
+	}
+}
+
+void PSBBNTraceGpFrameAfter(u32 pc, u32 opcode, u32 priorGp)
+{
+	if (!PSBBNTlbTraceEnabled() || Cpu != &intCpu ||
+		pc != 0x2abb7248u || opcode != 0x8fbc0010u)
+		return;
+	const u32 asid = cpuRegs.CP0.n.EntryHi & 0xffu;
+	const u32 sp = cpuRegs.GPR.r[29].UL[0];
+	const u32 slot = sp + 0x10u;
+	const u32 gp = cpuRegs.GPR.r[28].UL[0];
+	for (const auto& frame : s_psbbn_gp_frames)
+	{
+		if (!frame.valid || frame.address != slot || frame.asid != asid)
+			continue;
+		if (s_psbbn_gp_frame_events < 96)
+		{
+			++s_psbbn_gp_frame_events;
+			Console.WriteLn("PSBBN-GP-RESTORE pc=%08x asid=%02x sp=%08x slot=%08x expectedGP=%08x priorGP=%08x restoredGP=%08x mismatch=%u EntryHi=%08x",
+				pc, asid, sp, slot, frame.savedGp, priorGp, gp,
+				(gp != frame.savedGp) ? 1u : 0u, cpuRegs.CP0.n.EntryHi);
+		}
+		return;
+	}
+	if (s_psbbn_gp_frame_events < 96)
+	{
+		++s_psbbn_gp_frame_events;
+		Console.WriteLn("PSBBN-GP-RESTORE pc=%08x asid=%02x sp=%08x slot=%08x expectedGP=UNKNOWN priorGP=%08x restoredGP=%08x EntryHi=%08x",
+			pc, asid, sp, slot, priorGp, gp, cpuRegs.CP0.n.EntryHi);
+	}
+}
+
 // CACHE 0x0b is IHIN (instruction-cache hit invalidate). The EE interpreter
 // fetches directly from backing memory, so it has no separate I-cache line to
 // invalidate. Record exact issuing PCs/effective addresses, with a hard cap,
