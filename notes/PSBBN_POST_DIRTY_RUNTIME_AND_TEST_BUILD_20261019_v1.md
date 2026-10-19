@@ -28,3 +28,11 @@ Run the resulting executable with `--gtest_filter=EEActiveTLB.*`. If `core_test`
 Research detail and evidence limits are preserved in [PSBBN_POST_DIRTY_INTERPRETER_RUN_20261019_v1.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_POST_DIRTY_INTERPRETER_RUN_20261019_v1.md).
 
 **Next:** collect native host crash information (dump or WER error record) rather than attributing the termination to the final guest log PC; then check the guest Mod handler and retry in a bounded interpreter-only run, without conflating stagnant screen pixels with no CPU progress. JIT remains deferred.
+
+## Native crash diagnosis and targeted fix (2026-10-19)
+
+User ran the same build under the Visual Studio debugger. The native crash is `0xC0000005` reading host address `0x00000000001FFFDC`, with top frame `PSBBNTraceReturnSlotTranslation` in `pcsx2/COP0.cpp` at original line 226, invoked from `execI` line 248. The PSBBN-only observer derived a physical offset and directly read `eeMem->Main + offset` without verifying that `eeMem` remained allocated. `EEVM_MemoryAllocMess::Main` begins at offset zero, so the low faulting address is consistent with a null `eeMem` base. **Why the pointer is null at this stage is not yet established**; do not assert VM teardown or another lifetime transition without runtime evidence.
+
+Committed diagnostic safety correction [`8dde4ac`](https://github.com/Masamune3210/pcsx2/commit/8dde4ac9992c558401ea198f288be037132cc8b2): `PSBBNTraceReturnSlotTranslation` returns before either `BuildEEActiveTLBPageMap` / `vtlb_V2P` or the raw physical RAM reads when `eeMem == nullptr`. It emits only one `PSBBN-RA-PHYS-SKIP reason=eeMem-null` marker to retain evidence. This changes **no guest TLB/exception/memory operation** and leaves JIT untouched. **Windows rebuild and re-run not yet verified**. If the guard triggers while the VM should be executing, investigate EE memory lifetime and VM stopping order, not the guest COW operation.
+
+The previous report's 'no native crash information' is superseded by the user's Visual Studio exception and stack trace. Other late guest correctness issues remain unresolved. Rebuild PCSX2 from this commit before another interpreter-only test.
