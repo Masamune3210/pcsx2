@@ -218,7 +218,8 @@ void PSBBNTraceReturnSlotTranslation(u32 pc, u32 opcode, u32 sp, const char* pha
 	// execution is being stopped, so never dereference a null EE RAM base.
 	// Keep one bounded marker to distinguish teardown/lifetime problems from
 	// guest TLB translation differences in the next debugger run.
-	if (eeMem == nullptr)
+	const auto* const sampledMemory = eeMem;
+	if (sampledMemory == nullptr)
 	{
 		static bool s_reportedMissingEEMemory = false;
 		if (!s_reportedMissingEEMemory)
@@ -240,9 +241,9 @@ void PSBBNTraceReturnSlotTranslation(u32 pc, u32 opcode, u32 sp, const char* pha
 	u32 archWord = 0xffffffffu;
 	u32 vtlbWord = 0xffffffffu;
 	if (archValid && archPhysical <= Ps2MemSize::MainRam - sizeof(u32))
-		std::memcpy(&archWord, eeMem->Main + archPhysical, sizeof(archWord));
+		std::memcpy(&archWord, sampledMemory->Main + archPhysical, sizeof(archWord));
 	if (vtlbPhysical <= Ps2MemSize::MainRam - sizeof(u32))
-		std::memcpy(&vtlbWord, eeMem->Main + vtlbPhysical, sizeof(vtlbWord));
+		std::memcpy(&vtlbWord, sampledMemory->Main + vtlbPhysical, sizeof(vtlbWord));
 	Console.WriteLn("PSBBN-RA-PHYS phase=%s pc=%08x asid=%02x sp=%08x slot=%08x opcode=%08x archValid=%u archPhys=%08x archWord=%08x vtlbPhys=%08x vtlbWord=%08x samePhys=%u ra=%08x gp=%08x status=%08x",
 		phase, pc, asid, sp, slot, opcode, archValid ? 1u : 0u, archPhysical,
 		archWord, vtlbPhysical, vtlbWord,
