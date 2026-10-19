@@ -1,5 +1,10 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Native PSBBN observer crash addressed (2026-10-19)
+
+User's Visual Studio debugger captured `0xC0000005` reading host `0x00000000001FFFDC` in `PSBBNTraceReturnSlotTranslation` (`pcsx2/COP0.cpp` old line 226). The PSBBN diagnostic dereferenced `eeMem->Main` without checking if the memory base was present; the low host fault address is consistent with `eeMem == nullptr`. PCSX2 commit [`8dde4ac`](https://github.com/Masamune3210/pcsx2/commit/8dde4ac9992c558401ea198f288be037132cc8b2) now guards the diagnostic's EE RAM reads and emits one bounded `PSBBN-RA-PHYS-SKIP` marker when the base is null. **This is a host diagnostic fix, not an EE TLB or guest Linux correction.** The reason the pointer was unavailable is not established; Windows rebuild/retest pending. Prior post-Dirty runtime evidence of actual guest TLB Modification exceptions remains valid. See [Post-Dirty runtime and native debugger diagnosis](PSBBN_POST_DIRTY_RUNTIME_AND_TEST_BUILD_20261019_v1.md) for full evidence and next steps.
+
+
 ## EE interpreter Dirty-bit enforcement implemented, JIT explicitly deferred (2026-10-19)
 
 **Latest implementation reference:** [PSBBN_INTERPRETER_DIRTY_MOD_IMPLEMENTED_20261019_v1.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_INTERPRETER_DIRTY_MOD_IMPLEMENTED_20261019_v1.md). The user explicitly directed fixing the **EE interpreter first**, postponing JIT work until interpreter correctness is established.
