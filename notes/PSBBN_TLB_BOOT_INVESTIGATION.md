@@ -6,6 +6,18 @@ Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
 Branch: `note-working/psbbn-tlb-boot-20261017`
 
+## CACHE IHIN interpreter observer and JIT gap (2026-10-19)
+
+**Source review and implementation committed:** PCSX2 EE `CACHE 0x0B` is **IHIN (instruction-cache hit invalidate)**, documented in the EE Core Instruction Set Manual v6.0, page 308. The uploaded capture10 logged 14,202 generic unsupported-CACHE warnings during 138.4629–142.0333s, but the kernel continued executing to at least 187.4967s. The warnings are not evidence of a permanent CPU hang.
+
+The EE interpreter fetches via `memRead32(pc)` and has no separate emulated instruction-cache lines. In this coherent-instruction-fetch model, IHIN has no distinct line to invalidate; previous missing `case 0x0b` generated a warning for every operation. The new `Cache.cpp` case recognizes IHIN and calls a **bounded diagnostic observer**. The observer in `COP0.cpp` uses existing COP0 opt-in tracing, resets on VM/TLB observer reset, and captures exact interpreter PC, effective address, instruction opcode and CP0 data (first32 + powers of two to65536; at most43 records). No guest register, TLB, cache tag, or memory value is changed by this observer.
+
+Commits: `14dec034` (header), `6faf3112`/`f365bdd3` (observer), `1480554f` (IHIN dispatch). **9/9 static source checks passed; no Windows/MSVC build or subsequent runtime of this latest change has been verified.**
+
+**Do not misstate the JIT status:** `pcsx2/x86/iR5900Misc.cpp::recCACHE()` remains a no-op. Real instruction-cache coherence for recompiled guest code and the TLB/MMU exception paths still require architecture-level implementation and regression tests. A one-line `Cpu->Clear(guest_vaddr)` without mapping/alias reasoning is not an acceptable completion.
+
+Research details and next implementation criteria: [EE_CACHE_IHIN_ANALYSIS_20261019_v1.md](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/EE_CACHE_IHIN_ANALYSIS_20261019_v1.md). The original capture10 log is still a conversation attachment, with compressed hash recorded in that branch.
+
 ## Latest cross-repository checkpoint: 0008 interpreter run (2026-10-19)
 
 **Research/output source:** [PSBBN capture10 analysis](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/POST_0008_RUNTIME_CAPTURE_20261019_v1.md), derived from the user's 26,256,899-byte pasted runtime log (SHA256 `62ffce05973be78c910c73d3b10580dd5712d2ec5970cac8227c35b18431cc07`). This commit updates branch documentation only; **it does not apply experimental 0007 or 0008 code to the PCSX2 source on this remote branch**. The log reports base revision `4621a080b` despite the local working tree including further patches; do not infer which patch code was committed from that version string.
