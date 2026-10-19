@@ -230,18 +230,22 @@ static void execI()
 #endif
 
 
-	// Diagnostic opt-in: only sample register changes in guest user mode.
-	// Avoid extra memory reads, callbacks, or behavior changes in normal play.
-	const bool traceRa = PSBBNTlbTraceEnabled() &&
+	// Diagnostic opt-in: register changes only in guest user mode.
+	// Narrow stack-address write watches also run in kernel mode, since the
+	// guest kernel can write a userspace stack without a userspace opcode.
+	// Neither path reads or changes guest memory or exception state.
+	const bool traceStack = PSBBNTlbTraceEnabled();
+	const bool traceRa = traceStack &&
 		(cpuRegs.CP0.n.Status.val & 0x1eu) == 0x10u;
 	const u32 oldRa = traceRa ? cpuRegs.GPR.r[31].UL[0] : 0;
 	const u32 oldGp = traceRa ? cpuRegs.GPR.r[28].UL[0] : 0;
 	const u32 currentOpcode = cpuRegs.code; // delay-slot execution can replace cpuRegs.code
-	if (traceRa)
+	if (traceStack)
 	{
 		const u32 op = currentOpcode >> 26;
-		if (pc == 0x2ab0f2bcu || pc == 0x2ab0f2d8u || pc == 0x2ab0f3a4u ||
-			(op >= 0x28u && op <= 0x2eu) || op == 0x3fu)
+		const bool isStore = (op >= 0x28u && op <= 0x2eu) || op == 0x3fu;
+		if (isStore || (traceRa && (pc == 0x2ab0f2bcu ||
+			pc == 0x2ab0f2d8u || pc == 0x2ab0f3a4u)))
 			PSBBNTraceReturnStackAccess(pc, currentOpcode);
 	}
 
