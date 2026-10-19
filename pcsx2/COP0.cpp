@@ -7,6 +7,7 @@
 #include "vtlb.h"
 
 #include <array>
+#include <cstring>
 #include <unordered_set>
 
 // Diagnostic observer only. Existing EE COP0 trace settings are the opt-in.
@@ -199,6 +200,39 @@ void PSBBNTraceReturnAddressWrite(u32 pc, u32 opcode, u32 oldRa, u32 oldGp)
 		s_psbbn_badreturn_emitted, pc, opcode, oldRa, ra, oldGp, gp,
 		cpuRegs.GPR.r[25].UL[0], cpuRegs.GPR.r[29].UL[0], cpuRegs.pc,
 		cpuRegs.CP0.n.EntryHi);
+}
+
+// Read-only address-space witness at a verified guest prologue/epilogue.
+// The architectural TLB projection and the live vTLB physical lookup are
+// independent: divergence establishes a stale/wrong active translation.
+// Reading eeMem->Main directly does not trigger guest exceptions, refill
+// handlers, or other guest-visible MMIO side effects.
+void PSBBNTraceReturnSlotTranslation(u32 pc, u32 opcode, u32 sp, const char* phase)
+{
+	if (!PSBBNTlbTraceEnabled() || Cpu != &intCpu ||
+		!((pc == 0x2ab0f2d8u && opcode == 0xafbf0040u) ||
+		  (pc == 0x2ab0f3a4u && opcode == 0x8fbf0040u)))
+		return;
+
+	const u32 slot = sp + 0x40u;
+	const u32 asid = cpuRegs.CP0.n.EntryHi & 0xffu;
+	const auto active = BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(asid));
+	const auto expected = active.find(slot >> 12);
+	const bool archValid = expected != active.end() && !expected->second.scratchpad;
+	const u32 archPhysical = archValid ? expected->second.physicalAddress + (slot & 0xfffu) : 0xffffffffu;
+	const u32 vtlbPhysical = vtlb_V2P(slot);
+	u32 archWord = 0xffffffffu;
+	u32 vtlbWord = 0xffffffffu;
+	if (archValid && archPhysical <= Ps2MemSize::MainRam - sizeof(u32))
+		std::memcpy(&archWord, eeMem->Main + archPhysical, sizeof(archWord));
+	if (vtlbPhysical <= Ps2MemSize::MainRam - sizeof(u32))
+		std::memcpy(&vtlbWord, eeMem->Main + vtlbPhysical, sizeof(vtlbWord));
+	Console.WriteLn("PSBBN-RA-PHYS phase=%s pc=%08x asid=%02x sp=%08x slot=%08x opcode=%08x archValid=%u archPhys=%08x archWord=%08x vtlbPhys=%08x vtlbWord=%08x samePhys=%u ra=%08x gp=%08x status=%08x",
+		phase, pc, asid, sp, slot, opcode, archValid ? 1u : 0u, archPhysical,
+		archWord, vtlbPhysical, vtlbWord,
+		(archValid && archPhysical == vtlbPhysical) ? 1u : 0u,
+		cpuRegs.GPR.r[31].UL[0], cpuRegs.GPR.r[28].UL[0],
+		cpuRegs.CP0.n.Status.val);
 }
 
 // Debug witness for the specific saved-RA corruption. The linked user image
