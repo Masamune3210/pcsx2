@@ -96,6 +96,7 @@ void cpuReset()
 
 static __ri void cpuExceptionInternal(u32 code, u32 bd, bool tlbRefill)
 {
+	PSBBNTraceUserFaultBefore(code, bd);
 	PSBBNTraceLateException(code, bd, false);
 	const u32 trace_cause = code & 0x7c;
 	const bool trace_exception = trace_cause == 4 || trace_cause == 8 || trace_cause == 12;
