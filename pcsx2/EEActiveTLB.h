@@ -23,11 +23,11 @@ using EEActiveTLBPageMap = std::unordered_map<u32, EEActiveTLBPage>;
 
 // Pure selector: no host memory access and no emulated CPU side effects.
 // Operates on actual R5900 tlbs types, so tests exercise production logic.
-inline EEActiveTLBPageMap BuildEEActiveTLBPageMap(const tlbs* entries, size_t entryCount, u8 asid)
+inline EEActiveTLBPageMap BuildEEActiveTLBPageMap(const tlbs* entries, std::size_t entryCount, u8 asid)
 {
 	EEActiveTLBPageMap result;
 
-	for (size_t i = 0; i < entryCount; i++)
+	for (std::size_t i = 0; i < entryCount; i++)
 	{
 		const tlbs& t = entries[i];
 		if (!t.isGlobal() && t.EntryHi.ASID != asid)
