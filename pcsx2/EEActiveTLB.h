@@ -24,6 +24,15 @@ struct EEActiveTLBPage
 
 using EEActiveTLBPageMap = std::unordered_map<u32, EEActiveTLBPage>;
 
+// A matched, valid and non-writable mapping must raise TLB Modification on a
+// guest store. An absent entry is NOT Mod; normal TLB miss handling applies.
+// A direct-mapped kernel page is intentionally not represented in this map.
+inline bool EEActiveTLBStoreNeedsModification(const EEActiveTLBPageMap& active, u32 address)
+{
+	const auto page = active.find(address >> 12);
+	return page != active.end() && !page->second.scratchpad && !page->second.writable;
+}
+
 // Pure selector: no host memory access and no emulated CPU side effects.
 // Operates on actual R5900 tlbs types, so tests exercise production logic.
 inline EEActiveTLBPageMap BuildEEActiveTLBPageMap(const tlbs* entries, std::size_t entryCount, u8 asid)
