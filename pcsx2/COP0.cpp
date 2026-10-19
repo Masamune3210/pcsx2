@@ -72,6 +72,10 @@ u32 s_psbbn_tracked_return_cursor = 0;
 u32 s_psbbn_tracked_return_emitted = 0;
 u32 s_psbbn_focus_asid07_events = 0;
 u32 s_psbbn_focus_other_events = 0;
+struct PSBBNTrackedGpFrame { u32 address = 0; u32 asid = 0; u32 savedGp = 0; bool valid = false; };
+std::array<PSBBNTrackedGpFrame, 64> s_psbbn_gp_frames{};
+u32 s_psbbn_gp_frame_cursor = 0;
+u32 s_psbbn_gp_frame_events = 0;
 }
 
 void PSBBNResetTlbTrace()
@@ -85,6 +89,9 @@ void PSBBNResetTlbTrace()
 	s_psbbn_tracked_return_emitted = 0;
 	s_psbbn_focus_asid07_events = 0;
 	s_psbbn_focus_other_events = 0;
+	s_psbbn_gp_frames = {};
+	s_psbbn_gp_frame_cursor = 0;
+	s_psbbn_gp_frame_events = 0;
 }
 
 bool PSBBNTlbTraceEnabled()
@@ -106,6 +113,8 @@ void PSBBNResetUserFaultWindow()
 	s_psbbn_tracked_return_emitted = 0;
 	s_psbbn_focus_asid07_events = 0;
 	s_psbbn_focus_other_events = 0;
+	// Retain watched guest GP frames across scheduled savestates.
+	s_psbbn_gp_frame_events = 0;
 }
 
 // Observes interpreter CPU address errors and TLB faults before EXL changes.
