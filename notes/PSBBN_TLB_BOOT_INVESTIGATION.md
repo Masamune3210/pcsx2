@@ -1,10 +1,24 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
-Status: **note-working; PSBBN bounded diagnostic code present; compile verification pending**
+Status: **note-working; local interpreter traces acquired with additional experimental patches; general syscall fix and EE JIT MMU parity pending**
 Created: 2026-10-17
 Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
 Branch: `note-working/psbbn-tlb-boot-20261017`
+
+## Latest cross-repository checkpoint: 0008 interpreter run (2026-10-19)
+
+**Research/output source:** [PSBBN capture10 analysis](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/POST_0008_RUNTIME_CAPTURE_20261019_v1.md), derived from the user's 26,256,899-byte pasted runtime log (SHA256 `62ffce05973be78c910c73d3b10580dd5712d2ec5970cac8227c35b18431cc07`). This commit updates branch documentation only; **it does not apply experimental 0007 or 0008 code to the PCSX2 source on this remote branch**. The log reports base revision `4621a080b` despite the local working tree including further patches; do not infer which patch code was committed from that version string.
+
+The locally executed experimental `0008` Linux-O32 guard logs 16 `abi=linux-o32` syscalls, including Linux `open` at `0x0FB77E2C`, `v0=4005`, `v1=2`. Unlike capture9, the new capture has no mistaken host `SetGsCrt` after Linux startup. The legitimate earlier BIOS `SetGsCrt` at `0x0102E424` still occurs. Heartbeats continue to 187.4967 seconds, and there are 14,202 `Cache mode b not implemented` warnings starting at 138.4629s. Neither a completed PSBBN boot nor the final screen outcome was established from this report.
+
+**Interpretation and branch policy:**
+- The BIOS-v1 vs Linux-v0 syscall ABI collision and erroneous host hook are established. Patch `0008` suppresses it in one tested Sony kernel by inspecting 13 hardcoded kernel words. It is **an experiment, not the root-cause/general design**, and must not be merged into `testing` as-is.
+- Native syscall *handler ownership* must eventually determine when BIOS host-side interception is legitimate; preserving user-mode genuine BIOS requests matters.
+- A proper EE JIT TLB exception path remains a separate requirement. Interpreter progress is not full compatibility and no demonstrated JIT fix exists.
+- Investigate the issuing guest PC/sub-op for CACHE mode B with bounded instrumentation before changing any cache semantics. Warning count alone does not establish causality.
+- **Canonical future changes/research** belong on the decomp research output branch until a general emulator correction is designed and specifically authorized for this test branch. Do not duplicate or silently reapply patches already present in a local checkout.
+- The complete raw capture is currently conversation-attached rather than committed to GitHub; its analysis and checksum are recorded in `ps2bbndecomp`.
 
 ## Objective
 
