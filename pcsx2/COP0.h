@@ -11,6 +11,9 @@ extern void cpuUpdateOperationMode();
 extern void WriteTLB(int i);
 extern void UnmapTLB(const tlbs& t, int i);
 extern void MapTLB(const tlbs& t, int i);
+extern void SyncActiveTLBMappings();
+extern void ResetActiveTLBMappings();
+extern void WriteCP0EntryHi(u32 value);
 
 extern void COP0_UpdatePCCR();
 extern void COP0_DiagnosticPCCR();
