@@ -466,7 +466,8 @@ void ResetActiveTLBMappings()
 	for (const auto& [page, mapping] : s_active_tlb_pages)
 	{
 		memClearPageAddr(page << 12);
-		Cpu->Clear(page << 12, 0x400);
+		if (Cpu)
+			Cpu->Clear(page << 12, 0x400);
 	}
 	s_active_tlb_pages.clear();
 }
