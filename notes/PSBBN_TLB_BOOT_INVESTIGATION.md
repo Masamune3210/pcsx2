@@ -1,5 +1,12 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## JIT experiment after run8: ReiserFS root-mount panic (2026-10-19)
+
+On unchanged PCSX2 binary `v2.9.92-124-gcb4d9cd02`, user re-enabled EE recompiler and supplied `emulog(8).txt` plus ten savestates. From 42.58s to 122.66s all later PCs remain `0x8002B300` (encoded guest instruction `0x0800ACC0 = j self`), PS2 logo identical; PC is Linux panic halt, not generic idle. **Actual guest printk recovered from savestate EE RAM:** `journal-2005, get_list_bitmap failed for journal list 0`, `reiserfs_read_super: unable to initialize journal space`, `Kernel panic: VFS: Unable to mount root fs on 03:01`. HDD and APA partition hda1 are detected. Interpreter run8 archives confirm `VFS: Mounted root (reiserfs filesystem) readonly`, but later report guest `hda: timeout waiting for DMA` and `no DRQ after issuing MULTWRITE`. Historical near-era ReiserFS source puts journal-2005 in get_list_bitmap() **before** journal_read(), pointing to in-memory list bookkeeping; verify guest Sony kernel implementation. JIT-specific error and interpreter's later DEV9 issues must be diagnosed separately. No source modifications from this analysis; old observer fix remains valid.
+
+[Detailed research handoff](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_RECOMPILER_PANIC_RUN9_20261019_v1.md). New raw files still conversation-only; log SHA256 eaa3d8e35b0e6cc3456d0830bf8b5c4c7ddc1b2a2e7e44bfa144047162c4ef62. Don't repair the HDD image, skip Linux panic, or declare JIT interrupt bug from stale CP0 Cause bit. Next useful evidence: actual compiled guest journal bitmap/list members at failed get_list_bitmap branch vs interpreter success.
+
+
 ## Runtime after null-ppmap guard: host crash passed, first animation (2026-10-19)
 
 **User-built and executed `PCSX2 v2.9.92-124-gcb4d9cd02`** (EE interpreter). The observer guard in `cb4d9cd` is confirmed successful at runtime: 8 `PSBBN-RA-PHYS` records, all `vtlbAvailable=0`, no native crash through **294s**. The formerly fatal `2AB0F2BC` prologue was crossed; at **176.883–176.976s**, ASID04 stored/restored RA `00403F58` at `7FFF7390` (archPhys `001DB390`), and at **213.366–213.367s**, ASID57 stored/restored RA `004093B4` at `7FFF7C70` (archPhys `01BB0C70`). Host VM paused and shut down normally around 294–295s.
