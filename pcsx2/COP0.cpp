@@ -954,9 +954,7 @@ bool EEInterpreterTLBStoreNeedsModification(u32 address)
 {
 	if (Cpu != &intCpu)
 		return false;
-	const auto match = s_active_tlb_pages.find(address >> 12);
-	return match != s_active_tlb_pages.end() && !match->second.scratchpad &&
-		!match->second.writable;
+	return EEActiveTLBStoreNeedsModification(s_active_tlb_pages, address);
 }
 
 void ResetActiveTLBMappings()
