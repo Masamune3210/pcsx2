@@ -6,6 +6,24 @@ Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
 Branch: `note-working/psbbn-tlb-boot-20261017`
 
+## Cold boot after ASID correction: new SIGSEGV and signal storm (2026-10-19)
+
+**First read:** [new 21-state forensic report](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_POST_ASID_SIGSEGV_STORM_20261019_v1.md), using uploaded `sstates(1).zip` SHA256 `0037c4920fb5c80374608bfc7b65931b0a5201dcc887c4fe4816ec3a5a596051` and `emulog.txt` SHA256 `b63b1a421ae02da1dd422214891e9e5be85e1cce41c47d95e4b13fe0a27e6939`. New prefix `1792381284664639`; old prefix from previous session is ALSO in the archive, do not mix sets. New run: PCSX2 `v2.9.92-60-g3ede3fd38`, EE interpreter, 10s scheduled savestates, 21 captures, unchanged centered PS2-logo screenshot throughout slots 3–21.
+
+The previous self-referential node loop is **absent**: by slot21 `[0x2AC1A774+0x408]=0x2AD00010` and `[0x2AD00010+0x408]=0x2AC1A774`. Instead, after PID12/13 `init` are live at slot13, by slot14 they have left the task list and the emulator is permanently in kernel `cpu_idle`. Retained task memory at `0x803EA000` confirms parent PID12 `state=TASK_ZOMBIE (4)`, `exit_code=0x0B` = SIGSEGV, `exit_signal=0x12` = SIGCHLD.
+
+Using PID12's `mm=0x801D1120,pgd=0x803FE000` and PID13's `mm=0x801D11C0,pgd=0x803D3000` at slot13, **neither** VMAs nor PTEs cover `0x2AD00420` (both PTEs zero, mapped data region ends at `0x2AC23000`). User code `0x2AB21114: lw v0,0x410(s0)` would dereference `0x2AD00420` when `s0=0x2AD00010`. PID13's preserved kernel stack contains both addresses. Approximately 4,000 repeated signal contexts (8,130 occurrences of sentinel pointer in repeated frame records) and IHIN count reaching 4096 at 142.33s indicate a **signal-delivery storm**, not a stable user infinite loop or just unsupported-CACHE warnings.
+
+The 0008 Linux syscall guard's 13 exact kernel signature words **all still matched** in independently checked snapshots 11–15 and 21; no evidence the fingerprint disappeared when the userspace fault occurred. This does **not** establish the origin of the invalid pointer or every syscall return. Note that there is no VMA at slot13, but a mapping could have been created/removed between samples. Do not fabricate a VMA, hardcode a pointer, or merge another speculative semantic fix.
+
+**New opt-in instrumentation committed on this same test branch:**
+- `7a4f75a` declarations in `COP0.h`;
+- `80361ee` fixed-size 256-unique-key + 384-emission / interval interpreter observer in `COP0.cpp`, logging earliest user-mode address exceptions and O32 `sigreturn` attempts (4119) with exact pre-exception PC/BadVAddr/ASID, register values and repeat counts;
+- `464efa6` hook before `cpuExceptionInternal` mutates `EXL/EPC`;
+- `dba6212` starts a new bounded fault window each scheduled savestate using the existing COP0 trace opt-in, no new INI or envvar.
+
+Nine static source-integration checks passed. **MSVC compilation and another runtime collection of this instrument are not yet verified.** This instrumentation does not alter TLB, memory, syscall or user-space semantics; it prepares specific evidence to locate the first fault and avoid masking it with later repetitive signal frames. The user can continue with current autosave INI and COP0 trace settings after a build. A precise general emulator correction still depends on understanding where the `0x2AD00010` pointer originated.
+
 ## vTLB physical lookup coherence follow-up (2026-10-19)
 
 **Code commit:** `66831a0b766ecfa32d1052c96e05168c0fea5255` in `pcsx2/vtlb.cpp`. The existing `vtlbdata.ppmap` cache (guest VPN to physical page, used by `vtlb_V2P`) was populated on `vtlb_VMap()`, but `vtlb_VMapUnmap()` previously removed only the primary `vmap` and fastmem mapping, leaving `ppmap` pointing at the old ASID's physical frame. The ASID projection correction makes unmap/remap a normal event, so stale auxiliary PFNs would defeat consistent translation. `vtlb_VMapUnmap()` now restores the table's initialized identity sentinel on unmapped low-address pages. `vtlb_VMapBuffer()` similarly discards stale physical PFNs when installing special buffer mappings such as EE scratchpad. Ordinary `vtlb_VMap()` continues assigning its new PFN. High kernel direct-mapped pages keep their existing direct-map behavior. **No MSVC build or runtime of this follow-up is claimed.** This is general vTLB mapping coherence, not a guest-specific data patch.
