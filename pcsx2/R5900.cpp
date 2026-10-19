@@ -228,6 +228,14 @@ void cpuTlbMissW(u32 addr, u32 bd) {
 	cpuTlbMiss(addr, bd, EXC_CODE_TLBS);
 }
 
+// EntryLo.V=1 and EntryLo.D=0 on a matching ASID/global translation.
+// TLB Modification is a general exception (vector +0x180), never refill.
+// Reuse the existing fault-register and delay-slot/EPC mechanics.
+void cpuTlbModification(u32 addr, u32 bd)
+{
+	cpuTlbMiss(addr, bd, EXC_CODE_Mod);
+}
+
 // sets a branch test to occur some time from an arbitrary starting point.
 __fi void cpuSetNextEvent( u64 startCycle, s32 delta )
 {
