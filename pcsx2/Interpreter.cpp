@@ -230,9 +230,19 @@ static void execI()
 #endif
 
 
+	// Diagnostic opt-in: only sample register changes in guest user mode.
+	// Avoid extra memory reads, callbacks, or behavior changes in normal play.
+	const bool traceRa = PSBBNTlbTraceEnabled() &&
+		(cpuRegs.CP0.n.Status.val & 0x1eu) == 0x10u;
+	const u32 oldRa = traceRa ? cpuRegs.GPR.r[31].UL[0] : 0;
+	const u32 oldGp = traceRa ? cpuRegs.GPR.r[28].UL[0] : 0;
+
 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
 
 	opcode.interpret();
+
+	if (traceRa && cpuRegs.GPR.r[31].UL[0] != oldRa)
+		PSBBNTraceReturnAddressWrite(pc, cpuRegs.code, oldRa, oldGp);
 }
 
 static __fi void _doBranch_shared(u32 tar)
