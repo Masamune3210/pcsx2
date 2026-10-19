@@ -201,6 +201,13 @@ void PSBBNTraceReturnStackAccess(u32 pc, u32 opcode)
 
 	if (pc == 0x2ab0f2d8u && opcode == 0xafbf0040u)
 	{
+		// A reused stack address starts a fresh invocation. Do not attribute
+		// later writes to an obsolete frame for the same ASID/virtual address.
+		for (auto& old : s_psbbn_tracked_returns)
+		{
+			if (old.valid && old.asid == asid && old.address == sp + 0x40u)
+				old.valid = false;
+		}
 		auto& frame = s_psbbn_tracked_returns[
 		(s_psbbn_tracked_return_cursor++) % s_psbbn_tracked_returns.size()];
 		frame = {sp + 0x40u, asid, ra, true};
