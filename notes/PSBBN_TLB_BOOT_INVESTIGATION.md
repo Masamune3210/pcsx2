@@ -1,5 +1,14 @@
 # PSBBN / EE TLB and HDD Boot Investigation
 
+## Native Visual Studio EEActiveTLB test target added (2026-10-19)
+
+User's PCSX2 checkout uses `PCSX2_qt.slnx` and native MSBuild outputs (`build/obj-pcsx2-x64-Release AVX2`), **not a CMake-configured build directory**. Earlier directions to look for `CMakeCache.txt` in the existing `build` directory were inapplicable. Preserve the user's native `build` folder; do not overwrite/reconfigure it for CMake. The CMake `core_test` target is excluded from the default build and has no corresponding native .exe.
+
+PCSX2 changes on branch `note-working/psbbn-tlb-boot-20261017`: new `tests/ctest/core/EEActiveTLBNative.vcxproj` (`181233d`) and solution integration `PCSX2_qt.slnx` (`f27be10`). This is a **standalone native MSBuild console GoogleTest executable** compiling the same 12-source-case file `ee_active_tlb_asid_tests_20261018.cpp` with bundled `gtest-all.cc` and `gtest_main.cc`. It exercises production **header-inline selector and Dirty-bit predicate** without linking the whole emulator. It **does not** execute integrated guest fault delivery, RAM-store cancellation or Linux COW; these still require runtime tests.
+
+The VS solution lists `EEActiveTLBNative` under the `tests` folder, excluded from Build Solution by default. After pulling, choose `Release AVX2|x64`, right-click the test project and Build. Executable: `bin/tests/EEActiveTLBNative-x64-Release AVX2.exe` (if it compiles), run with `--gtest_filter=EEActiveTLB.*`. The native project exists in GitHub and its referenced paths/solution entries were statically checked; **MSVC compile and twelve tests remain unverified**. The CMake tests stay unchanged for users of that build system.
+
+
 ## Native PSBBN observer crash addressed (2026-10-19)
 
 User's Visual Studio debugger captured `0xC0000005` reading host `0x00000000001FFFDC` in `PSBBNTraceReturnSlotTranslation` (`pcsx2/COP0.cpp` old line 226). The PSBBN diagnostic dereferenced `eeMem->Main` without checking if the memory base was present; the low host fault address is consistent with `eeMem == nullptr`. PCSX2 commit [`8dde4ac`](https://github.com/Masamune3210/pcsx2/commit/8dde4ac9992c558401ea198f288be037132cc8b2) now guards the diagnostic's EE RAM reads and emits one bounded `PSBBN-RA-PHYS-SKIP` marker when the base is null. **This is a host diagnostic fix, not an EE TLB or guest Linux correction.** The reason the pointer was unavailable is not established; Windows rebuild/retest pending. Prior post-Dirty runtime evidence of actual guest TLB Modification exceptions remains valid. See [Post-Dirty runtime and native debugger diagnosis](PSBBN_POST_DIRTY_RUNTIME_AND_TEST_BUILD_20261019_v1.md) for full evidence and next steps.
