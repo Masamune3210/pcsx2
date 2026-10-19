@@ -6,6 +6,23 @@ Repository: `Masamune3210/pcsx2`
 Base: `testing` at `82ec795368b6e57c46471a95929f33dd0f4f7eee`
 Branch: `note-working/psbbn-tlb-boot-20261017`
 
+## General EE TLB ASID mapping correction IMPLEMENTED (2026-10-18)
+
+**Current code branch:** `note-working/psbbn-tlb-boot-20261017`. This is real emulator source code, not another proposal or a PSBBN address-band-aid. Root evidence in [21-state ASID/link-loop report](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_AUTOSAVES_ASID_LINK_LOOP_20261019_v1.md).
+
+**Files and behavior implemented:**
+- `pcsx2/EEActiveTLB.h` contains the **production pure selector**, constructing the current ASID's valid 4KB mappings from architectural 48-entry `tlbs`, also including global entries, variable PageMask halves and special scratchpad pages. When two entries match the same ASID/VPN (architecturally undefined case), it gives deterministic priority to the first TLB slot. No hardcoded Linux, PSBBN, ASID or virtual address signatures.
+- `pcsx2/COP0.cpp` stores the current flat-vTLB materialization and diff-reconciles it when ASID/TLB state changes. Superseded virtual pages are unmapped and the recompiler's guest instruction blocks invalidated via `Cpu->Clear`; newly valid pages are installed through existing `memSetPageAddr/ vt...MapBuffer`, which also update fastmem. Scratchpad contiguous 16KB buffer fastmem mapping is preserved rather than forcing 4KB slowmem mapping.
+- `WriteCP0EntryHi()` compares ASID low eight bits and resynchronizes only when ASID changes, shared by interpreter `MTC0` register 10 and `TLBR`, and by **both** constant/dynamic JIT `recMTC0` paths in `pcsx2/x86/iCOP0.cpp`. `TLBWI/TLBWR` retain cache-tag cleanup but no longer erase mappings belonging to other ASIDs before the replaced entry is installed.
+- `vtlb_Reset` and `vtlb_Shutdown` clear tracked translations. `PostLoadPrep()` in `pcsx2/SaveState.cpp` **always** rebuilds from the restored TLB/EntryHi ASID, even when all 48 TLB entry bytes happen to match the previous state. The obsolete old-entry backup has been removed.
+- `tests/ctest/core/ee_active_tlb_asid_tests_20261018.cpp` has six GoogleTest cases against the same pure selector used by production; CMake includes the test source. Cases cover ASID-separated same VPN/different PFN; global; invalid entry; 16KB halves; scratchpad and partial-global; and the code/node/sentinel ASID discrepancy captured in PSBBN.
+
+**Verification:** 14/14 targeted source integration checks passed on current GitHub file contents (including JIT, resync on save restore, scratchpad fastmem, CMake). **The six GoogleTests have been authored but NOT executed; full MSVC/Windows build NOT run here; PCSX2 boot under this change NOT tested; JIT exception-delivery parity is NOT proven.** Do not merge into `testing` or call PSBBN supported yet.
+
+**Next test when user builds locally:** `git pull origin note-working/psbbn-tlb-boot-20261017`; build PCSX2 and, when available, the `core_test` test target (filter `EEActiveTLB.*`); boot the **same PSBBN HDD image** cold with EE interpreter first and 30s/selected scheduled savestates. Compare whether PID12 still reaches the self-link loop, and whether the TLB active-ASID trace resolves. Then repeat with EE recompiler to locate remaining exception-delivery differences. Archive any compile errors or regressions before additional code changes. Avoid reapplying old local 0001..0008 patches over merged files.
+
+**Separate remaining tasks:** trace how the user's node link became self-referential (candidate store `0x2AB21398` only verified statically); generalize BIOS syscall ownership instead of 0008's kernel fingerprint; implement JIT guest TLB miss/invalid/refill exception parity and CACHE IHIN coherence. None of those has silently been declared fixed by ASID mapping work.
+
 ## 21 savestates expose genuine userspace infinite loop and ASID-blind MMU (2026-10-19)
 
 **Latest canonical evidence:** [PSBBN user-RAM/ASID forensic report](https://github.com/Masamune3210/ps2bbndecomp/blob/note-working/psbbn-ghidra-analysis-20261018/docs/PSBBN_AUTOSAVES_ASID_LINK_LOOP_20261019_v1.md), from 21 original scheduled `.p2s` snapshots and the matching user's log. User build `v2.9.92-36-g9cd9f9199`; autosave succeeded at 10-second intervals (`900000` configured maximum). All 20 screenshots in slots 2..21 are binary-identical. Userspace task PID12 `init` enters at slot13; subsequent EE PCs repeatedly fall into the code sequence `0x2AB210E8..0x2AB21168` and only 24..29 RAM pages change per interval.
