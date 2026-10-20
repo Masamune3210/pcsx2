@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <limits>
 #include <stdarg.h>
 #include "DEV9.h"
 #include "Config.h"
@@ -230,23 +231,64 @@ void _DEV9irq(int cause, int cycles)
 }
 
 // SPEED <-> HDD FIFO
+void DEV9ResetATAFIFO()
+{
+	// Reset discards bridge data and cancels the pending IOP buffer. This is
+	// cancellation, so do not signal successful DMA completion here.
+	dev9.fifo_bytes_read = 0;
+	dev9.fifo_bytes_write = 0;
+	dev9.dma_iop_ptr = nullptr;
+	dev9.dma_iop_size = 0;
+	dev9.dma_iop_transfered = 0;
+}
+
+static bool PrepareFIFOCounters()
+{
+	// The guest can reset either counter independently. Do not interpret an
+	// inconsistent pair as a negative memcpy length or as additional space.
+	constexpr int capacity = SPD_DBUF_AVAIL_MAX * 512;
+	if (dev9.fifo_bytes_read < 0 || dev9.fifo_bytes_write < dev9.fifo_bytes_read ||
+		dev9.fifo_bytes_write - dev9.fifo_bytes_read > capacity)
+		return false;
+
+	// These are signed cumulative counters. Preserve both ring positions and
+	// occupancy while making room for another full FIFO before signed overflow.
+	if (dev9.fifo_bytes_write > std::numeric_limits<int>::max() - capacity)
+	{
+		const int offset = (dev9.fifo_bytes_read / capacity) * capacity;
+		dev9.fifo_bytes_read -= offset;
+		dev9.fifo_bytes_write -= offset;
+	}
+	return true;
+}
+
+static bool ValidIOPTransfer()
+{
+	return dev9.dma_iop_ptr != nullptr && dev9.dma_iop_size >= 0 &&
+		dev9.dma_iop_transfered >= 0 && dev9.dma_iop_transfered <= dev9.dma_iop_size;
+}
+
 void HDDWriteFIFO()
 {
 	pxAssert(dev9.ata->dmaReady && (dev9.if_ctrl & SPD_IF_ATA_DMAEN));
 	pxAssert((dev9.if_ctrl & SPD_IF_READ));
+	if (!PrepareFIFOCounters())
+		return;
 
 	const int unread = (dev9.fifo_bytes_write - dev9.fifo_bytes_read);
 	const int space = (SPD_DBUF_AVAIL_MAX * 512 - unread);
 	const int base = dev9.fifo_bytes_write % (SPD_DBUF_AVAIL_MAX * 512);
 
 	pxAssert(unread <= SPD_DBUF_AVAIL_MAX * 512);
+	if (space == 0)
+		return;
 
 	int read;
 	if (base + space > SPD_DBUF_AVAIL_MAX * 512)
 	{
 		const int was = SPD_DBUF_AVAIL_MAX * 512 - base;
 		read = dev9.ata->ReadDMAToFIFO(dev9.fifo + base, was);
-		if (read == was)
+		if (read == was && dev9.ata->dmaReady)
 			read += dev9.ata->ReadDMAToFIFO(dev9.fifo, space - was);
 	}
 	else
@@ -260,18 +302,22 @@ void HDDReadFIFO()
 {
 	pxAssert(dev9.ata->dmaReady && (dev9.if_ctrl & SPD_IF_ATA_DMAEN));
 	pxAssert((dev9.if_ctrl & SPD_IF_READ) == 0);
+	if (!PrepareFIFOCounters())
+		return;
 
 	const int unread = (dev9.fifo_bytes_write - dev9.fifo_bytes_read);
 	const int base = dev9.fifo_bytes_read % (SPD_DBUF_AVAIL_MAX * 512);
 
 	pxAssert(unread <= SPD_DBUF_AVAIL_MAX * 512);
+	if (unread == 0)
+		return;
 
 	int write;
 	if (base + unread > SPD_DBUF_AVAIL_MAX * 512)
 	{
 		const int was = SPD_DBUF_AVAIL_MAX * 512 - base;
 		write = dev9.ata->WriteDMAFromFIFO(dev9.fifo + base, was);
-		if (write == was)
+		if (write == was && dev9.ata->dmaReady)
 			write += dev9.ata->WriteDMAFromFIFO(dev9.fifo, unread - was);
 	}
 	else
@@ -285,6 +331,8 @@ void IOPReadFIFO()
 {
 	pxAssert((dev9.dma_iop_ptr != nullptr) && (dev9.xfr_ctrl & SPD_XFR_DMAEN));
 	pxAssert((dev9.xfr_ctrl & SPD_XFR_WRITE) == 0);
+	if (!ValidIOPTransfer() || !PrepareFIFOCounters())
+		return;
 
 	const int unread = (dev9.fifo_bytes_write - dev9.fifo_bytes_read);
 	const int base = dev9.fifo_bytes_read % (SPD_DBUF_AVAIL_MAX * 512);
@@ -318,6 +366,8 @@ void IOPWriteFIFO()
 {
 	pxAssert((dev9.dma_iop_ptr != nullptr) && (dev9.xfr_ctrl & SPD_XFR_DMAEN));
 	pxAssert(dev9.xfr_ctrl & SPD_XFR_WRITE);
+	if (!ValidIOPTransfer() || !PrepareFIFOCounters())
+		return;
 
 	const int unread = (dev9.fifo_bytes_write - dev9.fifo_bytes_read);
 	const int space = (SPD_DBUF_AVAIL_MAX * 512 - unread);
@@ -336,7 +386,7 @@ void IOPWriteFIFO()
 		const int was = SPD_DBUF_AVAIL_MAX * 512 - base;
 
 		std::memcpy(dev9.fifo + base, dev9.dma_iop_ptr + dev9.dma_iop_transfered, was);
-		std::memcpy(dev9.fifo + base, dev9.dma_iop_ptr + dev9.dma_iop_transfered + was, write - was);
+		std::memcpy(dev9.fifo, dev9.dma_iop_ptr + dev9.dma_iop_transfered + was, write - was);
 	}
 	else
 	{
@@ -350,6 +400,8 @@ void IOPWriteFIFO()
 }
 void FIFOIntr()
 {
+	if (!PrepareFIFOCounters())
+		return;
 	//FIFO Buffer Full/Empty
 	const int unread = (dev9.fifo_bytes_write - dev9.fifo_bytes_read);
 
@@ -377,7 +429,7 @@ void FIFOIntr()
 	}
 
 	// is DMA finished
-	if ((dev9.dma_iop_ptr != nullptr) &&
+	if (ValidIOPTransfer() &&
 		(dev9.dma_iop_transfered == dev9.dma_iop_size))
 	{
 		dev9.dma_iop_ptr = nullptr;
@@ -504,6 +556,8 @@ u16 SpeedRead(u32 addr, int width)
 			return dev9.xfr_ctrl;
 		case SPD_R_DBUF_STAT:
 		{
+			if (!PrepareFIFOCounters())
+				return 0;
 			const u8 count = static_cast<u8>((dev9.fifo_bytes_write - dev9.fifo_bytes_read) / 512);
 			if (dev9.xfr_ctrl & SPD_XFR_WRITE)
 			{

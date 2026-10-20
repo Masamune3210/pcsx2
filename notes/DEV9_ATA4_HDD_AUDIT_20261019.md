@@ -23,3 +23,14 @@ First source pass completed against baseline `0dcd36309877d5da59344893d61c7a374a
 The requested full command-set source comparison is now complete against retrieved T13/1153D revision 18 (a working draft, not a final-standard certification): [comparison and evidence](DEV9_ATA4_COMMAND_SET_COMPARE_20261019.md), [all 48 command families](DEV9_ATA4_COMMAND_MATRIX_20261019.md), and [all 256 opcode bytes](DEV9_ATA4_OPCODE_INVENTORY_20261019.csv). For a >8 GB LBA-only fixed HDD, 18 unconditional families occupy 23 bytes; 12 have direct cases and 11 encodings are missing (`21 30 31 41 C5 C9 CB E0 E2 E5 E6`). Add conditional CHS command `91` when its geometry profile applies. Handler counts are not test passes. Basic Power Management is mandatory; SMART autosave uses the wrong register; SET FEATURES violates unsupported-parameter and independent-mode rules. Exact clauses, optional-feature distinctions and later/Sony extensions are documented in the comparison. Keep PS2/SPEED controller capability, physical Sony drive evidence and virtual drive features separate. No production changes or compilation.
 
 Follow the correction order and test plan in the source findings. Keep fixes independently reviewable, document their reasoning, and push checkpoints. Stay within `pcsx2/DEV9/ATA/**`, its `DEV9.cpp` bridge, HDD I/O and focused tests, tracing integration callers only as needed. **Do not compile:** this current user instruction takes precedence over earlier build suggestions in the notes. Compiled regression tests, Windows MSBuild `Release AVX2|x64` and PSBBN cold boots remain unrun; source inspection does not establish a working fix or the cause of the guest panic.
+
+## Implementation checkpoint, 2026-10-20
+
+The user has now requested fixes. The FIFO checkpoint corrects the wrapped IOP
+write destination and guards invalid residual/occupancy lengths, signed counter
+rollover, and second callbacks after ATA completion. It adds a bridge cancellation
+helper for ATA reset integration and seven prospective production-function tests.
+See [FIFO rationale](DEV9_FIFO_FIX_20261020.md) and the
+[implementation plan](DEV9_ATA_FIX_PLAN_20261020.md). Whitespace/source inspection
+checks passed; C++ tests are uncompiled and unrun under the no-compilation rule.
+ATA state-machine and backing-file fixes are in progress separately.
