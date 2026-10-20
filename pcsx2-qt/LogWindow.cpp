@@ -563,7 +563,7 @@ public:
 			m_text->appendPlainText(tr("Cannot open kernel log file: %1").arg(m_file.errorString()));
 		else
 		{
-			const QByteArray header = QString("\\n[PSBBN printk observer opened %1]\\n")
+			const QByteArray header = QString("\n[PSBBN printk observer opened %1]\n")
 				.arg(QDateTime::currentDateTime().toString(Qt::ISODateWithMs)).toUtf8();
 			m_file.write(header);
 			m_file.flush();
