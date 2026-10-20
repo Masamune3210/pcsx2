@@ -69,6 +69,8 @@ typedef struct
 	u16 mdma_mode;
 	u16 udma_mode;
 
+	u32 ata_last_cycle;
+
 	// FIFO
 	int fifo_bytes_read;
 	int fifo_bytes_write;
