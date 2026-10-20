@@ -366,3 +366,14 @@ separate data-integrity issue from command coverage.
 The earlier [coverage inventory](DEV9_ATA4_HDD_COVERAGE_20261019.md) and
 [source findings](DEV9_ATA4_HDD_SOURCE_FINDINGS_20261019.md) remain valid context,
 and are complemented by the standard-backed matrix and corrections here.
+
+## Subsequent remaining-command implementation
+
+Checkpoint 693ff612a2 implements buffer E4/E8, SMART D0/D3/D4 and EF 66/CC.
+The following HPA/multiple-error checkpoint adds F8/F9 for the ATA-4 profile and
+corrects actual READ MULTIPLE error-block delivery. The maintained matrix/CSV
+reflect current dispatch; normative classifications and historical baseline
+results are retained. Later HPA27/37, standard security, queued DMA, CFA, PACKET,
+and downloadable firmware remain outside the implemented/claimed drive features.
+Unsupported encodings still ABRT; their absence is not hidden behind success stubs.
+No compiled/runtime conformance is claimed.

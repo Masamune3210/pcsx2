@@ -207,6 +207,31 @@ void ATA::HDD_ReadSectors(bool isLBA48)
 	HDD_ReadPIO(isLBA48);
 }
 
+bool ATA::HDD_CheckMultipleRange()
+{
+	if (!curCHSValid)
+	{
+		// Failed INITIALIZE DEVICE PARAMETERS specifically requires IDNF until
+		// a valid translation is supplied; it is not the invalid-range ABRT case.
+		regStatus |= ATA_STAT_ERR;
+		regError = ATA_ERR_ID;
+		regStatusSeekLock = (regStatus & ATA_STAT_SEEK) ? 1 : -1;
+		nsectorLeft = 0;
+		PostCmdNoData();
+		return false;
+	}
+	int validSectors = nsector;
+	if (HDD_CanAccess(&validSectors))
+		return true;
+	// Reject an invalid host range before executing a multiple command. ATA-4
+	// permits ABRT for invalid addresses; clipping would alter its DRQ blocks.
+	if (validSectors >= 0)
+		HDD_AdvanceSectors(validSectors);
+	nsectorLeft = 0;
+	CmdNoDataAbort();
+	return false;
+}
+
 void ATA::HDD_ReadPIO(bool isLBA48)
 {
 	//Log_Info("HDD_ReadPIO");
@@ -220,6 +245,8 @@ void ATA::HDD_ReadPIO(bool isLBA48)
 	}
 
 	IDE_CmdLBA48Transform(isLBA48);
+	if ((regCommand == 0xC4 || regCommand == 0x29) && !HDD_CheckMultipleRange())
+		return;
 
 	regStatus &= ~ATA_STAT_SEEK;
 	if (!HDD_CanSeek())
@@ -242,7 +269,20 @@ void ATA::HDD_ReadPIOS2()
 	// A fresh PIO command starts at byte zero, including retries after partial DMA.
 	rdTransferred = 0;
 	pioDRQEndTransferFunc = &ATA::HDD_ReadPIOEndBlock;
+	HDD_ReadPIOPostError();
 	DRQCmdPIODataToHost(readBuffer, readBufferLen, 0, 256 * 2, true);
+}
+
+void ATA::HDD_ReadPIOPostError()
+{
+	if (pioReadErrorBlock >= 0 && rdTransferred / 512 == pioReadErrorBlock)
+	{
+		// READ MULTIPLE reports device errors at the start of the affected DRQ
+		// block and transfers that entire block before terminating (§8.25.8).
+		regStatus |= ATA_STAT_ERR;
+		regError |= ATA_ERR_ECC;
+		regStatusSeekLock = (regStatus & ATA_STAT_SEEK) ? 1 : -1;
+	}
 }
 
 void ATA::HDD_ReadPIOEndBlock()
@@ -253,13 +293,24 @@ void ATA::HDD_ReadPIOEndBlock()
 	if (rdTransferred >= nsector * 512)
 	{
 		//Log_Info("HDD_ReadPIO Done");
-		HDD_SetErrorAtTransferEnd();
+		if (pioReadErrorBlock >= 0)
+		{
+			// Error-block task-file contents are undefined by §8.25.8. Retain
+			// useful first-error addressing, consistently with §8.25.6.
+			HDD_AdvanceSectors(pioReadErrorSector);
+			nsectorLeft = 0;
+			pioReadErrorBlock = -1;
+			pioReadErrorSector = 0;
+		}
+		else
+			HDD_SetErrorAtTransferEnd();
 		regStatus &= ~ATA_STAT_BUSY;
 		pioDRQEndTransferFunc = nullptr;
 		rdTransferred = 0;
 	}
 	else
 	{
+		HDD_ReadPIOPostError();
 		if ((rdTransferred / 512) % sectorsPerInterrupt == 0)
 			DRQCmdPIODataToHost(readBuffer, readBufferLen, rdTransferred, 256 * 2, true);
 		else
@@ -278,6 +329,8 @@ void ATA::HDD_WritePIO(bool isLBA48, bool multiple)
 		return;
 	}
 	IDE_CmdLBA48Transform(isLBA48);
+	if (multiple && !HDD_CheckMultipleRange())
+		return;
 	if (!HDD_CanAssessOrSetError())
 		return;
 

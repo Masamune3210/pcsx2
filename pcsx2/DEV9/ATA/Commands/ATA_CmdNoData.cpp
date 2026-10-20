@@ -57,6 +57,7 @@ void ATA::HDD_InitDevParameters()
 	curSectors = regNsector;
 	curHeads = static_cast<u8>((regSelect & 0x0F) + 1);
 	curCHSValid = true;
+	hpaLbaSetMax = false;
 	CreateHDDinfo(hddImageSize / 512);
 	PostCmdNoData();
 }
@@ -285,4 +286,105 @@ void ATA::HDD_PowerCommand()
 		awaitFlush = true;
 		Async(static_cast<u32>(-1));
 	}
+}
+
+// ATA/ATAPI-4 rev18 §§8.26 and 8.38. Later SET MAX security subcommands
+// and 48-bit HPA commands require a separately audited later feature profile.
+void ATA::HDD_ReadNativeMaxAddress()
+{
+	if (!PreCmd())
+		return;
+	const u64 nativeSectors = HDD_GetNativeSectors();
+	if (lba48Supported || nativeSectors == 0)
+	{
+		CmdNoDataAbort();
+		return;
+	}
+	lba48 = false;
+	if ((regSelect & 0x40) != 0)
+		HDD_SetLBA(static_cast<s64>(nativeSectors - 1));
+	else
+	{
+		// F8's CHS outputs explicitly use native words 3 and 6, even after 91h.
+		const u64 cylinders = std::min<u64>(nativeSectors / (16 * 63), 16383);
+		if (cylinders == 0)
+		{
+			CmdNoDataAbort();
+			return;
+		}
+		const u16 maximumCylinder = static_cast<u16>(cylinders - 1);
+		regSector = 63;
+		regSelect = (regSelect & 0xf0) | 15;
+		regLcyl = static_cast<u8>(maximumCylinder);
+		regHcyl = static_cast<u8>(maximumCylinder >> 8);
+	}
+	hpaReadNativeMaxReady = true;
+	PostCmdNoData();
+}
+
+void ATA::HDD_SetMaxAddress(bool precededByNativeMax)
+{
+	if (!PreCmd())
+		return;
+	if (lba48Supported || !precededByNativeMax)
+	{
+		CmdNoDataAbort();
+		return;
+	}
+	lba48 = false;
+	const bool lbaAddress = (regSelect & 0x40) != 0;
+	u64 sectors;
+	if (lbaAddress)
+		sectors = static_cast<u64>(HDD_GetLBA()) + 1;
+	else
+	{
+		const u32 cylinder = regLcyl | (regHcyl << 8);
+		// §8.38.4 requires the native maximum head and sector, and §8.38.8
+		// derives capacity from default geometry rather than words 55 and 56.
+		if (HDD_GetNativeSectors() < 16 * 63 || cylinder > 16383 ||
+			(regSelect & 15) != 15 || regSector != 63)
+		{
+			CmdNoDataAbort();
+			return;
+		}
+		sectors = std::min<u64>(static_cast<u64>(cylinder) + 1, 16383) * 16 * 63;
+	}
+	if (sectors == 0 || sectors > HDD_GetNativeSectors())
+	{
+		CmdNoDataAbort();
+		return;
+	}
+	// Despite the 'VV' label, rev18 says bit0=1 preserves the value over
+	// power-up/hardware reset. Bits7:1 and Features are not applicable.
+	const bool nonvolatile = (regNsector & 1) != 0;
+	if (nonvolatile && hpaNonVolatileSet)
+	{
+		regError = ATA_ERR_ID;
+		regStatus |= ATA_STAT_ERR;
+		PostCmdNoData();
+		return;
+	}
+	if (nonvolatile && !SaveHPALimit(sectors))
+	{
+		CmdNoDataAbort();
+		return;
+	}
+	// Commit metadata before mutating any visible state or the NV quota.
+	if (nonvolatile)
+	{
+		hpaNonVolatileSectors = sectors;
+		hpaNonVolatileSet = true;
+	}
+	hpaCurrentSectors = sectors;
+	if (!lbaAddress)
+	{
+		// Cylinder 16383 is accepted but §8.38.8 caps word1 at 16383.
+		const u16 maximumCylinder = static_cast<u16>(sectors / (16 * 63) - 1);
+		regLcyl = static_cast<u8>(maximumCylinder);
+		regHcyl = static_cast<u8>(maximumCylinder >> 8);
+	}
+	hpaLbaSetMax = lbaAddress;
+	fetHostProtectedAreaEnabled = true;
+	CreateHDDinfo(HDD_GetAccessibleSectors());
+	PostCmdNoData();
 }

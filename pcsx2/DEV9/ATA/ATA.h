@@ -26,6 +26,14 @@ private:
 
 	std::FILE* hddImage = nullptr;
 	u64 hddImageSize = 0;
+	// HPA changes guest-visible capacity only; backing image size remains native.
+	u64 hpaCurrentSectors = 0;
+	u64 hpaNonVolatileSectors = 0;
+	std::string hpaStatePath;
+	bool hpaNonVolatileSet = false; // Once per power-on or hardware reset.
+	bool hpaReadNativeMaxReady = false;
+	bool hpaLbaSetMax = false; // SET MAX LBA-specific current-CHS reporting rule.
+
 
 	bool hddSparse = false;
 	u64 hddSparseBlockSize = 4096;
@@ -166,6 +174,8 @@ private:
 	bool diagnosticBufferValid = false;
 	bool pioDataOut = false;
 	int pioWriteBlockStart = 0;
+	int pioReadErrorBlock = -1;
+	int pioReadErrorSector = 0;
 
 	int sectorsPerInterrupt = 1;
 	void (ATA::*pioDRQEndTransferFunc)() = nullptr;
@@ -215,6 +225,11 @@ public:
 private:
 	void InitSparseSupport(const std::string& hddPath);
 	bool SaveSMARTSettings();
+	bool LoadHPAState(const std::string& hddPath);
+	bool SaveHPALimit(u64 sectors);
+	u64 HDD_GetNativeSectors() const { return hddImageSize / 512; }
+	u64 HDD_GetAccessibleSectors() const { return hpaCurrentSectors; }
+
 
 	//Info
 	void CreateHDDinfo(u64 sizeSectors);
@@ -294,6 +309,9 @@ private:
 	void HDD_SetMultipleMode();
 	void HDD_Nop();
 	void HDD_PowerCommand();
+	void HDD_ReadNativeMaxAddress();
+	void HDD_SetMaxAddress(bool precededByNativeMax);
+
 
 	void DRQCmdPIODataToHost(u8* buff, int buffLen, int buffIndex, int size, bool sendIRQ);
 	void PostCmdPIODataToHost();
@@ -305,6 +323,8 @@ private:
 	void HDD_ReadMultiple(bool isLBA48);
 	void HDD_ReadSectors(bool isLBA48);
 	void HDD_ReadPIO(bool isLBA48);
+	bool HDD_CheckMultipleRange();
+	void HDD_ReadPIOPostError();
 	void HDD_ReadPIOS2();
 	void HDD_ReadPIOEndBlock();
 	void HDD_WritePIO(bool isLBA48, bool multiple);

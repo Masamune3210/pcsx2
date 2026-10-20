@@ -39,8 +39,8 @@ M = mandatory General; M-PM = mandatory basic Power Management; CHS = geometry-d
 | 8.22 | READ BUFFER | `E4` | O | PIO data in (see 9.7). | Implemented E4 diagnostic PIO data-in; one sector, no media writes; unrun |
 | 8.23 | READ DMA | `C8 C9` | M | DMA (see 9.10). | C8/C9 decode; DMA bounds/reset/coherence corrections; unrun |
 | 8.24 | READ DMA QUEUED | `C7` | Q | DMA QUEUED (see 9.12). | ABRT; feature not advertised / optional not implemented |
-| 8.25 | READ MULTIPLE | `C4` | M | PIO data in (see 9.7). | Multiple data-in with bounds/coherence/block IRQ corrections; unrun |
-| 8.26 | READ NATIVE MAX ADDRESS | `F8` | HPA | Non-data command (see 9.9). | ABRT; feature not advertised / optional not implemented |
+| 8.25 | READ MULTIPLE | `C4` | M | PIO data in (see 9.7). | Whole-range preflight; actual failure returns one full ERR/UNC block with DRQ; unrun |
+| 8.26 | READ NATIVE MAX ADDRESS | `F8` | HPA | Non-data command (see 9.9). | Implemented F8 native max for ATA-4 profile; LBA48 profile defers HPA; unrun |
 | 8.27 | READ SECTOR(S) | `20 21` | M | PIO data in (see 9.7). | 20/21 decode; data-in bounds/coherence/task-file corrections; unrun |
 | 8.28 | READ VERIFY SECTOR(S) | `40 41` | M | Non-data (see 9.9). | 40/41 decode; reads backing image with range/error checks; unrun |
 | 8.29 | SECURITY DISABLE PASSWORD | `F6` | SEC | PIO data out (see 9.8). | ABRT; feature not advertised / optional not implemented |
@@ -52,7 +52,7 @@ M = mandatory General; M-PM = mandatory basic Power Management; CHS = geometry-d
 | 8.35 | SEEK | `70` | M | Non-data (see 9.9). | Valid SEEK succeeds; invalid address IDNF; unrun |
 | 8.36 | SERVICE | `A2` | Q | PACKET or READ/WRITE DMA QUEUED (see 9.11 and 9.12). | ABRT; feature not advertised / optional not implemented |
 | 8.37 | SET FEATURES | `EF` | M | Non-data (see 9.9). | Validated selectors/modes; 66/CC reset reversion; safe PIO2/MDMA0 defaults; unrun |
-| 8.38 | SET MAX ADDRESS | `F9` | HPA | Non-data command (see 9.9). | ABRT; feature not advertised / optional not implemented |
+| 8.38 | SET MAX ADDRESS | `F9` | HPA | Non-data command (see 9.9). | Implemented F9 limit, adjacency, NV quota/reset and metadata; no truncation; unrun |
 | 8.39 | SET MULTIPLE MODE | `C6` | M | Non-data (see 9.9). | Validates 2..128 powers of two; retains zero-disable extension; unrun |
 | 8.40 | SLEEP | `E6` | M-PM | Non-data command (see 9.9). | Sleep command and reset recovery implemented; durable entry; unrun |
 | 8.41 | SMART | `B0` | SMART | Subcommand-specific (8.41.1-8.41.7) | D0 data, D3 persistence, D4 real bounded offline collection; core settings/status; unrun |
@@ -61,7 +61,7 @@ M = mandatory General; M-PM = mandatory basic Power Management; CHS = geometry-d
 | 8.44 | WRITE BUFFER | `E8` | O | PIO data out (see 9.8). | Implemented E8 diagnostic PIO data-out; one sector, reset-safe; unrun |
 | 8.45 | WRITE DMA | `CA CB` | M | DMA (see 9.10). | CA/CB decode; bounded writes/reset/ordering/error corrections; unrun |
 | 8.46 | WRITE DMA QUEUED | `CC` | Q | DMA QUEUED (see 9.12). | ABRT; feature not advertised / optional not implemented |
-| 8.47 | WRITE MULTIPLE | `C5` | M | PIO data out (see 9.8). | Real C5 PIO data-out, block ownership/IRQ/tails/reset; unrun |
+| 8.47 | WRITE MULTIPLE | `C5` | M | PIO data out (see 9.8). | Real PIO writes; whole-range preflight; accepted block/reset and write-error handling; unrun |
 | 8.48 | WRITE SECTOR(S) | `30 31` | M | PIO data out (see 9.8). | Real30/31 PIO data-out, count/progress/persistence; unrun |
 
 ## Conditional requirements and source conflicts
@@ -70,7 +70,7 @@ M = mandatory General; M-PM = mandatory basic Power Management; CHS = geometry-d
 - INITIALIZE DEVICE PARAMETERS is mandatory with CHS. §8.16.2 (p108) supplies an exception for >8 GB LBA-only drives; the broad §6.3.1 summary must be read with this exception. The baseline populated CHS fields while rejecting CHS access; the corrective implementation now translates CHS and validates geometry.
 - Five optional General families are DOWNLOAD MICROCODE, FLUSH CACHE, NOP, READ BUFFER and WRITE BUFFER (§6.3.1). Optional does not mean a successful stub is sufficient once a command is implemented; FLUSH must meet §8.10 and PS2SDK independently issues it.
 - CFA requires all five CFA commands when claimed (§6.13). Codes 87/C0 are vendor-specific if CFA is absent (Table E.1); no missing-CFA defect is asserted for this fixed non-CFA profile.
-- Security Mode requires all six standard F1-F6 commands when claimed (§6.10). HPA requires both F8/F9 (§6.12). Current drive does not advertise either feature. Sony 8E/F1-F5 is separate.
+- Security Mode requires all six standard F1-F6 commands when claimed (§6.10). HPA requires both F8/F9 (§6.12). Standard security remains unclaimed. ATA-4 profiles now claim HPA with F8/F9 implemented; LBA48 profiles defer HPA and keep those feature bits clear. Sony 8E/F1-F5 is separate.
 - GET MEDIA STATUS is required with Media Status Notification (§8.11). MEDIA EJECT is required with the applicable removable feature on a non-PACKET device (§8.17); MEDIA LOCK/UNLOCK are mandatory for traditional Removable Media but optional for Notification (§8.18-8.19). Neither profile is currently advertised.
 - SERVICE is conditional on overlap/queued operations. Informative Table E.3 marks it N for non-PACKET, but normative §8.36.3/.6 explicitly includes READ/WRITE DMA QUEUED. It must not be declared intrinsically prohibited for every non-PACKET drive.
 - SMART is an optional feature, currently advertised; §6.11.5 requires D2/D8/D9/DA, not every later SMART selector. D0/D4 are optional; D3 is optional and not recommended (§8.41.7.2). Detailed comparison is in the evidence report.
@@ -94,8 +94,23 @@ All 48 families and all 256 opcode cells are accounted for against the retrieved
 ## Subsequent command implementation
 
 READ/WRITE BUFFER and SMART D0/D3/D4 are now implemented, together with SET
-FEATURES66/CC reversion behavior and safe transfer-mode defaults. See
+FEATURES 66/CC reversion behavior and safe transfer-mode defaults. See
 `DEV9_ATA_BUFFER_COMMANDS_20261020.md`, `DEV9_ATA_SMART_COMMANDS_20261020.md`, and
 `DEV9_ATA_COMMAND_SEMANTICS_20261020.md`. These are source changes; compiled
 regressions and runtime conformance remain unrun. Unclaimed CFA, queued DMA,
-firmware download, standard security and HPA remain separate optional profiles.
+firmware download and standard security remain separate optional profiles. HPA is now implemented for the ATA-4 profile as described below.
+
+## HPA and multiple-error protocol update
+
+F8/F9 are implemented and claimed for native images which do not enable LBA48.
+The accessible limit affects IDENTIFY and all host sector bounds without changing
+native backing-file size. Later 27/37 HPA and HPA security extensions remain
+unsupported and unclaimed; large-image data commands/capacity remain available.
+See `DEV9_ATA_HPA_COMMANDS_20261020.md` for exact chosen-draft semantics and metadata.
+
+C4/29 real backing read failures now deliver valid preceding blocks and one full
+ERR/UNC block, with unread bytes zero-filled and no subsequent blocks. Invalid
+whole multiple-command ranges ABRT before execution; failed INIT translation
+continues to require IDNF. C5/39 retain accepted-block persistence/write-fault
+handling. See `DEV9_ATA_MULTIPLE_ERRORS_20261020.md` for clauses and distinctions.
+All 75 prospective ATA cases and seven FIFO cases remain uncompiled/unexecuted.

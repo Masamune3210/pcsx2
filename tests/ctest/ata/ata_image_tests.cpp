@@ -361,6 +361,124 @@ namespace
 		EXPECT_EQ(DiskBytes(), initial);
 	}
 
+	TEST_F(ATAImageTest, MultipleInvalidRangesAbortBeforeAnyDataTransfer)
+	{
+		ASSERT_NO_FATAL_FAILURE(SetMultiple(4));
+		for (u8 command : {0xC4, 0xC5})
+		{
+			SCOPED_TRACE(static_cast<unsigned int>(command));
+			for (const auto& range : std::array<std::array<u32, 2>, 3>{{{599, 2}, {596, 8}, {600, 1}}})
+			{
+				Address(range[0], range[1]);
+				Command(command);
+				ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+				EXPECT_TRUE(IRQ());
+				EXPECT_EQ(TaskLba(), 600u);
+				EXPECT_EQ(drive->Read(ATA_R_DATA, 16), 0xFFFF);
+				drive->Write(ATA_R_DATA, 0xA55A, 16);
+				Acknowledge();
+			}
+		}
+		ASSERT_NO_FATAL_FAILURE(Flush());
+		Close();
+		EXPECT_EQ(DiskBytes(), initial);
+	}
+
+	TEST_F(ATAImageTest, MultipleBackingReadErrorTransfersOneWholeErrorBlockWithoutStaleBytes)
+	{
+		for (u32 completeSectors : {0u, 1u, 4u, 5u, 8u, 9u})
+		{
+			SCOPED_TRACE(completeSectors);
+			Close();
+			ASSERT_NO_FATAL_FAILURE(CreateImage(initial));
+			ASSERT_NO_FATAL_FAILURE(Open());
+			ASSERT_NO_FATAL_FAILURE(SetMultiple(4));
+			Bytes stale;
+			ASSERT_NO_FATAL_FAILURE(ReadSectors(0xC4, 100, 10, 4, &stale));
+			std::error_code error;
+			std::filesystem::resize_file(image, completeSectors * SectorSize + 31, error);
+			if (error)
+				GTEST_SKIP() << "platform does not permit resizing an open image: " << error.message();
+			Address(0, 10);
+			Command(0xC4);
+			const u32 errorBlockStart = completeSectors / 4 * 4;
+			const u32 errorBlockEnd = std::min(errorBlockStart + 4, 10u);
+			for (u32 sector = 0; sector < errorBlockEnd; ++sector)
+			{
+				ASSERT_TRUE(WaitReady());
+				const u16 expectedStatus = ATA_STAT_DRQ | (sector >= errorBlockStart ? ATA_STAT_ERR : 0);
+				ASSERT_EQ(Status() & (ATA_STAT_DRQ | ATA_STAT_ERR), expectedStatus);
+				EXPECT_EQ(IRQ(), sector % 4 == 0);
+				if (sector % 4 == 0)
+					Acknowledge();
+				if (sector >= errorBlockStart)
+					EXPECT_NE(drive->Read(ATA_R_ERROR, 8) & ATA_ERR_ECC, 0);
+				for (u32 word = 0; word < SectorSize / 2; ++word)
+				{
+					const size_t offset = sector * SectorSize + word * 2;
+					const u16 expected = sector < completeSectors ? initial[offset] | (initial[offset + 1] << 8) : 0;
+					EXPECT_EQ(drive->Read(ATA_R_DATA, 16), expected);
+				}
+			}
+			EXPECT_EQ(Status() & (ATA_STAT_BUSY | ATA_STAT_DRQ | ATA_STAT_ERR), ATA_STAT_ERR);
+			EXPECT_EQ(TaskLba(), completeSectors);
+			EXPECT_EQ(drive->Read(ATA_R_NSECTOR, 8), 10 - completeSectors);
+			EXPECT_FALSE(IRQ());
+			EXPECT_EQ(drive->Read(ATA_R_DATA, 16), 0xFFFF);
+			// A new command must discard the completed error-block continuation.
+			EXPECT_NE(Identify()[47] & 0xFF, 0);
+		}
+	}
+
+#if defined(__POSIX__)
+	TEST_F(ATAImageTest, ExtendedMultipleRangesAndBackingReadErrorsFollowBlockProtocol)
+	{
+		Close();
+		constexpr u64 sectors = (u64(1) << 28) + 1;
+		std::error_code error;
+		std::filesystem::resize_file(image, sectors * SectorSize, error);
+		if (error)
+			GTEST_SKIP() << "filesystem does not support this sparse logical size: " << error.message();
+		ASSERT_NO_FATAL_FAILURE(Open());
+		ASSERT_NO_FATAL_FAILURE(SetMultiple(4));
+		for (u8 command : {0x29, 0x39})
+		{
+			Address48(sectors - 1, 2);
+			Command(command);
+			ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+			EXPECT_EQ(TaskLba48(), sectors);
+			EXPECT_EQ(drive->Read(ATA_R_DATA, 16), 0xFFFF);
+			drive->Write(ATA_R_DATA, 0xA55A, 16);
+			Acknowledge();
+		}
+		Bytes stale;
+		ASSERT_NO_FATAL_FAILURE(ReadSectors(0x29, 100, 10, 4, &stale, true));
+		std::filesystem::resize_file(image, 5 * SectorSize + 31, error);
+		ASSERT_FALSE(error) << error.message();
+		Address48(0, 10);
+		Command(0x29);
+		for (u32 sector = 0; sector < 8; ++sector)
+		{
+			ASSERT_TRUE(WaitReady());
+			ASSERT_EQ(Status() & (ATA_STAT_DRQ | ATA_STAT_ERR), ATA_STAT_DRQ | (sector >= 4 ? ATA_STAT_ERR : 0));
+			EXPECT_EQ(IRQ(), sector % 4 == 0);
+			if (sector % 4 == 0)
+				Acknowledge();
+			for (u32 word = 0; word < SectorSize / 2; ++word)
+			{
+				const size_t offset = sector * SectorSize + word * 2;
+				const u16 expected = sector < 5 ? initial[offset] | (initial[offset + 1] << 8) : 0;
+				EXPECT_EQ(drive->Read(ATA_R_DATA, 16), expected);
+			}
+		}
+		EXPECT_EQ(Status() & (ATA_STAT_BUSY | ATA_STAT_DRQ | ATA_STAT_ERR), ATA_STAT_ERR);
+		EXPECT_NE(drive->Read(ATA_R_ERROR, 8) & ATA_ERR_ECC, 0);
+		EXPECT_EQ(TaskLba48(), 5u);
+		EXPECT_EQ(drive->Read(ATA_R_NSECTOR, 8), 5);
+		EXPECT_EQ(drive->Read(ATA_R_DATA, 16), 0xFFFF);
+	}
+#endif
+
 	TEST_F(ATAImageTest, LastSectorIsReadableAndWritable)
 	{
 		const Bytes payload = Pattern(1, 0xF3);
@@ -703,11 +821,16 @@ namespace
 		EXPECT_EQ(words[55], 16);
 		EXPECT_EQ(words[56], 63);
 		EXPECT_EQ(words[53] & 1, 0);
-		Address(10, 1);
-		Command(0x20);
-		ASSERT_TRUE(WaitReady());
-		EXPECT_EQ(Status() & (ATA_STAT_ERR | ATA_STAT_DRQ), ATA_STAT_ERR);
-		EXPECT_NE(drive->Read(ATA_R_ERROR, 8) & ATA_ERR_ID, 0);
+		for (u8 command : {0x20, 0x30, 0xC4, 0xC5})
+		{
+			Address(10, 1);
+			Command(command);
+			ASSERT_TRUE(WaitReady());
+			EXPECT_EQ(Status() & (ATA_STAT_ERR | ATA_STAT_DRQ), ATA_STAT_ERR);
+			EXPECT_NE(drive->Read(ATA_R_ERROR, 8) & ATA_ERR_ID, 0);
+			EXPECT_EQ(drive->Read(ATA_R_ERROR, 8) & ATA_ERR_ABORT, 0);
+			Acknowledge();
+		}
 		Acknowledge();
 		drive->Write(ATA_R_NSECTOR, 63, 8);
 		Command(0x91);
@@ -944,6 +1067,332 @@ namespace
 				EXPECT_EQ(after[51] >> 8, pio == 0 ? 2 : std::min(pio & 7, 2));
 			}
 		}
+	}
+
+	// Prospective HPA regressions: source first; compilation/execution is prohibited.
+	class ATAHpaImageTest : public ATAImageTest
+	{
+	protected:
+		void SetUp() override
+		{
+			ATAImageTest::SetUp();
+			ASSERT_FALSE(HasFatalFailure());
+			Close();
+			initial = Pattern(6048, 39); // Six complete native 16-head/63-sector cylinders.
+			ASSERT_NO_FATAL_FAILURE(CreateImage(initial));
+			ASSERT_NO_FATAL_FAILURE(Open());
+		}
+
+		void Native(bool chs = false)
+		{
+			drive->Write(ATA_R_SELECT, chs ? 0xA0 : 0xE0, 8);
+			Command(0xF8);
+		}
+
+		void Limit(u32 sectors, bool nonvolatile = false)
+		{
+			Native();
+			ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			Acknowledge();
+			Address(sectors - 1, nonvolatile ? 1 : 0); // Rev18 bit0=1 preserves the limit.
+			Command(0xF9);
+		}
+
+		u32 Capacity()
+		{
+			const auto words = Identify();
+			return u32(words[60]) | (u32(words[61]) << 16);
+		}
+
+		void SoftReset()
+		{
+			drive->Write(ATA_R_CONTROL, 4, 8);
+			drive->Write(ATA_R_CONTROL, 0, 8);
+		}
+	};
+
+	TEST_F(ATAHpaImageTest, NativeMaximumRemainsNativeAndLimitOnlyHidesSectors)
+	{
+		const auto before = Identify();
+		EXPECT_NE(before[82] & (1 << 10), 0);
+		EXPECT_EQ(before[83] & (1 << 8), 0); // No later SET MAX security extension.
+		Limit(2016);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_TRUE(IRQ());
+		Acknowledge();
+		EXPECT_EQ(TaskLba(), 2015u);
+		const auto after = Identify();
+		EXPECT_EQ(after[1], 2);
+		EXPECT_EQ(after[3], before[3]);
+		EXPECT_EQ(after[6], before[6]);
+		EXPECT_EQ(after[54], 2);
+		EXPECT_EQ(after[57], 2016);
+		EXPECT_EQ(Capacity(), 2016u);
+		Native();
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_EQ(TaskLba(), 6047u);
+		Acknowledge();
+		Bytes read;
+		ReadSectors(0x20, 2015, 1, 1, &read);
+		EXPECT_EQ(read, Bytes(initial.begin() + 2015 * SectorSize, initial.begin() + 2016 * SectorSize));
+		for (u8 command : {0x20, 0x30, 0x40, 0xC8, 0xCA})
+		{
+			Address(2016, 1);
+			Command(command);
+			ASSERT_TRUE(WaitReady());
+			EXPECT_NE(Status() & ATA_STAT_ERR, 0);
+			EXPECT_NE(drive->Read(ATA_R_ERROR, 8) & ATA_ERR_ID, 0);
+			Acknowledge();
+		}
+		Close();
+		EXPECT_EQ(DiskBytes(), initial);
+		EXPECT_EQ(std::filesystem::file_size(image), initial.size());
+	}
+
+	TEST_F(ATAHpaImageTest, SuccessfulNativeCommandMustImmediatelyPrecedeEachSet)
+	{
+		Address(2015, 0);
+		Command(0xF9);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		Native();
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Identify(); // An intervening command consumes the authorization.
+		Address(2015, 0);
+		Command(0xF9);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		Limit(2016);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Address(3023, 0);
+		Command(0xF9); // The same successful F8 cannot authorize a second F9.
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		EXPECT_EQ(Capacity(), 2016u);
+	}
+
+	TEST_F(ATAHpaImageTest, InvalidLimitDoesNotChangeIdentityOrNativeCapacity)
+	{
+		const auto before = Identify();
+		Limit(6049);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		EXPECT_EQ(Identify(), before);
+		Native();
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		AddressChs(16384, 15, 63, 0);
+		Command(0xF9);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		EXPECT_EQ(Identify(), before);
+	}
+
+	TEST_F(ATAHpaImageTest, VolatileLimitSurvivesSoftwareResetAndHardResetRestoresNative)
+	{
+		Limit(2016);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		SoftReset();
+		EXPECT_EQ(Capacity(), 2016u);
+		drive->ATA_HardReset();
+		EXPECT_EQ(Capacity(), 6048u);
+		EXPECT_FALSE(std::filesystem::exists(image.string() + ".ata-hpa"));
+	}
+
+	TEST_F(ATAHpaImageTest, NonvolatileLimitPersistsAndQuotaResetsOnlyOnHardwareReset)
+	{
+		Limit(2016, true);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Limit(3024); // A volatile expansion leaves the saved limit intact.
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		SoftReset();
+		EXPECT_EQ(Capacity(), 3024u);
+		Limit(4032, true);
+		ASSERT_TRUE(WaitReady());
+		EXPECT_NE(Status() & ATA_STAT_ERR, 0);
+		EXPECT_EQ(drive->Read(ATA_R_ERROR, 8), ATA_ERR_ID);
+		Acknowledge();
+		EXPECT_EQ(Capacity(), 3024u);
+		drive->ATA_HardReset();
+		EXPECT_EQ(Capacity(), 2016u);
+		Limit(4032, true);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Close();
+		ASSERT_NO_FATAL_FAILURE(Open());
+		EXPECT_EQ(Capacity(), 4032u);
+		Limit(6048, true); // Reopen is a new power cycle.
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Close();
+		EXPECT_EQ(DiskBytes(), initial);
+	}
+
+	TEST_F(ATAHpaImageTest, ChsUsesNativeHeadAndSectorFieldsAfterTranslationChange)
+	{
+		SetSmallChsGeometry(); // Current translation is 1 head, 10 sectors.
+		Native(true);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_EQ(drive->Read(ATA_R_LCYL, 8), 5);
+		EXPECT_EQ(drive->Read(ATA_R_HCYL, 8), 0);
+		EXPECT_EQ(drive->Read(ATA_R_SELECT, 8) & 15, 15);
+		EXPECT_EQ(drive->Read(ATA_R_SECTOR, 8), 63);
+		Acknowledge();
+		AddressChs(1, 15, 63, 0);
+		Command(0xF9);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		const auto words = Identify();
+		EXPECT_EQ(words[1], 2);
+		EXPECT_EQ(words[54], 201);
+		EXPECT_EQ(words[55], 1);
+		EXPECT_EQ(words[56], 10);
+		EXPECT_EQ(Capacity(), 2016u);
+		for (auto invalid : {std::array<u8, 2>{14, 63}, std::array<u8, 2>{15, 62}})
+		{
+			Native(true);
+			ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			Acknowledge();
+			AddressChs(1, invalid[0], invalid[1], 0);
+			Command(0xF9);
+			ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+			Acknowledge();
+		}
+	}
+
+	TEST_F(ATAHpaImageTest, OneSectorLimitRemainsUsableAndDoesNotAlterNativeGeometry)
+	{
+		Limit(1);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		const auto words = Identify();
+		EXPECT_EQ(words[1], 0);
+		EXPECT_EQ(words[3], 16);
+		EXPECT_EQ(words[6], 63);
+		EXPECT_EQ(Capacity(), 1u);
+		Bytes read;
+		ReadSectors(0x20, 0, 1, 1, &read);
+		EXPECT_EQ(read, Bytes(initial.begin(), initial.begin() + SectorSize));
+		Limit(6048);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_EQ(Capacity(), 6048u);
+	}
+
+	TEST_F(ATAHpaImageTest, FailedMetadataCommitDoesNotChangeLimitOrConsumeQuota)
+	{
+		const std::filesystem::path temporary = image.string() + ".ata-hpa.tmp";
+		ASSERT_TRUE(std::filesystem::create_directory(temporary));
+		Limit(2016, true);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		EXPECT_EQ(Capacity(), 6048u);
+		EXPECT_FALSE(std::filesystem::exists(image.string() + ".ata-hpa"));
+		ASSERT_TRUE(std::filesystem::remove(temporary));
+		Limit(3024, true);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		EXPECT_EQ(Capacity(), 3024u);
+	}
+
+	TEST_F(ATAHpaImageTest, CorruptOrTrailingMetadataRefusesOpenWithoutChangingImage)
+	{
+		Limit(2016, true);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Close();
+		const auto metadata = image.string() + ".ata-hpa";
+		std::ifstream source(metadata, std::ios::binary);
+		const Bytes good(std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>{});
+		source.close();
+		ASSERT_FALSE(good.empty());
+		for (int corruption : {0, 1, 2})
+		{
+			Bytes bad = good;
+			if (corruption == 0)
+				bad[0] ^= 1;
+			else if (corruption == 1)
+				bad.back() ^= 1;
+			else
+				bad.push_back(0);
+			std::ofstream file(metadata, std::ios::binary | std::ios::trunc);
+			file.write(reinterpret_cast<const char*>(bad.data()), bad.size());
+			file.close();
+			drive = std::make_unique<ATA>();
+			EXPECT_NE(drive->Open(image.string()), 0);
+			Close();
+			EXPECT_EQ(DiskBytes(), initial);
+		}
+	}
+
+	TEST_F(ATAHpaImageTest, ChangedNativeImageSizeRefusesSavedLimit)
+	{
+		Limit(2016, true);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Close();
+		std::filesystem::resize_file(image, initial.size() + SectorSize);
+		drive = std::make_unique<ATA>();
+		EXPECT_NE(drive->Open(image.string()), 0);
+		Close();
+		EXPECT_EQ(std::filesystem::file_size(image), initial.size() + SectorSize);
+	}
+
+	TEST_F(ATAHpaImageTest, FailedNativeReadDoesNotAuthorizeSetMax)
+	{
+		Close();
+		initial = Pattern(600, 29); // No complete default CHS cylinder.
+		ASSERT_NO_FATAL_FAILURE(CreateImage(initial));
+		ASSERT_NO_FATAL_FAILURE(Open());
+		Native();
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Native(true);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		Address(299, 0);
+		Command(0xF9);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		EXPECT_EQ(Capacity(), 600u);
+	}
+
+	TEST_F(ATAHpaImageTest, NotApplicableFeatureAndCountBitsDoNotBecomeSecurityCommands)
+	{
+		Native();
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Address(2015, 0xFE); // Only bit0 applies: this is volatile.
+		drive->Write(ATA_R_FEATURE, 0xFF, 8); // Features is not applicable in ATA-4.
+		Command(0xF9);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		EXPECT_EQ(Capacity(), 2016u);
+		drive->ATA_HardReset();
+		EXPECT_EQ(Capacity(), 6048u);
+	}
+
+	TEST_F(ATAHpaImageTest, Lba48ProfileDefersHpaWithoutReducingNativeCapacity)
+	{
+		Close();
+		const u64 sectors = (1ULL << 28) + 4096;
+		std::filesystem::resize_file(image, sectors * SectorSize); // Disposable sparse image.
+		ASSERT_NO_FATAL_FAILURE(Open());
+		const auto before = Identify();
+		EXPECT_EQ(before[82] & (1 << 10), 0);
+		EXPECT_EQ(before[85] & (1 << 10), 0);
+		EXPECT_NE(before[83] & (1 << 10), 0);
+		for (u8 command : {0xF8, 0xF9, 0x27, 0x37})
+		{
+			Address(2015, 0);
+			Command(command);
+			ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+			Acknowledge();
+		}
+		EXPECT_EQ(Identify(), before);
+		EXPECT_FALSE(std::filesystem::exists(image.string() + ".ata-hpa"));
+		Close();
+		EXPECT_EQ(std::filesystem::file_size(image), sectors * SectorSize);
 	}
 
 	// Prospective SMART regressions: no compiler or C++ execution is authorized.

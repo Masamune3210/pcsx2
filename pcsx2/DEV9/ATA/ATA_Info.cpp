@@ -32,6 +32,7 @@ void ATA::WritePaddedString(u8* data, int* index, const std::string& value, u32 
 
 void ATA::CreateHDDinfo(u64 sizeSectors)
 {
+	sizeSectors = std::min(sizeSectors, HDD_GetAccessibleSectors());
 	// Words 60-61 describe LBA28 capacity; words 100-103 describe LBA48 capacity.
 	u64 maxSize = (1ULL << 28) - 1;
 	const u32 nbSectors = static_cast<u32>(std::min<u64>(sizeSectors, maxSize));
@@ -48,12 +49,15 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	//Defualt CHS translation
 	constexpr u16 defHeads = 16;
 	constexpr u16 defSectors = 63;
+	const bool nativeCHS = HDD_GetNativeSectors() >= defHeads * defSectors;
 	u64 cylinderslong = std::min<u64>(nbSectors, 16514064) / defHeads / defSectors;
 	const u16 defCylinders = (u16)std::min<u64>(cylinderslong, UINT16_MAX);
 
 	//Curent CHS translation
 	cylinderslong = std::min<u64>(nbSectors, 16514064) / curHeads / curSectors;
 	curCylinders = (u16)std::min<u64>(cylinderslong, UINT16_MAX);
+	if (hpaLbaSetMax && nbSectors >= 16514064)
+		curCylinders = 16383; // SET MAX LBA output rule, §8.38.8.
 
 	const int curOldsize = curCylinders * curHeads * curSectors;
 	//SET MAX ADDRESS will set the nbSectors reported
@@ -87,13 +91,13 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	//Matching original PS2 HDD
 	WriteUInt16(identifyData, &index, 0xC837); //word 2
 	//Default Num of heads (Retired)
-	WriteUInt16(identifyData, &index, defCylinders != 0 ? defHeads : 0); //word 3
+	WriteUInt16(identifyData, &index, nativeCHS ? defHeads : 0); //word 3
 	//Number of unformatted bytes per track (Retired)
 	WriteUInt16(identifyData, &index, sectorSize * defSectors); //word 4
 	//Number of unformatted bytes per sector (Retired)
 	WriteUInt16(identifyData, &index, sectorSize); //word 5
 	//Default Number of sectors per track (Retired)
-	WriteUInt16(identifyData, &index, defCylinders != 0 ? defSectors : 0); //word 6
+	WriteUInt16(identifyData, &index, nativeCHS ? defSectors : 0); //word 6
 	//Reserved for assignment by the CompactFlash™ Association
 	index += 2 * 2; //word 7-8
 	//Retired
@@ -213,6 +217,7 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 		(1 << 0) |							//Implemented
 		(1 << 3) |							//Basic Power Management
 		(1 << 5) |							//Implemented
+		(fetHostProtectedAreaEnabled << 10) | //ATA-4 HPA profile
 		(1 << 12) |							//WRITE BUFFER
 		(1 << 13) |							//READ BUFFER
 		(1 << 14)							//Implemented
@@ -266,7 +271,7 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 		(1 << 3) |							//Basic Power Management
 		(fetSecurityEnabled << 1) | 		//Variable, not implemented
 		(fetWriteCacheEnabled << 5) | 		//Variable, implemented
-		(fetHostProtectedAreaEnabled << 10)|//Variable, not implemented
+		(fetHostProtectedAreaEnabled << 10)|//ATA-4 HPA profile
 		(1 << 12) |							//WRITE BUFFER
 		(1 << 13) |							//READ BUFFER
 		(1 << 14)));						//Always one
