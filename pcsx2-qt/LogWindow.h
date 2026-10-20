@@ -63,3 +63,7 @@ private:
 };
 
 extern LogWindow* g_log_window;
+
+// Version-specific, read-only Linux printk observer for PSBBN SCPN-60160.
+void ShowPSBBNKernelLogWindow();
+void DestroyPSBBNKernelLogWindow();
