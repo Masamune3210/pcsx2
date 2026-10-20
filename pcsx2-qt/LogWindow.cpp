@@ -9,18 +9,29 @@
 
 #include "Achievements.h"
 #include "Host.h"
+#include "Config.h"
+#include "Memory.h"
 #include "VMManager.h"
 
 #include <QtCore/QLatin1StringView>
+#include <QtCore/QDateTime>
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QPointer>
+#include <QtCore/QTimer>
 #include <QtCore/QUtf8StringView>
 #include <QtGui/QIcon>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMenuBar>
+#include <QtGui/QDesktopServices>
+#include <QtGui/QFontDatabase>
+#include <QtCore/QUrl>
 #include <QtWidgets/QScrollBar>
 
 #include <mutex>
+#include <cstring>
 
 // Need a lock so the other threads don't try to write to a deleting window.
 LogWindow* g_log_window;
@@ -502,6 +513,185 @@ void LogWindow::restoreSize()
 	const int width = Host::GetBaseIntSettingValue("UI", "LogWindowWidth", DEFAULT_WIDTH);
 	const int height = Host::GetBaseIntSettingValue("UI", "LogWindowHeight", DEFAULT_HEIGHT);
 	resize(width, height);
+}
+
+// PSBBN-specific *host-side* printk observer. No guest configuration, RAM,
+// task file, display, or savestate is modified. Kept in LogWindow.cpp so the
+// Qt/CMake/MSVC projects do not need another generated-MOC compilation unit.
+namespace
+{
+constexpr u32 PSBBN_LOG_BASE = 0x001F84E8;
+constexpr u32 PSBBN_LOG_BYTES = 0x4000;
+constexpr u32 PSBBN_LOG_END = 0x001FC4F0;
+constexpr char PSBBN_LOG_WITNESS[] = "<4>PlayStation 2 SIF BIOS:";
+
+// These are specific to SCPN-60160 PSBBN v0.32's vmlinux, validated
+// against the run12 #004/#020/#038 EE RAM snapshots. No global Linux
+// printk addresses are assumed for any other kernel.
+struct PSBBNPrintkSnapshot
+{
+	QByteArray bytes;
+	u32 write_index = 0;
+	bool recognized = false;
+};
+
+class PSBBNKernelLogWindow final : public QMainWindow
+{
+public:
+	PSBBNKernelLogWindow() : QMainWindow(nullptr), m_file()
+	{
+		setAttribute(Qt::WA_DeleteOnClose);
+		setWindowTitle(tr("PSBBN Linux Kernel Log (read-only)"));
+		resize(850, 480);
+		m_text = new QPlainTextEdit(this);
+		m_text->setReadOnly(true);
+		m_text->setUndoRedoEnabled(false);
+		m_text->document()->setMaximumBlockCount(5000);
+		QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+		m_text->setFont(font);
+		setCentralWidget(m_text);
+
+		QMenu* menu = menuBar()->addMenu(tr("&Log"));
+		connect(menu->addAction(tr("&Clear Window")), &QAction::triggered, m_text, &QPlainTextEdit::clear);
+		connect(menu->addAction(tr("Open &Log Folder")), &QAction::triggered, this, []() {
+			QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(EmuFolders::Logs)));
+		});
+
+		const QString folder = QString::fromStdString(EmuFolders::Logs);
+		m_file.setFileName(QDir(folder).filePath(QStringLiteral("psbbn-kernel-log.txt")));
+		if (!m_file.open(QIODevice::WriteOnly | QIODevice::Append))
+			m_text->appendPlainText(tr("Cannot open kernel log file: %1").arg(m_file.errorString()));
+		else
+		{
+			const QByteArray header = QString("\\n[PSBBN printk observer opened %1]\\n")
+				.arg(QDateTime::currentDateTime().toString(Qt::ISODateWithMs)).toUtf8();
+			m_file.write(header);
+			m_file.flush();
+		}
+		m_text->appendPlainText(tr("Waiting for SCPN-60160 Linux printk ring (EE RAM read-only)..."));
+
+		m_timer.setInterval(100); // 10 Hz, no guest writes or per-instruction hooks
+		connect(&m_timer, &QTimer::timeout, this, [this]() { sample(); });
+		m_timer.start();
+	}
+
+private:
+	void sample()
+	{
+		if (m_pending)
+			return;
+		m_pending = true;
+		const bool previously_seen = m_seen;
+		const QPointer<PSBBNKernelLogWindow> window(this);
+		Host::RunOnCPUThread([window, previously_seen]() {
+			PSBBNPrintkSnapshot result;
+			if (VMManager::HasValidVM() && eeMem != nullptr)
+			{
+				const u8* const memory = eeMem->Main;
+				u32 before, after;
+				std::memcpy(&before, memory + PSBBN_LOG_END, sizeof(before));
+				const bool signature = std::memcmp(memory + PSBBN_LOG_BASE,
+					PSBBN_LOG_WITNESS, sizeof(PSBBN_LOG_WITNESS) - 1) == 0;
+				if ((signature || previously_seen) && before < 0x10000000)
+				{
+					result.bytes = QByteArray(reinterpret_cast<const char*>(memory + PSBBN_LOG_BASE), PSBBN_LOG_BYTES);
+					std::memcpy(&after, memory + PSBBN_LOG_END, sizeof(after));
+					if (before == after) // discard snapshots spanning a printk update
+					{
+						result.write_index = after;
+						result.recognized = true;
+					}
+				}
+			}
+			QtHost::RunOnUIThread([window, result = std::move(result)]() mutable {
+				if (window)
+					window->consume(std::move(result));
+			});
+		});
+	}
+
+	void consume(PSBBNPrintkSnapshot result)
+	{
+		m_pending = false;
+		if (!result.recognized)
+		{
+			m_seen = false;
+			m_last_end = 0;
+			return;
+		}
+
+		const u32 end = result.write_index;
+		if (!m_seen || end < m_last_end)
+		{
+			// Cold boot, reset, or savestate restore: replay available ring
+			// bytes from their actual guest buffer, not from host history.
+			m_last_end = (end > PSBBN_LOG_BYTES) ? end - PSBBN_LOG_BYTES : 0;
+			m_seen = true;
+			m_text->appendPlainText(tr("[PSBBN printk ring attached / restarted]"));
+		}
+		if (end == m_last_end)
+			return;
+		if (end - m_last_end > PSBBN_LOG_BYTES)
+		{
+			m_text->appendPlainText(tr("[printk messages overwritten before sampling]"));
+			m_last_end = end - PSBBN_LOG_BYTES;
+		}
+
+		QByteArray chunk;
+		chunk.reserve(static_cast<qsizetype>(end - m_last_end));
+		for (u32 i = m_last_end; i < end; i++)
+			chunk.append(result.bytes[static_cast<qsizetype>(i & (PSBBN_LOG_BYTES - 1))]);
+		m_last_end = end;
+		// Kernel owns this byte stream; preserve priorities (<4> etc) and
+		// newlines as written. Do not derive fake host-side kernel messages.
+		if (m_file.isOpen())
+		{
+			m_file.write(chunk);
+			m_file.flush();
+		}
+		QTextCursor cursor = m_text->textCursor();
+		const bool follow = cursor.atEnd();
+		cursor.movePosition(QTextCursor::End);
+		cursor.insertText(QString::fromUtf8(chunk));
+		if (follow)
+		{
+			m_text->setTextCursor(cursor);
+			m_text->verticalScrollBar()->setValue(m_text->verticalScrollBar()->maximum());
+		}
+	}
+
+	void closeEvent(QCloseEvent* event) override
+	{
+		m_timer.stop();
+		if (m_file.isOpen())
+			m_file.close();
+		QMainWindow::closeEvent(event);
+	}
+
+	QPlainTextEdit* m_text = nullptr;
+	QTimer m_timer;
+	QFile m_file;
+	bool m_pending = false;
+	bool m_seen = false;
+	u32 m_last_end = 0;
+};
+
+QPointer<PSBBNKernelLogWindow> s_psbbn_kernel_log_window;
+} // namespace
+
+void ShowPSBBNKernelLogWindow()
+{
+	if (!s_psbbn_kernel_log_window)
+		s_psbbn_kernel_log_window = new PSBBNKernelLogWindow();
+	s_psbbn_kernel_log_window->show();
+	s_psbbn_kernel_log_window->raise();
+	s_psbbn_kernel_log_window->activateWindow();
+}
+
+void DestroyPSBBNKernelLogWindow()
+{
+	if (s_psbbn_kernel_log_window)
+		s_psbbn_kernel_log_window->close();
 }
 
 #include "moc_LogWindow.cpp"
