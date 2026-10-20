@@ -1,5 +1,9 @@
 # HDD save-state policy, 2026-10-20
 
+> **SUPERSEDED / REVERTED (2026-10-20).** At the user's explicit request, the HDD-enabled savestate ban described below was removed. `SaveState.cpp`, `SaveState.h`, and `VMManager.cpp` were restored byte-for-byte to their pre-audit versions in commits `74a6308c057f`, `6980793d5957`, `8a8c4d4b9873`. Normal manual, scheduled diagnostic, and resume savestates are no longer blocked when HDD emulation is enabled. The user understands that external HDD images are neither captured nor rolled back. This document is historical rationale **not an active policy**. Do not reintroduce the ban without an explicit request.
+
+
+
 ## Finding F13 and bounded policy
 
 The archive saves CPU, IOP and guest memory without corresponding DEV9/ATA logical state, FIFO bytes/counters, pending IOP DMA ownership, ATA buffers or the write queue. It also cannot roll back writes accepted by the external HDD image. Restoring guest filesystem memory against a later image generation is therefore an unsupported recovery operation, even if a command happened to be idle when the archive was created. Serializing pointers, FILE handles, callback addresses, mutexes or worker threads would not solve external-image consistency.
