@@ -17,7 +17,7 @@ The guest Linux 2.4.17_mvl21 mounts root /dev/hda1, then later fails a ReiserFS 
 - Tests for real sector persistence, transfer word counts, multiblock boundaries, zero sector-count semantics, DRQ/IRQ transitions, reset and invalid LBA.
 
 ## Current state
-Branch created for systematic source audit. No production behavior changed yet. Source and test review pending.
+Source audit underway at baseline `0dcd36309877d5da59344893d61c7a374a7851e3`. No production behavior changed. See [checkpointed source findings](DEV9_ATA4_HDD_SOURCE_FINDINGS_20261019.md) for evidence, priorities, reproduction plans and validation limits. User instructions: **no compiling**, document reasoning for changes, and push checkpoints to this branch. The Ghidra extension is deferred.
 
 ## Next step
 Inspect only `pcsx2/DEV9/ATA/**`, its `DEV9.cpp` bridge, HDD file I/O and existing DEV9 tests. Record definite defects with code addresses and prioritized reproduction; implement independently verifiable corrections with tests. Run Windows MSBuild `Release AVX2|x64` and PSBBN cold boot only when candidate changes are ready; until then verification is source review only.
