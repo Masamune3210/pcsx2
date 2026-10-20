@@ -1,5 +1,10 @@
 # Mission: diagnose PSBBN run12 DEV9 DMA timeout and IOP transfer-completion failure
 
+## Run12 source-fix checkpoint (2026-10-20)
+
+**New evidence and change:** [8 KiB SPEED FIFO single-pass deadlock finding](PSBBN_RUN12_SPEED_FIFO_DEADLOCK_FINDING_20261020_v1.md). The 0x3000/0x7000/0x8000 IOP DMA8 requests exceed the FIFO's 0x2000 capacity, while prior DEV9runFIFO only drained once, refilled once, and returned without consuming the refill. The IOP DMA completion IRQ is gated on all requested bytes arriving. The first oversized request at 58.6989s stalls ~30s before the guest's recovery/reset. Source fix `5a8117f325e0` introduces a progress-checked drain loop and removes two invalid single-FIFO sized asserts. Prospective production-path test `baac0b5561c7` exercises exact guest request lengths with disposable image. **Neither fix nor test has been compiled/executed**. These findings supersede the prior mission's "no code changes" opening status, but do not establish that every subsequent error is resolved. Codex should review this checkpoint and finish focused verification rather than restarting broad source investigation. The HDD-enabled savestate ban remains explicitly reverted.
+
+
 **Status:** Open; Codex investigation and tests requested. **Branch:** `note-working/dev9-ata4-hdd-audit-20261019`. **Date:** 2026-10-20. **Priority:** High, root-cause debugging; preserve existing ATA-4 HDD changes.
 
 ## Objective
