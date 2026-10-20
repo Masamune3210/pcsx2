@@ -17,7 +17,7 @@ build, sanitizer, or PSBBN boot was run. No user image was opened or modified.
 | F6 geometry | CHS conversion and task-file progression are implemented. INIT validates nonzero sectors and all four head bits; invalid translation rejects media access until repaired. IDENTIFY refreshes geometry immediately. Tiny images with no complete default cylinder report no default CHS geometry; LBA remains usable, and INIT can select a smaller geometry. |
 | F7 IRQ / F8 HOB | Interrupt events latch even while nIEN masks the line; device selection gates external assertion. Status clears pending IRQ; alternate status preserves it. Control explicitly clears/sets HOB and Device/Head clears HOB. |
 | F10 initialization | Register, offset, pointer, size, mode and sparse-cache state have explicit initial values before reset helpers access them. |
-| F11 parameters / F12 selection | Unsupported features and unadvertised transfer modes ABRT; PIO mode selection preserves DMA selection. Multiple sizes are supported powers of two through128; zero retains the existing disable extension. Absent device commands/data cannot access the image. Invalid command sequencing cannot replace a live buffer. During DRQ only the device-select bit may change; active address bits stay frozen. DATA is16-bit; unsupported widths consume no word. |
+| F11 parameters / F12 selection | Unsupported features and unadvertised transfer modes ABRT; PIO mode selection preserves DMA selection. Multiple sizes are supported powers of two through 128; zero retains the existing disable extension. Absent device commands/data cannot access the image. Invalid command sequencing cannot replace a live buffer. During DRQ only the device-select bit may change; active address bits stay frozen. DATA is 16-bit; unsupported widths consume no word. |
 | F14 backing failures | Seek/read/write/flush errors produce ATA errors rather than aborting the emulator. First deferred write fault remains sticky until reopen; incomplete transfers are canceled, accepted queued entries still attempted. Error LBA and active transfer residual count are reported where identifiable. Native flush failure cannot identify an exact failed sector. |
 | Missing PIO writes | Real DATA word path implements30/31/C5 and later34/39. SectorCount0 means256 (65536 for EXT). Initial DRQ is polled; subsequent block requests and final completion interrupt, with no per-word IRQ. Completed blocks acquire queue ownership before the next request; SRST discards only the unfinished block. Cache-off blocks are durable before requesting the next block. |
 | Missing aliases / verification | Defined21/41/C9/CB aliases decode explicitly. READ VERIFY reads the backing image and uses normal error handling. All23 mandatory bytes for the compared LBA-only profile now dispatch, plus conditional91; dispatch presence is not conformance validation. |
@@ -38,7 +38,7 @@ narrow test DEV9 bridge, plus seven real FIFO cases in `core_test`. The fixtures
 use disposable patterned files, whole-image readback/reopen, PIO block/count/IRQ
 phases, EOF/CHS, SRST, DMA aliases/offsets, power states, modes, and metadata.
 See [test instructions](../tests/ctest/ata/README.md). The bridge constant checker
-compares31 constants to production; it does not execute ATA code.
+compares 31 constants to production; it does not execute ATA code.
 
 Executed: `git diff --check`, Python bridge-constant comparison, inspection of all
 ATA queue call sites and removal of process-abort/scalar-delete patterns, plus
@@ -53,8 +53,23 @@ of a disposable PSBBN clone. The old force-break symptom is not established as
 resolved by these changes. The dormant async-read helper has no production callers;
 its allocation correction is not covered by the public DMA growth case.
 
-F13 needs a separate save-state preflight safety checkpoint; full HDD state plus
-image-generation/snapshot restore is not implemented. Optional undocumented Sony
+F13 now has a [save/load preflight safety policy](DEV9_ATA_SAVESTATE_POLICY_20261020.md):
+HDD-enabled capture/load is rejected before guest-state mutation, including the
+VMManager reset-on-load-error path. Full HDD state plus image-generation/snapshot
+restore is not implemented; old archives and later ELF profile changes remain
+explicit policy limitations. Optional undocumented Sony
 security/authentication subcommands remain unsupported rather than invented; SCE
 IDENTIFY is preserved. None of these changes proves ReiserFS recovery or PSBBN UI
 progression on an existing image.
+
+Final lifecycle corrections: Close clears DRQ/IRQ/FIFO state and ATA writes require
+an open image, covering the Ethernet-only shared decoder. FIFO cancellation advances
+a generation counter; callback progress is discarded if a deferred host error reset
+the bridge during completion. The regression tree now has 40 ATA cases and seven
+FIFO cases; all remain uncompiled/unexecuted. Source-only checks and independent
+review found no further established important issue in the reviewed paths.
+
+The final command-error review uses UNC for failed reads and DF/ABRT for failed
+host writes/flushes (ATA-4 bit6 means write protection for writes). This avoids
+misreporting storage failure as protection. First-error addresses follow
+§8.27.6/§8.48.6; transferred amount on error is indeterminate under the draft.

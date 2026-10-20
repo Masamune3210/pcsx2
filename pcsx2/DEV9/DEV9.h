@@ -72,6 +72,7 @@ typedef struct
 	u32 ata_last_cycle;
 
 	// FIFO
+	u32 fifo_generation;
 	int fifo_bytes_read;
 	int fifo_bytes_write;
 	u8 fifo[16 * 512];
