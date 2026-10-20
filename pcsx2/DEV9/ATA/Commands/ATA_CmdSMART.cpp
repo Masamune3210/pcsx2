@@ -64,8 +64,10 @@ void ATA::HDD_Smart()
 
 void ATA::SMART_SetAutoSaveAttribute()
 {
-	PreCmd();
-	switch (regSector)
+	if (!PreCmd())
+		return;
+	const bool previous = smartAutosave;
+	switch (regNsector)
 	{
 		case 0x00:
 			smartAutosave = false;
@@ -74,23 +76,31 @@ void ATA::SMART_SetAutoSaveAttribute()
 			smartAutosave = true;
 			break;
 		default:
-			Console.Error("DEV9: ATA: Unknown SMART_ATTR_AUTOSAVE command %s", regSector);
+			Console.Error("DEV9: ATA: Unknown SMART_ATTR_AUTOSAVE command %02x", regNsector);
 			CmdNoDataAbort();
 			return;
+	}
+	if (!SaveSMARTSettings())
+	{
+		smartAutosave = previous;
+		CmdNoDataAbort();
+		return;
 	}
 	PostCmdNoData();
 }
 
 void ATA::SMART_SaveAttribute()
 {
-	PreCmd();
+	if (!PreCmd())
+		return;
 	// Stub
 	PostCmdNoData();
 }
 
 void ATA::SMART_ExecuteOfflineImmediate()
 {
-	PreCmd();
+	if (!PreCmd())
+		return;
 	[[maybe_unused]] int n = 0;
 	switch (regSector)
 	{
@@ -129,14 +139,23 @@ void ATA::SMART_ExecuteOfflineImmediate()
 
 void ATA::SMART_EnableOps(bool enable)
 {
-	PreCmd();
+	if (!PreCmd())
+		return;
+	const bool previous = fetSmartEnabled;
 	fetSmartEnabled = enable;
+	if (!SaveSMARTSettings())
+	{
+		fetSmartEnabled = previous;
+		CmdNoDataAbort();
+		return;
+	}
 	PostCmdNoData();
 }
 
 void ATA::SMART_ReturnStatus()
 {
-	PreCmd();
+	if (!PreCmd())
+		return;
 	if (!smartErrors)
 	{
 		regHcyl = 0xC2;

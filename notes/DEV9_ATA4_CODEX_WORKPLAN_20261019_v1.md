@@ -1,6 +1,6 @@
 # Codex task: end-to-end DEV9 HDD and ATA protocol correctness
 
-**Task mode:** implement and test, not just summarize. **Branch:** `note-working/dev9-ata4-hdd-audit-20261019`. **Starting point:** existing audit note and `AGENTS.md` at repo root. **Current state:** no production code changes have yet been made on this branch by this audit setup; this document records source-review findings, not completed fixes.
+**Task mode:** implement and test, not just summarize. **Branch:** `note-working/dev9-ata4-hdd-audit-20261019`. **Starting point:** existing audit note and `AGENTS.md` at repo root. **Current state:** production corrections are now implemented in the2026-10-20 checkpoints below. Historical audit sections describe the original baseline; compiled/runtime validation remains prohibited and unrun.
 
 ## Why this work exists
 
@@ -94,3 +94,14 @@ regressions. Detailed decisions and unrun validation are in
 `DEV9_FIFO_FIX_20261020.md`; the scoped implementation sequence is in
 `DEV9_ATA_FIX_PLAN_20261020.md`. This supersedes the earlier comparison-only task
 mode. No compiled tests or guest boots have been run. ATA/IO work remains ongoing.
+
+### ATA corrective checkpoint, 2026-10-20
+
+Implementation phases2-5 now have source changes and39 prospective disposable-image
+ATA cases, plus seven registered FIFO cases. The full delta, rationale, review
+findings and exact remaining verification are in
+`DEV9_ATA_IMPLEMENTATION_20261020.md`, with focused I/O and parameter notes.
+This supersedes historical claims of zero production changes. Source-only bridge
+constant/whitespace checks passed; no configure/compiler/tests/Windows/guest runs.
+The save-state preflight policy remains a separate next checkpoint; full disk
+snapshot restore and undocumented Sony authentication are not implemented.

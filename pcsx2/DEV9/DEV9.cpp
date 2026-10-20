@@ -6,6 +6,7 @@
 #include "common/StringUtil.h"
 
 #include "IopDma.h"
+#include "R3000A.h"
 
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
@@ -240,6 +241,7 @@ void DEV9ResetATAFIFO()
 	dev9.dma_iop_ptr = nullptr;
 	dev9.dma_iop_size = 0;
 	dev9.dma_iop_transfered = 0;
+	dev9.ata_last_cycle = psxRegs.cycle;
 }
 
 static bool PrepareFIFOCounters()
@@ -1174,7 +1176,10 @@ void DEV9writeDMA8Mem(u32* pMem, int size)
 void DEV9async(u32 cycles)
 {
 	smap_async(cycles);
-	dev9.ata->Async(cycles);
+	// The caller historically passes a constant 1, not elapsed IOP cycles.
+	const u32 elapsed = psxRegs.cycle - dev9.ata_last_cycle;
+	dev9.ata_last_cycle = psxRegs.cycle;
+	dev9.ata->Async(elapsed);
 }
 
 void DEV9CheckChanges(const Pcsx2Config& old_config)

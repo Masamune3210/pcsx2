@@ -32,10 +32,9 @@ void ATA::WritePaddedString(u8* data, int* index, const std::string& value, u32 
 
 void ATA::CreateHDDinfo(u64 sizeSectors)
 {
-	//PS2 is limited to 48bit size HDD (2TB), however,
-	//we don't yet support 48bit, so limit to 28bit size
-	u64 maxSize = (1 << 28) - 1; // 128Gb
-	const u32 nbSectors = std::min<u32>(sizeSectors, maxSize); // nbSectors will hold 28-bit size
+	// Words 60-61 describe LBA28 capacity; words 100-103 describe LBA48 capacity.
+	u64 maxSize = (1ULL << 28) - 1;
+	const u32 nbSectors = static_cast<u32>(std::min<u64>(sizeSectors, maxSize));
 	if (lba48Supported)
 		maxSize = (1ULL << 48) - 1; // 128PiB
 
@@ -88,13 +87,13 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	//Matching original PS2 HDD
 	WriteUInt16(identifyData, &index, 0xC837); //word 2
 	//Default Num of heads (Retired)
-	WriteUInt16(identifyData, &index, defHeads); //word 3
+	WriteUInt16(identifyData, &index, defCylinders != 0 ? defHeads : 0); //word 3
 	//Number of unformatted bytes per track (Retired)
 	WriteUInt16(identifyData, &index, sectorSize * defSectors); //word 4
 	//Number of unformatted bytes per sector (Retired)
 	WriteUInt16(identifyData, &index, sectorSize); //word 5
 	//Default Number of sectors per track (Retired)
-	WriteUInt16(identifyData, &index, defSectors); //word 6
+	WriteUInt16(identifyData, &index, defCylinders != 0 ? defSectors : 0); //word 6
 	//Reserved for assignment by the CompactFlash™ Association
 	index += 2 * 2; //word 7-8
 	//Retired
@@ -125,11 +124,11 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	 * bit 12:Reserved
 	 * bit 13:Standby timer values as specified in this standard are supported
 	 */
-	WriteUInt16(identifyData, &index, ((1 << 11) | (1 << 9) | (1 << 8))); //word 49
+	WriteUInt16(identifyData, &index, ((1 << 13) | (1 << 11) | (1 << 9) | (1 << 8))); //word 49
 	//Capabilities (0-Shall be set to one to indicate a device specific Standby timer value minimum)
 	WriteUInt16(identifyData, &index, 1 << 14); //word 50
 	//PIO data transfer cycle timing mode (Obsolete)
-	WriteUInt16(identifyData, &index, (pioMode > 2 ? pioMode : 2) << 8); //word 51
+	WriteUInt16(identifyData, &index, std::min(pioMode, 2) << 8); //word 51 (3-255 reserved)
 	//DMA data transfer cycle timing mode (Obsolete)
 	WriteUInt16(identifyData, &index, 0); //word 52
 	//
@@ -138,7 +137,7 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	 * bit 1: Fields in 64:70 are valid (pio3,4 and MWDMA info)
 	 * bit 2: Fields in 88 are valid    (UDMA modes)
 	 */
-	WriteUInt16(identifyData, &index, (1 | (1 << 1) | (1 << 2))); //word 53
+	WriteUInt16(identifyData, &index, (curCHSValid | (1 << 1) | (1 << 2))); //word 53
 	//Number of current cylinders
 	WriteUInt16(identifyData, &index, curCylinders); //word 54
 	//Number of current heads
@@ -212,6 +211,7 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	// clang-format off
 	WriteUInt16(identifyData, &index, (		//word 82
 		(1 << 0) |							//Implemented
+		(1 << 3) |							//Basic Power Management
 		(1 << 5) |							//Implemented
 		(1 << 14)							//Implemented
 		/*| (1 << 1) | (1 << 10)*/));
@@ -236,7 +236,7 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	WriteUInt16(identifyData, &index, ( 	//word 83
 		(lba48Supported << 10) | 			//user defined
 		(1 << 12) |							//Implemented
-		(1 << 13) |							//Implemented
+		(lba48Supported << 13) |			//FLUSH CACHE EXT requires LBA48
 		(1 << 14) 							//Always one
 		/*| (1 << 8)*/));
 	//Supported Feature Sets (84)
@@ -256,12 +256,12 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	 * bit 14: 1
 	 */
 	WriteUInt16(identifyData, &index, ( 	//word 84
-		(1 << 0) |							//Implemented
-		(1 << 1) | 							//Implemented
+		// SMART logging and self-test data are not implemented.
 		(1 << 14)));						//Always one
 	//Command set/feature enabled/supported (See word 82)
 	WriteUInt16(identifyData, &index, ( 	//word 85
 		(fetSmartEnabled << 0) | 			//Variable, implemented
+		(1 << 3) |							//Basic Power Management
 		(fetSecurityEnabled << 1) | 		//Variable, not implemented
 		(fetWriteCacheEnabled << 5) | 		//Variable, implemented
 		(fetHostProtectedAreaEnabled << 10)|//Variable, not implemented
@@ -271,11 +271,9 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 		/*(1 << 8) |						//SET MAX */
 		(lba48Supported << 10) |			//user defined
 		(1 << 12) |							//Implemented
-		(1 << 13)));						//Implemented
+		(lba48Supported << 13)));			//FLUSH CACHE EXT requires LBA48
 	//Command set/feature enabled/supported (See word 84)
 	WriteUInt16(identifyData, &index, ( 	//word 87
-		(1 << 0) |							//Implemented
-		(1 << 1) |							//Implemented
 		(1 << 14)));						//Fixed
 	// clang-format on
 	//UDMA modes

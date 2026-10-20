@@ -1,4 +1,5 @@
 add_pcsx2_test(core_test
+	dev9_fifo_tests_20261020.cpp
 	ee_active_tlb_asid_tests_20261018.cpp
 	patch_tests.cpp
 	MockMemoryInterface.h
