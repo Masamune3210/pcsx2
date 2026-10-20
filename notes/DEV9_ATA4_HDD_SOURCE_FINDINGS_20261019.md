@@ -212,14 +212,133 @@ contract, not just another unsynchronized emptiness check. This data race is
 distinct from the logical in-flight-write gap in F3. Planned validation: Thread
 Sanitizer plus deterministic flush/dequeue interleavings. No sanitizer was run.
 
-## Outstanding audit work
+## Checkpoint 3: initialization, coverage and persistence limits
 
-- Command acceptance while BSY/DRQ and multiple-mode validation.
-- DMA bridge stop/restart and the historical force-break message's actual source.
-- IDENTIFY advertised features, command coverage and ATA-4 versus later features.
-- Sparse-file correctness, host I/O errors and save-state coverage.
-- Existing test coverage and a focused regression plan before implementation.
+### F10 — High: constructor reads register fields before initialization
 
-No proposed correction above has been implemented or tested. Production fixes
-need focused tests; under the current no-compilation instruction, compiled
-verification and guest/runtime validation remain unrun.
+Evidence: `ATA::ATA()` has no member initializer list and calls reset immediately
+(`ATA_State.cpp:24-28`). `regStatus`, `regError` and `regSelect` have no in-class
+initializers (`ATA.h:73-97`). Reset first performs `regStatus |= BUSY` and clears
+READY (`ATA_CmdExecuteDeviceDiag.cpp:7-10`); diagnostics later modifies regError
+and `SetSelectedDevice` modifies regSelect with a bitwise operation. These read
+indeterminate scalar values. `new ATA()` in `DEV9.cpp:102` does not zero those
+members because ATA has a user-provided default constructor. The `memset` of
+`dev9` initializes the containing bridge, not the separately allocated ATA.
+
+`pioPtr/pioEnd` and `HddSparseStart` also lack initializers
+(`ATA.h:32,144-145`). A pre-command Data read compares the former
+(`ATA_CmdPIOData.cpp:45`); the first sparse-cache update compares the latter
+(`ATA_Transfer.cpp:303-304`). These are additional initialization gaps, not
+proof of a particular startup status or reproducible crash frequency.
+
+Correction rationale: initialize register and transfer state before any reset
+helper reads it; define first-open and reopen cache-location state. Planned
+validation: construct in nonzero-filled storage, inspect reset signature and
+pre-command Data access, exercise the first sparse write, and run initialization
+sanitizers. This is separate from clearing already-valid state on reset (F5).
+
+### F11 — Medium: parameter acceptance exceeds advertised capabilities
+
+Evidence: SET MULTIPLE MODE stores any Sector Count byte
+(`ATA_CmdNoData.cpp:179-187`), even 255 while IDENTIFY word 47 advertises a
+128-sector maximum (`ATA_Info.cpp:114-115`). Zero disables READ MULTIPLE through
+the explicit check in `ATA_CmdPIOData.cpp:92-95`; zero here must not be expanded
+to 256. Nonzero multiple counts need ATA-4 validation, including the standard's
+permitted block sizes, rather than unconditional success.
+
+SET FEATURES accepts MDMA mode 7 and UDMA mode 7 from the low three bits
+(`ATA_CmdNoData.cpp:135-164`), while IDENTIFY advertises MDMA 0-2 and UDMA 0-6
+(`ATA_Info.cpp:166-169,286-289`). Unknown feature selectors merely log and then
+complete successfully (`ATA_CmdNoData.cpp:172-176`).
+
+Correction rationale: reject unsupported parameters without replacing the prior
+valid setting. Planned validation: advertised min/max and one-past-max transfer
+modes; multiple count zero, supported sizes, 129/255 and unsupported intermediate
+sizes; unknown feature selector must not silently claim implementation.
+
+### F12 — Medium: ordinary commands and Data reads ignore device selection
+
+Evidence: most task-file reads return zero for absent device 1
+(`ATA_State.cpp:344-380,395-396`), but Command writes always dispatch
+(`:500-506`), and `PreCmd` only checks READY (`ATA_Command.cpp:132-147`). There
+is no selected-device check in PIO/DMA data commands. Data reads dispatch to
+`ATAreadPIO()` before any selection check (`ATA_State.cpp:338-343`). An
+ordinary read or write directed at absent device 1 can therefore operate on
+device 0's state/image despite absent-device status reads returning zero.
+
+The command-write path also bypasses the BSY/DRQ write guard
+(`ATA_State.cpp:419`); `PreCmd` does not check those bits. An ordinary new
+command can replace an active DRQ transfer. This amplifies F5's lifetime issue.
+Special broadcast/diagnostic/reset commands need their own acceptance rules.
+
+Correction rationale: enforce command/device/protocol acceptance centrally,
+with explicit exceptions. Planned validation: select absent device and issue
+IDENTIFY/read/write; verify the actual image is unchanged and no master event
+is consumed. Issue ordinary commands during BSY/DRQ and verify the original
+transfer remains consistent. No illegal-host-sequence compatibility policy was
+changed in this audit.
+
+### F13 — High for recovery: DEV9/ATA state is not serialized
+
+Evidence: no DEV9 state entry appears in `SaveState.cpp:689-704`; no DEV9 call
+appears in its internal freeze path; no freeze/DoState/StateWrapper routine is
+defined under `pcsx2/DEV9`. ATA owns private task-file state, buffers, callbacks
+and the write queue; the bridge separately owns FIFO counters/data and the IOP
+DMA pointer (`DEV9.h:39-80`). They are not the generic IOP hardware-memory block.
+`SaveStateBase::vmFreeze` also does not save them (`VMManager.cpp:1870-1902`).
+
+Consequently, loading old CPU/IOP state does not restore the corresponding
+DEV9/ATA transfer state, nor rewind accepted writes in the external HDD image.
+A save-state archive alone is not a coherent HDD rollback/checkpoint. This is a
+source-observed coverage gap; no load-induced corruption was demonstrated here.
+
+Correction rationale: define save/load support and disk-image consistency
+explicitly before using save-state rewind to diagnose a journaling filesystem.
+A future implementation must serialize logical state, not FILE pointers,
+threads, mutexes or callback addresses, and must specify treatment of queued and
+in-flight writes. Planned validation: save/load idle and mid-PIO/DMA using a
+disposable HDD copy, compare device registers/data and disk generation. Until
+then, use cold boots with separately preserved evidence images for comparisons.
+
+### F14 — High for host failures: image I/O failures abort the process
+
+Evidence: failed seek/read in `IO_Read` calls `abort()`
+(`ATA_Transfer.cpp:63-76`); failed seek/write/fflush does the same in `IO_Write`
+(`:94-99,159-177`). Sparse-cache reads/writes also abort on host I/O failure
+(`:249-257,334-340`). Thus short I/O, an externally truncated image, full disk,
+or a backing-storage error is not converted into an ATA error completion.
+With write cache enabled the guest may already have received a successful
+write completion, making deferred error handling a separate protocol concern.
+
+Correction rationale: propagate host errors through a defined device error and
+shutdown policy without reporting successful flush/persistence. Planned
+validation: inject seek failure, short read/write, fflush failure and full-disk
+failure, with cache on/off and during `0xE7`; assert no success IRQ hides the
+failure and preserve the original image for postmortem inspection. No fault
+injection was performed in this pass.
+
+## Coverage and next correction order
+
+See [command coverage and regression plan](DEV9_ATA4_HDD_COVERAGE_20261019.md)
+for dispatcher coverage, IDENTIFY inconsistencies, bridge/sparse limitations,
+and specific required test cases. This first source pass is complete; it is
+not an exhaustive ATA-4 conformance assessment. External standard clauses and
+actual guest command traces are still needed for a full conformance matrix.
+
+Suggested correction order, keeping commits independently reviewable:
+
+1. Establish deterministic initialization and reset/command-cancellation state
+   (F10/F5/F12), including safe DMA copy-length invariants.
+2. Repair capacity/partial-transfer semantics and first-failing-LBA reporting
+   together (F1); fix SEEK and geometry validation separately (F4/F6).
+3. Define ordered write/read/flush handling with synchronized queue observation
+   (F2/F3/F9), including host error and durability policy (F14).
+4. Add the missing PIO data-out engine and `0x30`/`0xC5` commands, covering both
+   persistence and protocol transitions; do not just add dispatcher cases.
+5. Reconcile interrupt/HOB handling and advertised command/parameter support
+   (F7/F8/F11), then define save-state support (F13).
+
+No proposed correction above has been implemented or tested. Under the user's
+no-compilation instruction, compiled regression tests, memory/thread sanitizers,
+Windows builds and guest/runtime validation remain unrun. This does not block
+source review, but it prevents claiming a working fix or a repaired PSBBN boot.
