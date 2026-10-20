@@ -4,6 +4,13 @@ Baseline: `0dcd36309877d5da59344893d61c7a374a7851e3`.
 Source-only inspection; no compilation or runtime tests. Findings and evidence
 are in [the source audit](DEV9_ATA4_HDD_SOURCE_FINDINGS_20261019.md).
 
+Follow-up: the [standard-backed full comparison](DEV9_ATA4_COMMAND_SET_COMPARE_20261019.md)
+now classifies [all 48 ATA-4 command families](DEV9_ATA4_COMMAND_MATRIX_20261019.md)
+and [all 256 bytes](DEV9_ATA4_OPCODE_INVENTORY_20261019.csv). It supersedes this
+initial inventory's pending standard classifications: basic Power Management is
+mandatory, alternate encodings remain defined, and SMART READ DATA/LOG must not
+be counted as missing ATA-4 core commands. Later/Sony features remain separate.
+
 ## Dispatcher inventory
 
 The direct cases in `ATA_Command.cpp:7-118` are enumerated below. A handler's
