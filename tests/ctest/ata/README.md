@@ -74,3 +74,13 @@ scan interruption/resume and persisted results, plus metadata failure/corruption
 flags; both must accompany an image to preserve identical virtual-drive metadata.
 No later self-test or error-log capability is claimed. All added C++ cases remain
 uncompiled/unexecuted; the source-only bridge checker is not an executable ATA test.
+
+The next command checkpoint adds ATA-4 HPA F8/F9 cases for native/access-limited
+capacity, command adjacency, volatile/nonvolatile reset rules, per-power NV quota,
+CHS, metadata corruption/commit failure, and explicit LBA48-profile deferral.
+`.ata-hpa` stores the guest's persistent accessible-sector limit and native-size
+identity; preserve it with the image when cloning/moving the virtual drive.
+SET MAX never truncates the image. SMART verification still examines native media.
+Multiple-command cases check preflight ABRT, failed-INIT IDNF, and a real truncated
+backing read yielding a complete ERR/UNC block without stale bytes. There are 75
+prospective ATA cases plus seven FIFO cases; none were compiled or executed.

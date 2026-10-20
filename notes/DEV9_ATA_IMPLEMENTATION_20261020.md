@@ -73,3 +73,18 @@ The final command-error review uses UNC for failed reads and DF/ABRT for failed
 host writes/flushes (ATA-4 bit6 means write protection for writes). This avoids
 misreporting storage failure as protection. First-error addresses follow
 §8.27.6/§8.48.6; transferred amount on error is indeterminate under the draft.
+
+## Subsequent command completion
+
+`693ff612a2` adds E4/E8 buffer transfers, D0 SMART data/D3 persistence/D4 real
+background verification, and EF 66/CC reset-reversion control. A later checkpoint
+adds ATA-4 HPA F8/F9 native/current limits with CRC-checked metadata, plus genuine
+C4/29 read-error block delivery. These supersede the earlier ledger's blanket HPA
+absence and its generic multiple-read failure behavior. Default selected transfer
+modes are now PIO2/MDMA0, while supported higher modes remain available.
+
+The command matrix and focused buffer/SMART/command-semantics/HPA/multiple-error
+notes describe the current profile. There are 75 prospective ATA cases and seven
+FIFO cases. Source review/checks only; all C++ execution, Windows and guest tests
+remain unrun. Full disk snapshots, later HPA extensions, standard security and
+undocumented Sony authentication remain outside this implementation.

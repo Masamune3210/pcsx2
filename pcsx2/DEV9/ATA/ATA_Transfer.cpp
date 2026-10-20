@@ -200,6 +200,8 @@ bool ATA::HDD_ReportIOError()
 	pioPtr = pioEnd = 0;
 	pioDRQEndTransferFunc = nullptr;
 	pioDataOutComplete = nullptr;
+	pioReadErrorBlock = -1;
+	pioReadErrorSector = 0;
 	rdTransferred = wrTransferred = 0;
 	delete[] currentWrite;
 	currentWrite = nullptr;
@@ -440,6 +442,20 @@ void ATA::HDD_ReadSync(void (ATA::*drqCMD)())
 			ioReadSector = static_cast<u64>(HDD_GetLBA());
 			ioReadSectors = nsector;
 			IO_Read();
+			if (ioReadError && (regCommand == 0xC4 || regCommand == 0x29))
+			{
+				// Capture this command's backing-read failure before the generic
+				// helper can cancel its required READ MULTIPLE error-data block.
+				pioReadErrorSector = static_cast<int>(ioErrorSector - ioReadSector);
+				pioReadErrorBlock = pioReadErrorSector / sectorsPerInterrupt * sectorsPerInterrupt;
+				nsector = std::min(nsector, pioReadErrorBlock + sectorsPerInterrupt);
+				nsectorLeft = nsector;
+				// fread may have copied part of its final incomplete sector.
+				// Neither that partial sector nor stale buffer bytes are valid data.
+				memset(readBuffer + pioReadErrorSector * 512, 0, (nsector - pioReadErrorSector) * 512);
+				ioReadError = false;
+				ioErrorPending = false;
+			}
 		}
 	}
 	if (!HDD_ReportIOError())
