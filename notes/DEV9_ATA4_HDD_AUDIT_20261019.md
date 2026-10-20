@@ -1,5 +1,10 @@
 # DEV9 HDD / ATA-4 Audit
 
+## Run12 DMA > FIFO fix awaiting tests (2026-10-20)
+
+The [run12 single-pass FIFO deadlock analysis](PSBBN_RUN12_SPEED_FIFO_DEADLOCK_FINDING_20261020_v1.md) found that the 8 KiB SPEED ring and `DEV9runFIFO`'s old single drain/refill leave oversized 12/28/32 KiB IOP DMA8 reads incomplete; this matches the guest's 30-second timeout/retry pattern. Commit `5a8117f325e0` adds a progress-checked repeat pump and removes invalid DMA8 <= FIFO-size assertions. Commit `baac0b5561c7` adds an uncompiled production-path image-backed regression for all three lengths. Code changed only in `pcsx2/DEV9/DEV9.cpp` and `tests/ctest/core/dev9_fifo_tests_20261020.cpp`. No compilation, test, emulator run or production HDD image modification. The diagnosis is a high-confidence source-backed failure mechanism, **pending runtime demonstration**. Existing manual/scheduled/resume HDD savestates remain permitted per explicit user request.
+
+
 ## Active mission: PSBBN run12 DMA timeout (2026-10-20)
 
 See [PSBBN run12 DEV9 DMA timeout mission](PSBBN_RUN12_DEV9_DMA_TIMEOUT_MISSION_20261020_v1.md). On `v2.9.92-158-g922ad14d3` with EE interpreter, Linux mounts root `/dev/hda1`, but three DMA timeouts/force breaks occur at host 88.6765s, 118.4130s and 148.6084s after an apparent request at 58.6989s; afterwards a repeat guest TLB exception occurs at `PC=0x0FB6800C`, `BadVAddr=0xFFFF8378`. Earlier snapshots retain the static PS2 logo. The 0xC5 missing-command error is absent in this new log, not proof of full ATA correctness. Mission requires production-path SPEED/ATA/IOP DMA8/IRQ correlation before making causal claims. User's prior **HDD savestate reversion** and **no-compilation instruction** remain in force. No code or tests were run in this mission setup.
