@@ -130,3 +130,10 @@ and flush errors use DF/ABRT, avoiding ATA-4's write-protect meaning of bit6. No
 next-address/residual-count reporting is an emulation policy where the draft marks
 those normal outputs not applicable. First-error address and indeterminate transfer
 amount follow the normative error-output clauses. No host-failure test was run.
+
+Durable source handoff: pushed `58dc04a4fe`, `874309ca1c`, `2c39d25e37`; local and
+remote source HEAD matched and the worktree was clean at final source verification.
+Recorded fresh checks: full-range whitespace; 31 bridge constants; all 256 CSV
+source-line references; 48 family rows; 40 ATA plus seven FIFO prospective cases.
+No compilation or executable test outcome is claimed. The final documentation-only
+checkpoint preserves this handoff; no production behavior changes after `2c39d25e37`.
