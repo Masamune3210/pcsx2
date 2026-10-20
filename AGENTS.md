@@ -2,7 +2,7 @@
 
 ## PSBBN host-only kernel log window (2026-10-20)
 
-Read [PSBBN live printk viewer handoff](notes/PSBBN_LIVE_PRINTK_DEBUG_WINDOW_20261020_v1.md). User asked for a **separate** Linux boot log debug window and dedicated on-disk log, without any guest changes. Implemented in `pcsx2-qt/LogWindow.cpp`, exposed from `MainWindow.cpp`, using verified physical EE RAM ring `0x001F84E8` size `0x4000`, cursor `0x001FC4F0`. Guest memory is read-only; no savestate or DEV9 behavior is modified. Offline replay of run12 snapshots confirms 3511 initial bytes, 96 additional bytes (three DMA timeouts), then no further messages. **Qt code not built or run by instruction; verification is needed when user authorizes it.** Do not replace with a guest translation patch or guest framebuffer text, and do not reintroduce HDD savestate restrictions.
+Read [PSBBN live printk viewer handoff](notes/PSBBN_LIVE_PRINTK_DEBUG_WINDOW_20261020_v1.md). User asked for a **separate** Linux boot log debug window and dedicated on-disk log, without any guest changes. Implemented in `pcsx2-qt/LogWindow.cpp`, exposed from `MainWindow.cpp`, using verified physical EE RAM ring `0x001F84E8` size `0x4000`, source-derived `log_end` cursor `0x001FC4F4`. Guest memory is read-only; no savestate or DEV9 behavior is modified. Offline replay of run12 snapshots confirms 3511 initial bytes, 96 additional bytes (three DMA timeouts), then no further messages. **Qt code not built or run by instruction; verification is needed when user authorizes it.** Do not replace with a guest translation patch or guest framebuffer text, and do not reintroduce HDD savestate restrictions.
 
 
 ## Run12 DMA FIFO checkpoint (2026-10-20)
