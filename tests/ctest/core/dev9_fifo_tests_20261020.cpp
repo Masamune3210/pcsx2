@@ -4,11 +4,18 @@
 // Registered in core_test against the real PCSX2 DEV9.cpp. Compilation and
 // execution remain unrun; do not substitute a copy of the FIFO implementation.
 #include "DEV9/DEV9.h"
+#include "DEV9/ATA/ATA.h"
+#include "Config.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <vector>
 #include <iterator>
 #include <limits>
 
@@ -194,4 +201,80 @@ TEST_F(DEV9FIFO, ResetDiscardsPendingIOPTransferAndBufferedBytes)
 	EXPECT_EQ(dev9.dma_iop_transfered, 0);
 	EXPECT_NE(dev9.fifo_generation, generation);
 }
+// Run12 requested 0x3000, 0x7000 and 0x8000-byte IOP DMA8 transfers.
+// Exercise the real ATA_ReadDMA -> SPEED FIFO -> IOPReadFIFO path, rather
+// than calling FIFO helpers on a manually populated ring.
+TEST_F(DEV9FIFO, AtaReadDMA8DrainsRequestsLargerThanThePhysicalFIFO)
+{
+	namespace fs = std::filesystem;
+	const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+	const fs::path folder = fs::temp_directory_path() /
+		("pcsx2-dev9-dma8-" + std::to_string(stamp));
+	ASSERT_TRUE(fs::create_directory(folder));
+	const fs::path path = folder / "temporary.raw";
+
+	struct ScopedHDDTest
+	{
+		fs::path folder;
+		bool previousEnabled;
+		~ScopedHDDTest()
+		{
+			EmuConfig.DEV9.HddEnable = previousEnabled;
+			std::error_code ec;
+			fs::remove_all(folder, ec);
+		}
+	} cleanup{folder, EmuConfig.DEV9.HddEnable};
+
+	constexpr int sectorSize = 512;
+	constexpr int imageSectors = 128;
+	std::vector<u8> disk(imageSectors * sectorSize);
+	for (int i = 0; i < static_cast<int>(disk.size()); ++i)
+		disk[i] = Pattern(i);
+	{
+		std::ofstream file(path, std::ios::binary);
+		ASSERT_TRUE(file.is_open());
+		file.write(reinterpret_cast<const char*>(disk.data()), disk.size());
+		file.close();
+		ASSERT_TRUE(file.good());
+	}
+
+	EmuConfig.DEV9.HddEnable = true;
+	auto drive = std::make_unique<ATA>();
+	dev9.ata = drive.get();
+	ASSERT_EQ(drive->Open(path.string()), 0);
+	drive->Write(ATA_R_CONTROL, 0, 8);
+
+	for (const int bytes : {0x3000, 0x7000, 0x8000})
+	{
+		SCOPED_TRACE(bytes);
+		ASSERT_EQ(bytes % sectorSize, 0);
+		std::vector<u8> output(bytes, 0xe7);
+		DEV9ResetATAFIFO();
+		dev9.irqcause = 0;
+		dev9.dma_iop_ptr = output.data();
+		dev9.dma_iop_size = bytes;
+		dev9.dma_iop_transfered = 0;
+		dev9.xfr_ctrl = SPD_XFR_DMAEN;
+		dev9.if_ctrl = SPD_IF_ATA_DMAEN | SPD_IF_READ;
+
+		const int sectors = bytes / sectorSize;
+		drive->Write(ATA_R_SELECT, 0xe0, 8);
+		drive->Write(ATA_R_NSECTOR, sectors, 8);
+		drive->Write(ATA_R_SECTOR, 4, 8);
+		drive->Write(ATA_R_LCYL, 0, 8);
+		drive->Write(ATA_R_HCYL, 0, 8);
+		drive->Write(ATA_R_CMD, 0xc8, 8); // READ DMA, image sector 4.
+
+		EXPECT_EQ(dev9.dma_iop_transfered, bytes);
+		EXPECT_EQ(dev9.dma_iop_ptr, nullptr) << "DMA8 completion not signaled";
+		EXPECT_EQ(dev9.fifo_bytes_read, dev9.fifo_bytes_write);
+		EXPECT_TRUE(std::equal(output.begin(), output.end(), disk.begin() + 4 * sectorSize))
+			<< "Short, repeated or out-of-order FIFO bytes";
+		EXPECT_EQ(drive->Read(ATA_R_ALT_STATUS, 8) & (ATA_STAT_BUSY | ATA_STAT_DRQ | ATA_STAT_ERR), 0);
+	}
+
+	drive->Close();
+	dev9.ata = nullptr;
+}
+
 } // namespace
