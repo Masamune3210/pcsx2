@@ -85,3 +85,14 @@ a design gap, explicitly bounded by the preflight policy. No runtime validation.
 Final error-code review also distinguishes read UNC from write DF/ABRT; write
 bit6 would incorrectly imply write protection in ATA-4. This was checked against
 the retrieved draft's read/write error-output clauses, not executed on hardware.
+
+## Durable handoff
+
+Production checkpoints pushed to the requested branch: `58dc04a4fe` (FIFO),
+`874309ca1c` (ATA/PIO/I/O/parameters/power/SMART), and `2c39d25e37` (save-state and
+transfer-lifetime safeguards). Remote and local source HEAD matched at the final
+source verification. The worktree was clean. Full-range whitespace checks passed;
+31 bridge constants and all 256 CSV source references matched; the matrix has
+48 families and regression source has 40 ATA plus seven FIFO cases. These are
+source-only results. All compiled, Windows, sanitizer and PSBBN validation remains
+unrun; the limitations and next commands above apply.
