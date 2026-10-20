@@ -680,6 +680,7 @@ void _DEV9irq(int cause, int cycles);
 int DEV9irqHandler(void);
 void DEV9async(u32 cycles);
 void DEV9runFIFO();
+void DEV9ResetATAFIFO();
 void DEV9writeDMA8Mem(u32* pMem, int size);
 void DEV9readDMA8Mem(u32* pMem, int size);
 u8 DEV9read8(u32 addr);
