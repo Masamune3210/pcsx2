@@ -36,3 +36,14 @@ The source is deliberately not registered in CMake or MSBuild in this checkpoint
 - `git diff --check -- pcsx2/DEV9/DEV9.cpp pcsx2/DEV9/DEV9.h` passed.
 - A Python source-presence check passed: five guarded FIFO paths, guarded IOP residual arithmetic, corrected wrapped destination, reset declaration, seven test cases, and absence of CMake registration. It reads source strings only; it does not mirror or execute the C++ algorithm.
 - `clang-format` was not available; no formatter or compiler claim is made.
+
+Follow-up: `874309ca1c` registers these seven cases in `core_test`; the original
+checkpoint above intentionally saved source first. Registration is not execution;
+all compiled/runtime verification remains unrun.
+
+Final integration adds a FIFO generation counter. A DMA callback can discover a
+deferred host write error during completion and reset the bridge; the outer FIFO
+helper must then discard its returned old progress rather than incrementing the
+freshly reset counters. Both HDD directions check the generation, and the read
+bridge rechecks IOP buffer ownership before the next copy. The reset fixture also
+checks generation invalidation; callback/error interleaving remains unexecuted.

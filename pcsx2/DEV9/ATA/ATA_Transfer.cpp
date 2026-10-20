@@ -210,7 +210,9 @@ bool ATA::HDD_ReportIOError()
 	regStatus |= ATA_STAT_ERR;
 	if (writeError)
 		regStatus |= ATA_STAT_WRERR;
-	regError |= ATA_ERR_ECC;
+	// Bit 6 is UNC for reads but means write-protect for ATA-4 writes.
+	// A host write/flush failure is a device fault and inability to complete.
+	regError |= writeError ? ATA_ERR_ABORT : ATA_ERR_ECC;
 	regStatusSeekLock = (regStatus & ATA_STAT_SEEK) ? 1 : -1;
 	PostCmdNoData();
 	return true;
