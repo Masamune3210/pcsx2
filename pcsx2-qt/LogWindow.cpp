@@ -27,6 +27,7 @@
 #include <QtWidgets/QMenuBar>
 #include <QtGui/QDesktopServices>
 #include <QtGui/QFontDatabase>
+#include <QtGui/QTextDocument>
 #include <QtCore/QUrl>
 #include <QtWidgets/QScrollBar>
 
@@ -533,6 +534,7 @@ struct PSBBNPrintkSnapshot
 	QByteArray bytes;
 	u32 write_index = 0;
 	bool recognized = false;
+	bool retry = false; // Inconsistent read: do not treat as a kernel shutdown.
 };
 
 class PSBBNKernelLogWindow final : public QMainWindow
@@ -601,6 +603,8 @@ private:
 						result.write_index = after;
 						result.recognized = true;
 					}
+					else
+						result.retry = true;
 				}
 			}
 			QtHost::RunOnUIThread([window, result = std::move(result)]() mutable {
@@ -613,6 +617,8 @@ private:
 	void consume(PSBBNPrintkSnapshot result)
 	{
 		m_pending = false;
+		if (result.retry)
+			return; // Wait for a coherent sample; do not replay or duplicate lines.
 		if (!result.recognized)
 		{
 			m_seen = false;
