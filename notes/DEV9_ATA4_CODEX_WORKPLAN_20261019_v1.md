@@ -1,6 +1,6 @@
 # Codex task: end-to-end DEV9 HDD and ATA protocol correctness
 
-**Task mode:** implement and test, not just summarize. **Branch:** `note-working/dev9-ata4-hdd-audit-20261019`. **Starting point:** existing audit note and `AGENTS.md` at repo root. **Current state:** production corrections are now implemented in the2026-10-20 checkpoints below. Historical audit sections describe the original baseline; compiled/runtime validation remains prohibited and unrun.
+**Task mode:** implement and test, not just summarize. **Branch:** `note-working/dev9-ata4-hdd-audit-20261019`. **Starting point:** existing audit note and `AGENTS.md` at repo root. **Current state:** production corrections are now implemented in the 2026-10-20 checkpoints below. Historical audit sections describe the original baseline; compiled/runtime validation remains prohibited and unrun.
 
 ## Why this work exists
 
@@ -105,3 +105,28 @@ This supersedes historical claims of zero production changes. Source-only bridge
 constant/whitespace checks passed; no configure/compiler/tests/Windows/guest runs.
 The save-state preflight policy remains a separate next checkpoint; full disk
 snapshot restore and undocumented Sony authentication are not implemented.
+
+### Final lifecycle and handoff checkpoint, 2026-10-20
+
+F13 now has a current-profile fail-closed save/load policy, documented in
+`DEV9_ATA_SAVESTATE_POLICY_20261020.md`; full HDD/disk-generation serialization is
+not implemented. Necessary direct SaveState/VMManager callers reject before state
+mutation and avoid resetting the running guest on policy refusal. This intentionally
+disables manual/autosave/resume archives while HDD is enabled. Older archive
+provenance and a target ELF profile enabling HDD later remain explicit limitations.
+
+Close now clears transfer/IRQ/FIFO state, and an absent image cannot receive ATA
+commands through the still-enabled Ethernet decoder. FIFO generation checks keep
+returning callbacks from adding stale progress after host-error cancellation.
+There are 40 ATA and seven FIFO prospective cases. Current matrix/CSV reflect all
+23 mandatory dispatch bytes while retaining original baseline comparison results.
+Fresh whitespace, 256-byte/48-family source inventory, test registration and bridge
+constant checks passed. No compilation/configuration/C++ execution/Windows/guest
+runs occurred. Next validation is the documented disposable-image suite and Windows
+`Release AVX2|x64` build, followed by a cloned-image PSBBN cold boot when authorized.
+
+Error-code review before the final push: backing read errors use UNC; host write
+and flush errors use DF/ABRT, avoiding ATA-4's write-protect meaning of bit6. Normal
+next-address/residual-count reporting is an emulation policy where the draft marks
+those normal outputs not applicable. First-error address and indeterminate transfer
+amount follow the normative error-output clauses. No host-failure test was run.

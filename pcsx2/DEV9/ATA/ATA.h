@@ -151,7 +151,7 @@ private:
 	//Read Buffer
 	int rdTransferred = 0;
 	int wrTransferred = 0;
-	//Max tranfer on 24bit is 256*512 = 128KB
+	//Max transfer on 28bit is 256*512 = 128KB
 	//Max tranfer on 48bit is 65536*512 = 32MB
 	int readBufferLen = 0;
 	u8* readBuffer = nullptr;
