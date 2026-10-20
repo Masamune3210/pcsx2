@@ -132,7 +132,13 @@ int ATA::Open(const std::string& hddPath)
 	hddImageSize = static_cast<u64>(size);
 	lba48Supported = (hddImageSize > ((static_cast<s64>(1) << 28) - 1) * 512);
 
-	CreateHDDinfo(hddImageSize / 512);
+	if (!LoadHPAState(hddPath))
+	{
+		Console.Error("DEV9: ATA: Invalid or unreadable HPA sidecar");
+		Close();
+		return -1;
+	}
+	CreateHDDinfo(HDD_GetAccessibleSectors());
 
 	InitSparseSupport(hddPath);
 
@@ -156,8 +162,8 @@ int ATA::Open(const std::string& hddPath)
 
 namespace
 {
-	// Both sidecars use exclusive temporary creation and a synced atomic replace.
-	bool SaveSMARTSidecar(const std::string& path, const u8* data, size_t size)
+	// Drive metadata uses exclusive temporary creation and a synced atomic replace.
+	bool SaveATAMetadataSidecar(const std::string& path, const u8* data, size_t size)
 	{
 		const std::string temporaryPath = path + ".tmp";
 		// Exclusive creation neither truncates nor follows a pre-existing temp entry.
@@ -198,16 +204,94 @@ namespace
 		const std::string directory = std::string(Path::GetDirectory(path));
 		const int directoryFD = open(directory.empty() ? "." : directory.c_str(), O_RDONLY | O_DIRECTORY);
 		if (directoryFD < 0)
-			Console.Error("DEV9: ATA: SMART metadata committed; unable to sync directory for power-loss durability");
+			Console.Error("DEV9: ATA: Drive metadata committed; unable to sync directory for power-loss durability");
 		else
 		{
 			if (fsync(directoryFD) != 0)
-				Console.Error("DEV9: ATA: SMART metadata committed; directory sync failed for power-loss durability");
+				Console.Error("DEV9: ATA: Drive metadata committed; directory sync failed for power-loss durability");
 			close(directoryFD);
 		}
 #endif
 		return true;
 	}
+}
+
+namespace
+{
+	constexpr size_t HPARecordSize = 40;
+
+	u32 HPARecordChecksum(const u8* data)
+	{
+		// CRC-32/ISO-HDLC covers all fields, including reserved bytes.
+		u32 crc = ~u32(0);
+		for (size_t i = 0; i < HPARecordSize - 4; ++i)
+		{
+			crc ^= data[i];
+			for (unsigned int bit = 0; bit < 8; ++bit)
+				crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0);
+		}
+		return ~crc;
+	}
+
+	u64 HPARecordValue(const u8* data, size_t offset, size_t size)
+	{
+		u64 value = 0;
+		for (size_t i = 0; i < size; ++i)
+			value |= u64(data[offset + i]) << (i * 8);
+		return value;
+	}
+
+	void HPARecordStore(u8* data, size_t offset, size_t size, u64 value)
+	{
+		for (size_t i = 0; i < size; ++i)
+			data[offset + i] = static_cast<u8>(value >> (i * 8));
+	}
+}
+
+bool ATA::LoadHPAState(const std::string& hddPath)
+{
+	hpaStatePath = (Path::IsAbsolute(hddPath) ? hddPath :
+		Path::Combine(FileSystem::GetWorkingDirectory(), hddPath)) + ".ata-hpa";
+	hpaCurrentSectors = hpaNonVolatileSectors = HDD_GetNativeSectors();
+	hpaNonVolatileSet = hpaReadNativeMaxReady = hpaLbaSetMax = false;
+	fetHostProtectedAreaEnabled = !lba48Supported;
+	errno = 0;
+	std::FILE* state = FileSystem::OpenCFile(hpaStatePath.c_str(), "rb");
+	if (!state)
+		return errno == ENOENT;
+	u8 data[HPARecordSize];
+	bool valid = std::fread(data, 1, sizeof(data), state) == sizeof(data) &&
+		std::fgetc(state) == EOF && !std::ferror(state);
+	if (std::fclose(state) != 0)
+		valid = false;
+	if (!valid)
+		return false;
+	valid = !lba48Supported && std::memcmp(data, "PCSX2HPA", 8) == 0 && data[8] == 1 &&
+		HPARecordValue(data, 36, 4) == HPARecordChecksum(data) &&
+		HPARecordValue(data, 16, 8) == HDD_GetNativeSectors();
+	for (size_t i = 9; i < 16; ++i)
+		valid = valid && data[i] == 0;
+	for (size_t i = 32; i < 36; ++i)
+		valid = valid && data[i] == 0;
+	const u64 sectors = HPARecordValue(data, 24, 8);
+	if (!valid || sectors == 0 || sectors > HDD_GetNativeSectors())
+		return false;
+	hpaCurrentSectors = hpaNonVolatileSectors = sectors;
+	return true;
+}
+
+bool ATA::SaveHPALimit(u64 sectors)
+{
+	if (!hddImage || hpaStatePath.empty() || lba48Supported ||
+		sectors == 0 || sectors > HDD_GetNativeSectors())
+		return false;
+	u8 data[HPARecordSize] = {};
+	std::memcpy(data, "PCSX2HPA", 8);
+	data[8] = 1;
+	HPARecordStore(data, 16, 8, HDD_GetNativeSectors());
+	HPARecordStore(data, 24, 8, sectors);
+	HPARecordStore(data, 36, 4, HPARecordChecksum(data));
+	return SaveATAMetadataSidecar(hpaStatePath, data, sizeof(data));
 }
 
 bool ATA::SaveSMARTSettings()
@@ -216,7 +300,7 @@ bool ATA::SaveSMARTSettings()
 		return false;
 	const u8 data[8] = {'P', 'C', 'S', 'X', '2', 'A', 1,
 		static_cast<u8>((fetSmartEnabled ? 1 : 0) | (smartAutosave ? 2 : 0))};
-	return SaveSMARTSidecar(smartSettingsPath, data, sizeof(data));
+	return SaveATAMetadataSidecar(smartSettingsPath, data, sizeof(data));
 }
 
 bool ATA::LoadSMARTState(const std::string& hddPath)
@@ -283,7 +367,7 @@ bool ATA::SaveSMARTState()
 		return false;
 	u8 data[512];
 	SMART_BuildData(data);
-	if (!SaveSMARTSidecar(smartStatePath, data, sizeof(data)))
+	if (!SaveATAMetadataSidecar(smartStatePath, data, sizeof(data)))
 	{
 		if (smartSaveFailures != ~u32(0))
 			++smartSaveFailures;
@@ -478,6 +562,8 @@ void ATA::Close()
 	pioDRQEndTransferFunc = nullptr;
 	pioDataOutComplete = nullptr;
 	diagnosticBufferValid = false;
+	pioReadErrorBlock = -1;
+	pioReadErrorSector = 0;
 	awaitFlush = false;
 	rdTransferred = wrTransferred = 0;
 	nsector = nsectorLeft = 0;
@@ -489,6 +575,7 @@ void ATA::Close()
 
 void ATA::ResetBegin()
 {
+	hpaReadNativeMaxReady = false;
 	SMART_Cancel();
 	// Synchronize with any file read before reusing its buffer/task file. Already
 	// accepted writes remain queued; only the unfinished host transfer is canceled.
@@ -502,6 +589,8 @@ void ATA::ResetBegin()
 	pioDRQEndTransferFunc = nullptr;
 	pioDataOutComplete = nullptr;
 	diagnosticBufferValid = false;
+	pioReadErrorBlock = -1;
+	pioReadErrorSector = 0;
 	waitingCmd = nullptr;
 	awaitFlush = false;
 	rdTransferred = wrTransferred = 0;
@@ -525,6 +614,7 @@ void ATA::ResetEnd(bool hard)
 	// persistent SMART state. UDMA selection always survives software reset.
 	if (hard || fetRevertToDefaults)
 	{
+		hpaLbaSetMax = false;
 		curHeads = 16;
 		curSectors = 63;
 		curCylinders = 0;
@@ -538,6 +628,8 @@ void ATA::ResetEnd(bool hard)
 	}
 	if (hard)
 	{
+		hpaCurrentSectors = hpaNonVolatileSectors;
+		hpaNonVolatileSet = false;
 		fetRevertToDefaults = true;
 		powerState = PowerState::Active;
 		udmaMode = -1;
@@ -914,7 +1006,7 @@ bool ATA::HDD_CanAccess(int* sectors)
 {
 	// Capacity is an exclusive count of complete sectors. Subtracting first
 	// avoids overflow, and an empty/sub-sector image has no valid seek address.
-	u64 capacity = std::min<u64>(hddImageSize / 512,
+	u64 capacity = std::min<u64>(HDD_GetAccessibleSectors(),
 		lba48 ? (1ULL << 48) - 1 : (1ULL << 28) - 1);
 	if ((regSelect & 0x40) == 0)
 		capacity = std::min<u64>(capacity, static_cast<u64>(curCylinders) * curHeads * curSectors);

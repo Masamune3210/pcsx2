@@ -6,6 +6,9 @@
 
 void ATA::IDE_ExecCmd(u16 value)
 {
+	// Task-file register writes do not break adjacency; every issued command does.
+	const bool precededByNativeMax = hpaReadNativeMaxReady;
+	hpaReadNativeMaxReady = false;
 	switch (value)
 	{
 		case 0x00:
@@ -123,6 +126,13 @@ void ATA::IDE_ExecCmd(u16 value)
 			HDD_SetFeatures();
 			break;
 
+		case 0xF8:
+			HDD_ReadNativeMaxAddress();
+			break;
+		case 0xF9:
+			HDD_SetMaxAddress(precededByNativeMax);
+			break;
+
 			//0xF1 = HDDsecSetPassword
 			//0xF2 = HDDsecUnlock
 			//0xF3 = HDDsecErasePrepare;
@@ -174,6 +184,8 @@ bool ATA::PreCmd()
 	pioDataOut = false;
 	pioDRQEndTransferFunc = nullptr;
 	pioDataOutComplete = nullptr;
+	pioReadErrorBlock = -1;
+	pioReadErrorSector = 0;
 	rdTransferred = wrTransferred = 0;
 	dmaReady = false;
 	if (HDD_ReportIOError())
