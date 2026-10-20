@@ -4,11 +4,20 @@
 
 ## Why this work exists
 
+Current user scope: PS2 host support goes up to ATA-4. Continue new command work
+within ATA-4; planned 27/37 HPA EXT additions were stopped before code/test edits.
+Preserve existing later extensions and inherited work. Do not infer PS2 host
+support from a later virtual-drive feature or a later draft. Standard ATA-4
+security/queued DMA/firmware download remain optional, unsupported and unclaimed.
+
 Continued command review corrected IDENTIFY ASCII byte ordering and the complete
 standalone 90h Device/Head signature, with two source-first prospective cases
 (77 ATA total). See [reasoning](DEV9_ATA_IDENTIFY_DIAGNOSTIC_FIX_20261020.md).
 Independent review checked the production changes and caught a test padding-count
-mistake, which was corrected. No compilation or executable tests were run.
+mistake, which was corrected. Checkpoint `7541ee7878` was pushed. No compilation
+or executable tests were run. Focused non-HPA review of command acceptance,
+PIO/DMA completion, reset, power, SMART and parameter handling found no additional
+established defect in this pass; that is source review, not runtime conformance.
 
 PS2 BB Navigator v0.32, SCPN-60160, boots Sony Linux 2.4.17_mvl21 from an HDD image. In the running EE-interpreter experiment, Linux *successfully* mounts `/dev/hda1`, but later gets ATA errors while mounting `/dev/hda4` and fails its ReiserFS journal replay. The host logged 27 `DEV9: ATA: Unknown cmd c5` in ~230–232s. Command `0xC5 WRITE MULTIPLE` is handled by fallback `HDD_Unk`, which explicitly sets ABRT/ERR and never drives the DATA register DRQ phase. This explains a concrete class of Linux `no DRQ after issuing MULTWRITE` errors. The guest has also logged `hda: timeout waiting for DMA`; host emitted `ATA DMA force break` earlier (~177s), so there is more to review than command `0xC5`. The screen progresses through blue-white animated orbs and later stays black while kernel and userspace still execute. The latter black-screen symptom and ATA errors are temporally associated but not yet proven one-to-one.
 
