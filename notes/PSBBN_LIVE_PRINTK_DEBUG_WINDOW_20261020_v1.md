@@ -1,5 +1,10 @@
 # PSBBN live Linux printk viewer (host-only, run12-validated ring)
 
+## Corrected producer cursor (source-checked 2026-10-20)
+
+A Sony PS2 Linux 2.4.17 source reference [kernel/printk.c](https://github.com/rickgaiser/linux-2.4.17-ps2/blob/master/kernel/printk.c) declares `static char log_buf[16384]`, then `unsigned long log_start`, `con_start`, `log_end` and `logged_chars` (each 4 bytes on PS2 MIPS). In raw snapshots #004, #020 and #038, the three neighboring words at physical 0x001FC4EC, 0x001FC4F0, and 0x001FC4F4 are respectively all 3511 then all 3607, so **snapshots alone could not distinguish the console-reader cursor from the write cursor**. Source-based layout identifies the actual producer `log_end` at **0x001FC4F4**. The observer now reads that, not 0x001FC4F0, because console output need not track printk writes when no guest console drains it. This historical source is a close reference, not authenticated byte-identical Sony BB Navigator 0.32 source; confirm these data symbol names/addresses against the native ELF table when possible. No guest changes or compilation performed.
+
+
 **Status:** PCSX2 Qt implementation committed; **not compiled or emulator-tested** per user's no-compilation instruction. No guest executable, kernel, HDD image, framebuffer, savestate, or ATA protocol semantics changed.
 
 ## How to use
@@ -20,14 +25,17 @@ Ghidra label/redeclaration:
 0x801F84E8 - 0x801FC4E7
 Type: char[0x4000]          # 16 KiB circular printk text
 
-0x801FC4F0 -> PSBBNPrintkWriteIndex
-Type: uint32_t             # monotonically advancing write cursor in this run
+0x801FC4F0 -> con_start
+Type: uint32_t             # console-reader cursor, NOT printk write index
 
-Additional observed 32-bit counters (exact guest names not established):
-0x801FC4EC -> PSBBNPrintkCounter0
+Adjacent PS2 Linux 2.4.17 source-derived candidate globals (verify against native ELF before mass renames):
+0x801FC4EC -> log_start
 Type: uint32_t
-0x801FC4F4 -> PSBBNPrintkCounter2
-Type: uint32_t
+0x801FC4F4 -> log_end
+Type: uint32_t             # actual printk producer write cursor
+
+0x801FC4F8 -> logged_chars
+Type: uint32_t             # printk character count
 ```
 
 The lower addresses are **physical EE offsets** with the KSEG0 `0x80000000` prefix omitted (`0x001F84E8` and `0x001FC4F0`). Witness text at buffer start: `<4>PlayStation 2 SIF BIOS:`.
