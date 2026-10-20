@@ -137,3 +137,16 @@ Recorded fresh checks: full-range whitespace; 31 bridge constants; all 256 CSV
 source-line references; 48 family rows; 40 ATA plus seven FIFO prospective cases.
 No compilation or executable test outcome is claimed. The final documentation-only
 checkpoint preserves this handoff; no production behavior changes after `2c39d25e37`.
+
+## Remaining-command implementation, 2026-10-20
+
+User requested currently unimplemented/incorrect commands. This checkpoint adds
+E4/E8 diagnostic buffer commands, SMART D0 data/D3 real persistence/D4 real offline
+collection, SET FEATURES66/CC volatile reset reversion, and safe power-up PIO2 and
+MDMA0 defaults while preserving higher supported modes and SRST UDMA selection.
+See the three focused buffer/SMART/command-semantics notes for clauses and design.
+There are now59 prospective ATA cases plus seven FIFO cases. No configuration,
+compilation, C++ execution, Windows build or PSBBN boot was performed. Fresh
+whitespace/bridge/source inventory checks and independent code review were used;
+no important defect was established by source review, which is limited evidence.
+Further optional command families remain separate work; HPA is the next candidate.

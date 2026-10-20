@@ -199,6 +199,7 @@ bool ATA::HDD_ReportIOError()
 	pioDataOut = false;
 	pioPtr = pioEnd = 0;
 	pioDRQEndTransferFunc = nullptr;
+	pioDataOutComplete = nullptr;
 	rdTransferred = wrTransferred = 0;
 	delete[] currentWrite;
 	currentWrite = nullptr;

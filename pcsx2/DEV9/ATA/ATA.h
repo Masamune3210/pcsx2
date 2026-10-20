@@ -39,8 +39,8 @@ private:
 	int hddNativeHandle = -1;
 #endif
 
-	int pioMode = 4;
-	int mdmaMode = 2;
+	int pioMode = 2;
+	int mdmaMode = 0;
 	int udmaMode = -1;
 
 	//Info
@@ -61,6 +61,7 @@ private:
 	std::string smartSettingsPath;
 	bool fetSecurityEnabled = false;
 	bool fetWriteCacheEnabled = true;
+	bool fetRevertToDefaults = true;
 	bool fetHostProtectedAreaEnabled = false;
 
 	//Regs
@@ -161,17 +162,32 @@ private:
 	int pioPtr = 0;
 	int pioEnd = 0;
 	u8 pioBuffer[512] = {};
+	u8 diagnosticBuffer[512] = {};
+	bool diagnosticBufferValid = false;
 	bool pioDataOut = false;
 	int pioWriteBlockStart = 0;
 
 	int sectorsPerInterrupt = 1;
 	void (ATA::*pioDRQEndTransferFunc)() = nullptr;
+	void (ATA::*pioDataOutComplete)() = nullptr;
 	//PIO Buffer
 
 	//Smart
 	bool smartAutosave = true;
 	bool smartErrors = false;
-	u8 smartSelfTestCount = 0;
+	std::string smartStatePath;
+	bool smartScanActive = false;
+	bool smartDirty = false;
+	u8 smartOfflineStatus = 0;
+	u32 smartScanStarted = 0;
+	u32 smartScanCompleted = 0;
+	u32 smartScanFailed = 0;
+	u32 smartScanInterrupted = 0;
+	u32 smartSaveFailures = 0;
+	u64 smartScanSector = 0;
+	u64 smartScanImageSectors = 0;
+	u64 smartLastFailureSector = ~u64(0);
+	u64 smartScanCycles = 0;
 	//Smart
 
 	u8 sceSec[256 * 2] = {0};
@@ -282,6 +298,9 @@ private:
 	void DRQCmdPIODataToHost(u8* buff, int buffLen, int buffIndex, int size, bool sendIRQ);
 	void PostCmdPIODataToHost();
 	void HDD_IdentifyDevice();
+	void HDD_ReadBuffer();
+	void HDD_WriteBuffer();
+	void HDD_WriteBufferComplete();
 
 	void HDD_ReadMultiple(bool isLBA48);
 	void HDD_ReadSectors(bool isLBA48);
@@ -296,6 +315,13 @@ private:
 	void SMART_ExecuteOfflineImmediate();
 	void SMART_EnableOps(bool enable);
 	void SMART_ReturnStatus();
+	void SMART_ReadData();
+	void SMART_BuildData(u8* data) const;
+	bool LoadSMARTState(const std::string& hddPath);
+	bool SaveSMARTState();
+	void SMART_Async(u32 cycles);
+	void SMART_Interrupt();
+	void SMART_Cancel();
 
 	void HDD_SCE();
 	void SCE_IDENTIFY_DRIVE();

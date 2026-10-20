@@ -66,6 +66,11 @@ int ATA::Open(const std::string& hddPath)
 		Console.Error("DEV9: ATA: Unable to read SMART settings sidecar");
 		return -1;
 	}
+	if (!LoadSMARTState(hddPath))
+	{
+		Console.Error("DEV9: ATA: Invalid or unreadable SMART data sidecar");
+		return -1;
+	}
 
 	DevCon.WriteLn("DEV9: ATA: HddFile : %s", hddPath.c_str());
 
@@ -149,59 +154,143 @@ int ATA::Open(const std::string& hddPath)
 	return 0;
 }
 
+namespace
+{
+	// Both sidecars use exclusive temporary creation and a synced atomic replace.
+	bool SaveSMARTSidecar(const std::string& path, const u8* data, size_t size)
+	{
+		const std::string temporaryPath = path + ".tmp";
+		// Exclusive creation neither truncates nor follows a pre-existing temp entry.
+		std::FILE* settings = FileSystem::OpenCFile(temporaryPath.c_str(), "wbx");
+		if (!settings)
+			return false;
+		bool success = std::fwrite(data, 1, size, settings) == size &&
+			std::fflush(settings) == 0;
+#ifdef _WIN32
+		if (success)
+			success = _commit(_fileno(settings)) == 0;
+#elif defined(__POSIX__)
+		if (success)
+			success = fsync(fileno(settings)) == 0;
+#else
+		success = false;
+#endif
+		if (std::fclose(settings) != 0)
+			success = false;
+		if (success)
+		{
+#ifdef _WIN32
+			const std::wstring source = FileSystem::GetWin32Path(temporaryPath);
+			const std::wstring target = FileSystem::GetWin32Path(path);
+			success = MoveFileExW(source.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+#else
+			success = FileSystem::RenamePath(temporaryPath.c_str(), path.c_str());
+#endif
+		}
+		if (!success)
+		{
+			FileSystem::DeleteFilePath(temporaryPath.c_str());
+			return false;
+		}
+		// Rename commits the setting. A later directory-sync failure cannot safely
+		// restore the old file, so retain the committed setting and report the limit.
+#if defined(__POSIX__)
+		const std::string directory = std::string(Path::GetDirectory(path));
+		const int directoryFD = open(directory.empty() ? "." : directory.c_str(), O_RDONLY | O_DIRECTORY);
+		if (directoryFD < 0)
+			Console.Error("DEV9: ATA: SMART metadata committed; unable to sync directory for power-loss durability");
+		else
+		{
+			if (fsync(directoryFD) != 0)
+				Console.Error("DEV9: ATA: SMART metadata committed; directory sync failed for power-loss durability");
+			close(directoryFD);
+		}
+#endif
+		return true;
+	}
+}
+
 bool ATA::SaveSMARTSettings()
 {
 	if (!hddImage || smartSettingsPath.empty())
 		return false;
 	const u8 data[8] = {'P', 'C', 'S', 'X', '2', 'A', 1,
 		static_cast<u8>((fetSmartEnabled ? 1 : 0) | (smartAutosave ? 2 : 0))};
-	const std::string temporaryPath = smartSettingsPath + ".tmp";
-	// Exclusive creation neither truncates nor follows a pre-existing temp entry.
-	std::FILE* settings = FileSystem::OpenCFile(temporaryPath.c_str(), "wbx");
-	if (!settings)
+	return SaveSMARTSidecar(smartSettingsPath, data, sizeof(data));
+}
+
+bool ATA::LoadSMARTState(const std::string& hddPath)
+{
+	smartStatePath = (Path::IsAbsolute(hddPath) ? hddPath :
+		Path::Combine(FileSystem::GetWorkingDirectory(), hddPath)) + ".ata-smart";
+	smartScanActive = smartDirty = smartErrors = false;
+	smartOfflineStatus = 0;
+	smartScanStarted = smartScanCompleted = smartScanFailed = smartScanInterrupted = smartSaveFailures = 0;
+	smartScanSector = smartScanImageSectors = smartScanCycles = 0;
+	smartLastFailureSector = ~u64(0);
+	errno = 0;
+	std::FILE* state = FileSystem::OpenCFile(smartStatePath.c_str(), "rb");
+	if (!state)
+		return errno == ENOENT;
+	u8 data[512];
+	bool valid = std::fread(data, 1, sizeof(data), state) == sizeof(data) &&
+		std::fgetc(state) == EOF && !std::ferror(state);
+	if (std::fclose(state) != 0)
+		valid = false;
+	if (!valid)
 		return false;
-	bool success = std::fwrite(data, 1, sizeof(data), settings) == sizeof(data) &&
-		std::fflush(settings) == 0;
-#ifdef _WIN32
-	if (success)
-		success = _commit(_fileno(settings)) == 0;
-#elif defined(__POSIX__)
-	if (success)
-		success = fsync(fileno(settings)) == 0;
-#else
-	success = false;
-#endif
-	if (std::fclose(settings) != 0)
-		success = false;
-	if (success)
+	u8 sum = 0;
+	for (u8 byte : data)
+		sum += byte;
+	valid = sum == 0 && data[0] == 1 && data[1] == 0 &&
+		std::memcmp(data + 386, "PCSX2VSMART", 11) == 0 && data[397] == 1 &&
+		(data[398] & ~1) == 0 && data[367] == 1 && data[368] == 2 && data[369] == 0;
+	for (size_t i = 370; i < 386; ++i)
+		valid = valid && data[i] == 0;
+	const u8 status = data[362];
+	valid = valid && (status == 0 || status == 2 || status == 4 || status == 5 || status == 6 || status == 0x40);
+	if (!valid)
+		return false;
+	const auto value = [&data](size_t offset, size_t size) {
+		u64 result = 0;
+		for (size_t i = 0; i < size; ++i)
+			result |= u64(data[offset + i]) << (i * 8);
+		return result;
+	};
+	smartErrors = (data[398] & 1) != 0;
+	smartOfflineStatus = status;
+	smartScanStarted = static_cast<u32>(value(400, 4));
+	smartScanCompleted = static_cast<u32>(value(404, 4));
+	smartScanFailed = static_cast<u32>(value(408, 4));
+	smartScanInterrupted = static_cast<u32>(value(412, 4));
+	smartScanSector = value(416, 8);
+	smartLastFailureSector = value(424, 8);
+	smartScanImageSectors = value(432, 8);
+	smartSaveFailures = static_cast<u32>(value(440, 4));
+	// A prior process cannot still be scanning this image. Do not fabricate a
+	// completed result or silently restart an interrupted verification on open.
+	if (status == 4 || status == 0x40)
 	{
-#ifdef _WIN32
-		const std::wstring source = FileSystem::GetWin32Path(temporaryPath);
-		const std::wstring target = FileSystem::GetWin32Path(smartSettingsPath);
-		success = MoveFileExW(source.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
-#else
-		success = FileSystem::RenamePath(temporaryPath.c_str(), smartSettingsPath.c_str());
-#endif
+		smartOfflineStatus = 5;
+		smartDirty = true;
 	}
-	if (!success)
+	return true;
+}
+
+bool ATA::SaveSMARTState()
+{
+	if (!hddImage || smartStatePath.empty())
+		return false;
+	u8 data[512];
+	SMART_BuildData(data);
+	if (!SaveSMARTSidecar(smartStatePath, data, sizeof(data)))
 	{
-		FileSystem::DeleteFilePath(temporaryPath.c_str());
+		if (smartSaveFailures != ~u32(0))
+			++smartSaveFailures;
+		smartDirty = true;
 		return false;
 	}
-	// Rename commits the setting. A later directory-sync failure cannot safely
-	// restore the old file, so retain the committed setting and report the limit.
-#if defined(__POSIX__)
-	const std::string directory = std::string(Path::GetDirectory(smartSettingsPath));
-	const int directoryFD = open(directory.empty() ? "." : directory.c_str(), O_RDONLY | O_DIRECTORY);
-	if (directoryFD < 0)
-		Console.Error("DEV9: ATA: SMART settings committed; unable to sync directory for power-loss durability");
-	else
-	{
-		if (fsync(directoryFD) != 0)
-			Console.Error("DEV9: ATA: SMART settings committed; directory sync failed for power-loss durability");
-		close(directoryFD);
-	}
-#endif
+	smartDirty = false;
 	return true;
 }
 
@@ -340,6 +429,7 @@ void ATA::InitSparseSupport(const std::string& hddPath)
 
 void ATA::Close()
 {
+	SMART_Cancel();
 	//Wait for async code to finish
 	if (ioRunning)
 	{
@@ -386,6 +476,8 @@ void ATA::Close()
 	pioPtr = pioEnd = 0;
 	waitingCmd = nullptr;
 	pioDRQEndTransferFunc = nullptr;
+	pioDataOutComplete = nullptr;
+	diagnosticBufferValid = false;
 	awaitFlush = false;
 	rdTransferred = wrTransferred = 0;
 	nsector = nsectorLeft = 0;
@@ -397,6 +489,7 @@ void ATA::Close()
 
 void ATA::ResetBegin()
 {
+	SMART_Cancel();
 	// Synchronize with any file read before reusing its buffer/task file. Already
 	// accepted writes remain queued; only the unfinished host transfer is canceled.
 	std::lock_guard ioSignallock(ioMutex);
@@ -407,6 +500,8 @@ void ATA::ResetBegin()
 	pioDataOut = false;
 	pioPtr = pioEnd = 0;
 	pioDRQEndTransferFunc = nullptr;
+	pioDataOutComplete = nullptr;
+	diagnosticBufferValid = false;
 	waitingCmd = nullptr;
 	awaitFlush = false;
 	rdTransferred = wrTransferred = 0;
@@ -426,31 +521,30 @@ void ATA::ResetBegin()
 }
 void ATA::ResetEnd(bool hard)
 {
-	curHeads = 16;
-	curSectors = 63;
-	curCylinders = 0;
-	curCHSValid = true;
-	curMultipleSectorsSetting = 128;
-	if (powerState == PowerState::Sleep)
-		powerState = PowerState::Standby;
-	standbyRemaining = standbyPeriod;
-
-	//UDMA Mode setting is preserved
-	//across SRST
+	// Reverting controls volatile command settings, not transfer cancellation or
+	// persistent SMART state. UDMA selection always survives software reset.
+	if (hard || fetRevertToDefaults)
+	{
+		curHeads = 16;
+		curSectors = 63;
+		curCylinders = 0;
+		curCHSValid = true;
+		curMultipleSectorsSetting = 128;
+		fetWriteCacheEnabled = true;
+		pioMode = 2;
+		if (hard || udmaMode == -1)
+			mdmaMode = 0;
+		standbyPeriod = 0;
+	}
 	if (hard)
 	{
+		fetRevertToDefaults = true;
 		powerState = PowerState::Active;
-		standbyPeriod = standbyRemaining = 0;
-		pioMode = 4;
-		mdmaMode = 2;
 		udmaMode = -1;
 	}
-	else
-	{
-		pioMode = 4;
-		if (udmaMode == -1)
-			mdmaMode = 2;
-	}
+	else if (powerState == PowerState::Sleep)
+		powerState = PowerState::Standby;
+	standbyRemaining = standbyPeriod;
 
 	regStatus |= ATA_STAT_SEEK;
 	regStatusSeekLock = 0;
@@ -659,6 +753,7 @@ void ATA::Write(u32 addr, u16 value, int width)
 			// Device 1 is absent. EXECUTE DEVICE DIAGNOSTIC addresses both devices.
 			if (GetSelectedDevice() != 0 && value != 0x90)
 				return;
+			SMART_Interrupt();
 			//DevCon.WriteLn("DEV9: ATA: ATA_R_CMD %dbit write %x", width, value);
 			regCommand = value;
 			regControlHOBRead = false;
@@ -732,6 +827,7 @@ void ATA::Async(u32 cycles)
 			}
 		}
 	}
+	SMART_Async(cycles);
 }
 
 s64 ATA::HDD_GetLBA()

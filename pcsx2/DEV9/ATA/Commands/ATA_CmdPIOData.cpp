@@ -75,6 +75,19 @@ void ATA::ATAwritePIO(u16 value)
 
 	memcpy(currentWrite + wrTransferred, &value, sizeof(value));
 	wrTransferred += sizeof(value);
+	if (pioDataOutComplete != nullptr)
+	{
+		if (static_cast<u32>(wrTransferred) == currentWriteLength)
+		{
+			const auto complete = pioDataOutComplete;
+			pioDataOutComplete = nullptr;
+			pioDataOut = false;
+			regStatus &= ~ATA_STAT_DRQ;
+			regStatus |= ATA_STAT_BUSY;
+			(this->*complete)();
+		}
+		return;
+	}
 	if (wrTransferred % 512 != 0)
 		return;
 
@@ -140,6 +153,44 @@ void ATA::HDD_IdentifyDevice()
 
 	pioDRQEndTransferFunc = nullptr;
 	DRQCmdPIODataToHost(identifyData, 256 * 2, 0, 256 * 2, true);
+}
+
+void ATA::HDD_ReadBuffer()
+{
+	if (!PreCmd())
+		return;
+	// The ATA-4 prerequisite is a preceding completed WRITE BUFFER. Do not
+	// expose an unfinished buffer or memory left over from an image transfer.
+	if (!diagnosticBufferValid)
+	{
+		CmdNoDataAbort();
+		return;
+	}
+	DRQCmdPIODataToHost(diagnosticBuffer, sizeof(diagnosticBuffer), 0, sizeof(diagnosticBuffer), true);
+}
+
+void ATA::HDD_WriteBuffer()
+{
+	if (!PreCmd())
+		return;
+	currentWriteLength = sizeof(diagnosticBuffer);
+	currentWrite = new u8[currentWriteLength];
+	diagnosticBufferValid = false;
+	pioDataOut = true;
+	pioDataOutComplete = &ATA::HDD_WriteBufferComplete;
+	regStatus &= ~ATA_STAT_BUSY;
+	regStatus |= ATA_STAT_DRQ;
+}
+
+void ATA::HDD_WriteBufferComplete()
+{
+	memcpy(diagnosticBuffer, currentWrite, sizeof(diagnosticBuffer));
+	diagnosticBufferValid = true;
+	delete[] currentWrite;
+	currentWrite = nullptr;
+	currentWriteLength = 0;
+	wrTransferred = 0;
+	PostCmdNoData();
 }
 
 //Read Buffer

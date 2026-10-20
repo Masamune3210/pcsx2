@@ -131,6 +131,12 @@ void ATA::HDD_SetFeatures()
 			awaitFlush = true; //Flush Cache
 			Async(static_cast<u32>(-1));
 			return;
+		case 0x66: // Preserve modified settings across software reset.
+			fetRevertToDefaults = false;
+			break;
+		case 0xCC: // Restore the default software-reset reversion policy.
+			fetRevertToDefaults = true;
+			break;
 		case 0x03: //Set transfer mode
 		{
 			const u8 xferMode = regNsector;
@@ -146,7 +152,7 @@ void ATA::HDD_SetFeatures()
 						return;
 					}
 					DevCon.WriteLn("DEV9: PIO Default");
-					pioMode = 4;
+					pioMode = 2;
 					break;
 				case 0x01: //PIO modes 0-4; advanced modes are in IDENTIFY word 64.
 					if (mode > 4)
