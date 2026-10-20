@@ -18,10 +18,19 @@ The guest Linux 2.4.17_mvl21 mounts root /dev/hda1, then later fails a ReiserFS 
 
 ## Current state
 
+The user's latest scope clarification is that the PS2 host goes up to ATA-4.
+Further new command work is bounded to that command set. Planned HPA EXT 27/37
+work was stopped before any production or test edits; existing later extensions
+remain as they stand. Researching a later drive command does not establish PS2
+host support. Remaining ATA-4 optional profiles (standard security, queued DMA,
+firmware download) remain unsupported and unclaimed; their absence must not be
+confused with missing mandatory fixed-HDD commands.
+
 Latest continued-command corrections: IDENTIFY ASCII word ordering and the full
 standalone EXECUTE DEVICE DIAGNOSTIC signature are corrected. See
 [rationale and prospective regressions](DEV9_ATA_IDENTIFY_DIAGNOSTIC_FIX_20261020.md).
-The regression source now has 77 ATA cases; all remain uncompiled and unrun.
+Pushed production checkpoint: `7541ee7878`. The regression source now has 77 ATA
+cases; all remain uncompiled and unrun.
 
 Production fixes are checkpointed at `58dc04a4fe` (FIFO) and `874309ca1c`
 (ATA state, PIO writes, I/O ordering/errors, power, parameters and SMART).
