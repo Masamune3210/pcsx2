@@ -17,12 +17,35 @@ The guest Linux 2.4.17_mvl21 mounts root /dev/hda1, then later fails a ReiserFS 
 - Tests for real sector persistence, transfer word counts, multiblock boundaries, zero sector-count semantics, DRQ/IRQ transitions, reset and invalid LBA.
 
 ## Current state
-Historical comparison baseline (superseded by implementation below): first source pass completed against baseline `0dcd36309877d5da59344893d61c7a374a7851e3`. No production behavior changed. See [checkpointed source findings](DEV9_ATA4_HDD_SOURCE_FINDINGS_20261019.md) for fourteen findings with evidence, priorities, reproduction plans and validation limits, and [command coverage/regression plan](DEV9_ATA4_HDD_COVERAGE_20261019.md) for the protocol inventory. User instructions: **no compiling**, document reasoning for changes, and push checkpoints to this branch. The Ghidra extension is deferred.
 
-## Next step
-The requested full command-set source comparison is now complete against retrieved T13/1153D revision 18 (a working draft, not a final-standard certification): [comparison and evidence](DEV9_ATA4_COMMAND_SET_COMPARE_20261019.md), [all 48 command families](DEV9_ATA4_COMMAND_MATRIX_20261019.md), and [all 256 opcode bytes](DEV9_ATA4_OPCODE_INVENTORY_20261019.csv). For a >8 GB LBA-only fixed HDD, 18 unconditional families occupy 23 bytes; 12 have direct cases and 11 encodings are missing (`21 30 31 41 C5 C9 CB E0 E2 E5 E6`). Add conditional CHS command `91` when its geometry profile applies. Handler counts are not test passes. Basic Power Management is mandatory; SMART autosave uses the wrong register; SET FEATURES violates unsupported-parameter and independent-mode rules. Exact clauses, optional-feature distinctions and later/Sony extensions are documented in the comparison. Keep PS2/SPEED controller capability, physical Sony drive evidence and virtual drive features separate. No production changes or compilation.
+Production fixes are checkpointed at `58dc04a4fe` (FIFO) and `874309ca1c`
+(ATA state, PIO writes, I/O ordering/errors, power, parameters and SMART).
+The final lifecycle checkpoint adds closed-image command rejection, FIFO
+cancellation generation tracking, and HDD-enabled save/load preflight rejection.
+See the [implementation ledger](DEV9_ATA_IMPLEMENTATION_20261020.md),
+[current 48-family matrix](DEV9_ATA4_COMMAND_MATRIX_20261019.md) and
+[256-byte inventory](DEV9_ATA4_OPCODE_INVENTORY_20261019.csv).
+All 23 compared mandatory LBA-only encodings now dispatch. This is source coverage,
+not runtime conformance or proof of PSBBN recovery.
 
-Follow the correction order and test plan in the source findings. Keep fixes independently reviewable, document their reasoning, and push checkpoints. Stay within `pcsx2/DEV9/ATA/**`, its `DEV9.cpp` bridge, HDD I/O and focused tests, tracing integration callers only as needed. **Do not compile:** this current user instruction takes precedence over earlier build suggestions in the notes. Compiled regression tests, Windows MSBuild `Release AVX2|x64` and PSBBN cold boots remain unrun; source inspection does not establish a working fix or the cause of the guest panic.
+The tree contains 40 prospective ATA disposable-image cases and seven registered
+FIFO cases. Whitespace and source inventory/bridge checks plus independent review
+were performed. **No compilation, CMake configuration, C++ tests, Windows build,
+sanitizers or guest boot ran.** The Ghidra extension remains untouched.
+
+## Next verification
+
+When builds are authorized, follow the [regression instructions](../tests/ctest/ata/README.md),
+then build the user's Windows `PCSX2_qt.slnx` in `Release AVX2|x64` and cold boot a
+disposable PSBBN clone. Check root and hda4 mounts, journal replay, and remaining
+DMA timeouts. Force-break hardware behavior and host write/flush-failure injection
+remain unverified. The `.ata-settings` sidecar preserves SMART configuration and
+must accompany a moved/cloned image for identical settings.
+
+HDD-enabled save/load now fails before guest-state mutation; existing HDD states
+cannot safely restore the external disk. See the [policy and compatibility limits](DEV9_ATA_SAVESTATE_POLICY_20261020.md).
+Full device/image snapshot restore and undocumented Sony authentication remain
+unimplemented. Disabling HDD is not a valid way to recover an old HDD guest state.
 
 ## Implementation checkpoint, 2026-10-20
 
@@ -46,3 +69,19 @@ All23 compared mandatory LBA-only opcode bytes now dispatch; this is source
 coverage, not runtime conformance. Added39 prospective ATA integration cases and
 registered seven FIFO cases. Source checks/independent review only; **no compiling
 or runtime execution**. Save-state safety policy is a separate pending checkpoint.
+
+## Final lifecycle checkpoint, 2026-10-20
+
+Closed-image writes are ignored even when Ethernet keeps DEV9 decoding enabled;
+close clears transfer/IRQ/FIFO state. FIFO callbacks apply progress only if their
+bridge generation remains current, preventing a deferred host error's cancellation
+from being overwritten by a returning DMA callback. Added a prospective closed-image
+regression, bringing ATA cases to 40. HDD save/load preflight rejects unsupported
+restoration before capture/load mutation or the public load-failure reset path.
+SaveState/VMManager edits are the necessary direct integration for finding F13;
+there are no EE/JIT/kernel or image-format changes. Full F13 snapshot restore remains
+a design gap, explicitly bounded by the preflight policy. No runtime validation.
+
+Final error-code review also distinguishes read UNC from write DF/ABRT; write
+bit6 would incorrectly imply write protection in ATA-4. This was checked against
+the retrieved draft's read/write error-output clauses, not executed on hardware.

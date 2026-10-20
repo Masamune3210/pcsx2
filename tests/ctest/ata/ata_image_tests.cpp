@@ -1094,6 +1094,25 @@ namespace
 	}
 #endif
 
+	TEST_F(ATAImageTest, ClosedImageCannotResumeOrStartATransfer)
+	{
+		Address(17, 2);
+		Command(0x30);
+		ASSERT_NE(Status() & ATA_STAT_DRQ, 0);
+		drive->Write(ATA_R_DATA, 0xCAFE, 16);
+		drive->Close();
+		for (u8 command : {0x20, 0x30, 0xC8, 0xCA, 0xE7})
+		{
+			Address(17, 1);
+			Command(command);
+			drive->Write(ATA_R_DATA, 0xBEEF, 16);
+			drive->Async(1);
+			EXPECT_EQ(Status() & (ATA_STAT_BUSY | ATA_STAT_DRQ), 0);
+			EXPECT_EQ(drive->Read(ATA_R_DATA, 16), 0xFFFF);
+		}
+		EXPECT_EQ(DiskBytes(), initial);
+	}
+
 	TEST_F(ATAImageTest, ClearingHobInControlSelectsLowTaskFileBytes)
 	{
 		drive->Write(ATA_R_NSECTOR, 0x9A, 8);

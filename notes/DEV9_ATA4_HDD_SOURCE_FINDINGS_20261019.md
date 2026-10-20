@@ -1,5 +1,12 @@
 # DEV9 ATA-4 source audit checkpoints
 
+**Baseline findings, retained as evidence.** Corrective production changes are now
+checkpointed at `58dc04a4fe` / `874309ca1c`; see the
+[implementation ledger](DEV9_ATA_IMPLEMENTATION_20261020.md) for F1-F12/F14,
+reset/persistence decisions and validation limits. F13 has a separate preflight
+safety policy rather than full disk snapshot/restore. No compiled or guest tests
+have run. The reproductions below remain required future validation.
+
 Date: 2026-10-19 (America/Chicago)
 
 ## Scope and evidence

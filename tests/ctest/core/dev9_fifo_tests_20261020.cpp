@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-// Deliberately unregistered while compilation is prohibited. Link with the real
-// PCSX2 DEV9.cpp; do not substitute a copy of its FIFO implementation.
+// Registered in core_test against the real PCSX2 DEV9.cpp. Compilation and
+// execution remain unrun; do not substitute a copy of the FIFO implementation.
 #include "DEV9/DEV9.h"
 
 #include <gtest/gtest.h>
@@ -179,6 +179,7 @@ TEST_F(DEV9FIFO, CounterRebasePreservesRingPositionAtSignedLimit)
 
 TEST_F(DEV9FIFO, ResetDiscardsPendingIOPTransferAndBufferedBytes)
 {
+	const u32 generation = dev9.fifo_generation;
 	dev9.fifo_bytes_read = 12;
 	dev9.fifo_bytes_write = 512;
 	dev9.dma_iop_size = 1024;
@@ -191,5 +192,6 @@ TEST_F(DEV9FIFO, ResetDiscardsPendingIOPTransferAndBufferedBytes)
 	EXPECT_EQ(dev9.dma_iop_ptr, nullptr);
 	EXPECT_EQ(dev9.dma_iop_size, 0);
 	EXPECT_EQ(dev9.dma_iop_transfered, 0);
+	EXPECT_NE(dev9.fifo_generation, generation);
 }
 } // namespace

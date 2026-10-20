@@ -25,7 +25,7 @@ cadence and DRQ lifetime, zero-count encoding for 256 sectors, 128-sector
 multiple blocks with a 130-sector tail, final task-file progress, EOF/empty and
 one-sector images, crossing EOF with valid-prefix transfer and first-invalid-LBA
 error, SRST of partial data and accepted blocks, absent-device isolation,
-unsupported data widths, nIEN/pending IRQ/status acknowledgement, HOB clear,
+closed-image command rejection, unsupported data widths, nIEN/pending IRQ/status acknowledgement, HOB clear,
 CHS first/last sector roundtrips and invalid addresses after negotiated geometry,
 SEEK/INITIALIZE/SET MULTIPLE/SET FEATURES/SMART parameter validation, IDENTIFY
 claims, SMART enable/autosave persistence and sidecar failure handling, cached-write immediate read, cache-disable

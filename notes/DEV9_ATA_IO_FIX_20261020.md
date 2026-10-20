@@ -14,7 +14,7 @@ Keeping the mutex during host I/O deliberately favors correctness and a simple o
 
 `IO_Flush` performs `fflush` followed by `FlushFileBuffers` on Windows or `fsync` on POSIX. The native handle is obtained from the stream, including when sparse optimization is disabled. An empty queue alone does not establish either completion or durability. FLUSH CACHE, cache disable, and writes with caching disabled must complete through the durable-flush path after all queued/in-flight writes finish. Shutdown joins the draining worker before flushing/closing.
 
-Host seek/read/short-write/flush failures no longer invoke `abort`. The worker records an error and the emulation thread reports ATA ERR/ECC, adding WRERR for write failures and clearing the transfer phase. A short read records its first unread sector; a short write records the first uncompleted sector. A durability failure cannot identify an exact failed sector, so it retains the last attempted write range's starting LBA. The first deferred write fault remains sticky until reopen, including across guest reset. New commands and later flushes must not acknowledge success after such a fault.
+Host seek/read/short-write/flush failures no longer invoke `abort`. The worker records an error and the emulation thread reports ATA ERR/UNC for read failures and DF/ABRT for write failures and clearing the transfer phase. A short read records its first unread sector; a short write records the first uncompleted sector. A durability failure cannot identify an exact failed sector, so it retains the last attempted write range's starting LBA. The first deferred write fault remains sticky until reopen, including across guest reset. New commands and later flushes must not acknowledge success after such a fault.
 
 A command acknowledged with the emulated write cache enabled cannot have that acknowledgement retracted if a later host write fails. Failed buffers are freed after the checked host attempt; the sticky error prevents subsequent success from silently hiding the failure. Already accepted remaining queued entries are still attempted and shutdown still drains them. This is error reporting, not rollback or a guarantee of recoverable data after a host storage failure.
 
@@ -40,3 +40,10 @@ The optional debug zero checker now reads into its separate temporary buffer and
 Executed: `git diff --check` and targeted source inspection of queue operations, error paths, allocation ownership, stream/native flushing, and callers. No compilation or runtime tests were executed. The separate ATA regression source is maintained by the regression task and must be built/run later.
 
 Required runtime verification on disposable images: cached write immediately followed by a read before the next async tick; repeated overlapping writes/readback; FLUSH while the final dequeued write is in flight; flush with an empty queue; disabled-cache writes and cache-disable completion; shutdown/reopen readback; truncate/read failure and write/flush fault injection; reset during a queued read/write; buffer growth beyond 256 sectors; zero/nonzero sparse chunks and unsupported-hole-punch fallback. Windows native flush behavior and PSBBN recovery remain unverified.
+
+Final error-code review: ATA-4 write Error bit6 means write protection, whereas
+read bit6 means UNC. Host write/flush failure therefore reports DF/ABRT, not a false
+write-protect indication; read failures retain UNC. Clauses8.27.6/8.48.6 allow the
+first-error address with an indeterminate amount transferred. Residual count and
+normal next-address progression are useful emulation choices, not additional
+ATA-4 mandatory outputs. Host-failure injection remains unrun.

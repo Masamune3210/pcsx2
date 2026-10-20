@@ -82,7 +82,7 @@ void ATA::HDD_Recalibrate()
 
 	lba48 = false;
 	// Report minimum address (LBA 0 or CHS 0/0/1).
-	// SetLBA currently only supports LBA, so set the regs directly.
+	// Set the task file directly so recalibration also repairs an invalid CHS.
 	regSelect = regSelect & 0xf0;
 	regHcyl = 0;
 	regLcyl = 0;

@@ -236,6 +236,7 @@ void DEV9ResetATAFIFO()
 {
 	// Reset discards bridge data and cancels the pending IOP buffer. This is
 	// cancellation, so do not signal successful DMA completion here.
+	++dev9.fifo_generation;
 	dev9.fifo_bytes_read = 0;
 	dev9.fifo_bytes_write = 0;
 	dev9.dma_iop_ptr = nullptr;
@@ -276,6 +277,7 @@ void HDDWriteFIFO()
 	pxAssert((dev9.if_ctrl & SPD_IF_READ));
 	if (!PrepareFIFOCounters())
 		return;
+	const u32 generation = dev9.fifo_generation;
 
 	const int unread = (dev9.fifo_bytes_write - dev9.fifo_bytes_read);
 	const int space = (SPD_DBUF_AVAIL_MAX * 512 - unread);
@@ -298,7 +300,8 @@ void HDDWriteFIFO()
 		read = dev9.ata->ReadDMAToFIFO(dev9.fifo + base, space);
 	}
 
-	dev9.fifo_bytes_write += read;
+	if (generation == dev9.fifo_generation)
+		dev9.fifo_bytes_write += read;
 }
 void HDDReadFIFO()
 {
@@ -306,6 +309,7 @@ void HDDReadFIFO()
 	pxAssert((dev9.if_ctrl & SPD_IF_READ) == 0);
 	if (!PrepareFIFOCounters())
 		return;
+	const u32 generation = dev9.fifo_generation;
 
 	const int unread = (dev9.fifo_bytes_write - dev9.fifo_bytes_read);
 	const int base = dev9.fifo_bytes_read % (SPD_DBUF_AVAIL_MAX * 512);
@@ -327,7 +331,10 @@ void HDDReadFIFO()
 		write = dev9.ata->WriteDMAFromFIFO(dev9.fifo + base, unread);
 	}
 
-	dev9.fifo_bytes_read += write;
+	// Completion may discover a deferred host error and cancel the bridge.
+	// Do not resurrect its old progress after that cancellation returns.
+	if (generation == dev9.fifo_generation)
+		dev9.fifo_bytes_read += write;
 }
 void IOPReadFIFO()
 {
@@ -470,7 +477,7 @@ void DEV9runFIFO()
 			HDDWriteFIFO();
 		}
 
-		if (iopXfer)
+		if (iopXfer && dev9.dma_iop_ptr != nullptr)
 		{
 			// Perform DMA to IOP.
 			IOPReadFIFO();

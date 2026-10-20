@@ -2036,6 +2036,9 @@ std::string VMManager::GetCurrentSaveStateFileName(s32 slot, bool backup)
 
 bool VMManager::DoLoadState(const char* filename, Error* error)
 {
+	if (!SaveState_CheckHDDStateSupport(error))
+		return false;
+
 	if (GSDumpReplayer::IsReplayingDump())
 	{
 		Error::SetString(error, TRANSLATE_STR("VMManager", "Cannot load state while replaying a GS dump."));
@@ -2190,6 +2193,10 @@ u32 VMManager::DeleteSaveStates(const char* game_serial, u32 game_crc, bool also
 
 bool VMManager::LoadState(const char* filename, Error* error)
 {
+	// A policy rejection must not reach the reset-on-load-failure path below.
+	if (!SaveState_CheckHDDStateSupport(error))
+		return false;
+
 	if (Achievements::IsHardcoreModeActive())
 	{
 		Error::SetString(error,
