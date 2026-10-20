@@ -1,5 +1,11 @@
 # ATA corrective implementation, 2026-10-20
 
+## Current status correction: HDD savestates (2026-10-20)
+
+The user explicitly directed removal of the HDD-enabled savestate ban. `SaveState_CheckHDDStateSupport` and its capture/load guards were reverted exactly in `SaveState.cpp`, `SaveState.h`, and `VMManager.cpp` (commits `74a6308c057f`, `6980793d5957`, `8a8c4d4b9873`). Any older sections in this implementation ledger describing save/load as blocked are **historical, not current**. Diagnostic snapshots and ordinary load behavior are restored; no external disk rollback or ATA/DEV9 serialization is claimed. User knowingly accepts the disk-image limitation. Do not reintroduce the restriction.
+
+
+
 Source changes implement the [fix plan](DEV9_ATA_FIX_PLAN_20261020.md), following
 source findings F1-F14 and the ATA-4 comparison. They are **not runtime-validated**:
 the user prohibits compilation, so no CMake configure, compiler, C++ test, Windows
