@@ -1,5 +1,10 @@
 # Codex instructions: DEV9 ATA HDD audit branch
 
+## Current focused mission (2026-10-20)
+
+Read `notes/PSBBN_RUN12_DEV9_DMA_TIMEOUT_MISSION_20261020_v1.md` for the active run12 DMA timeout investigation. This supersedes the broad audit as the immediate focus, **without** discarding existing ATA-4 scope, source fixes or review handoffs. Reconstruct the failed ATA -> SPEED FIFO -> IOP DMA8 -> IRQ transaction and distinguish host vs guest cause of `ATA DMA force break`. Write narrowly scoped tests/instrumentation; **do not compile or run tests** unless user authorizes. Explicit user decision: **do not disable HDD-enabled savestates**, including scheduled PSBBN forensic capture; prior blocking guard was reverted. This guidance is for Codex continuing on the existing branch.
+
+
 **Active branch:** `note-working/dev9-ata4-hdd-audit-20261019`
 
 **First action:** Read `notes/DEV9_ATA4_HDD_AUDIT_20261019.md` and `notes/DEV9_ATA4_CODEX_WORKPLAN_20261019_v1.md` before browsing code. This is an existing, active branch. Stay on it unless the user requests otherwise. Preserve all baseline changes inherited from `note-working/psbbn-tlb-boot-20261017`.
