@@ -389,6 +389,10 @@ void ATA::Close()
 	awaitFlush = false;
 	rdTransferred = wrTransferred = 0;
 	nsector = nsectorLeft = 0;
+	regStatus = 0;
+	pendingInterrupt = false;
+	dev9.irqcause &= ~ATA_INTR_INTRQ;
+	DEV9ResetATAFIFO();
 }
 
 void ATA::ResetBegin()
@@ -550,6 +554,10 @@ u16 ATA::Read(u32 addr, int width)
 
 void ATA::Write(u32 addr, u16 value, int width)
 {
+	// DEV9 Ethernet may remain enabled after the image is closed/disabled.
+	// Its shared address decoder can still deliver ATA writes in that state.
+	if (hddImage == nullptr)
+		return;
 	if (addr == ATA_R_DATA)
 	{
 		if (width == 16)

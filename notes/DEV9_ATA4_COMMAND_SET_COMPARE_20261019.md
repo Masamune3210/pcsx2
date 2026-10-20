@@ -1,5 +1,13 @@
 # Full ATA-4 command-set source comparison
 
+**Historical baseline analysis below.** The2026-10-20 corrective implementation
+is checkpointed at `874309ca1c`; see the [current implementation ledger](DEV9_ATA_IMPLEMENTATION_20261020.md)
+and updated family matrix/CSV. All 23 compared mandatory LBA-only encodings now
+dispatch; real PIO writes, PM states/timer, SMART persistence, mode/error handling
+and capability corrections are implemented. The original gap counts/line evidence
+below describe the audited baseline, not the corrected tree. No runtime conformance
+or successful guest boot is claimed; no compilation was run.
+
 Status: **command-set source comparison complete** against the retrieved
 T13/1153D revision-18 working draft: [all 48 defined command families](DEV9_ATA4_COMMAND_MATRIX_20261019.md),
 [all 256 command bytes](DEV9_ATA4_OPCODE_INVENTORY_20261019.csv), feature-set
