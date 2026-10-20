@@ -703,23 +703,8 @@ static const std::unique_ptr<BaseSavestateEntry> SavestateEntries[] = {
 	std::unique_ptr<BaseSavestateEntry>(new SaveStateEntry_Achievements),
 };
 
-bool SaveState_CheckHDDStateSupport(Error* error)
-{
-	if (!EmuConfig.DEV9.HddEnable)
-		return true;
-
-	// CPU/IOP state alone cannot restore ATA/FIFO state or roll back writes
-	// already accepted by the external image. Reject before touching state.
-	Error::SetString(error, TRANSLATE_STR("SaveState",
-		"Save states are unavailable while the emulated HDD is enabled because the disk image is not saved/restored."));
-	return false;
-}
-
 std::unique_ptr<ArchiveEntryList> SaveState_DownloadState(Error* error)
 {
-	if (!SaveState_CheckHDDStateSupport(error))
-		return nullptr;
-
 	std::unique_ptr<ArchiveEntryList> destlist = std::make_unique<ArchiveEntryList>();
 	destlist->GetBuffer().resize(1024 * 1024 * 64);
 
@@ -1172,9 +1157,6 @@ static bool LoadInternalStructuresState(zip_t* zf, s64 index, Error* error)
 
 bool SaveState_UnzipFromDisk(const std::string& filename, Error* error)
 {
-	if (!SaveState_CheckHDDStateSupport(error))
-		return false;
-
 	zip_error_t ze = {};
 	auto zf = zip_open_managed(filename.c_str(), ZIP_RDONLY, &ze);
 	if (!zf)
