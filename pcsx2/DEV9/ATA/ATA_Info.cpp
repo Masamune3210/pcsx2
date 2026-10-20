@@ -27,6 +27,9 @@ void ATA::WritePaddedString(u8* data, int* index, const std::string& value, u32 
 {
 	memset(&data[*index], (u8)' ', len);
 	memcpy(&data[*index], value.c_str(), value.length() < len ? value.length() : len);
+	// ATA strings put the first character in DD15:8, unlike numeric fields.
+	for (u32 i = 0; i + 1 < len; i += 2)
+		std::swap(data[*index + i], data[*index + i + 1]);
 	*index += len;
 }
 

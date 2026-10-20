@@ -7,6 +7,9 @@ build, sanitizer, or PSBBN boot was run. No user image was opened or modified.
 
 ## Implemented corrections
 
+Continued command fixes correct IDENTIFY ASCII word byte order and the standalone
+90h full Device/Head signature. See [rationale](DEV9_ATA_IDENTIFY_DIAGNOSTIC_FIX_20261020.md).
+
 | Finding / gap | Implementation and reasoning |
 | --- | --- |
 | FIFO wrap / invalid lengths | Checkpoint `58dc04a4fe`; second wrapped copy targets ring start, invalid counter/residual pairs cannot become negative copy sizes, shared rebasing prevents signed overflow. See FIFO rationale. |
