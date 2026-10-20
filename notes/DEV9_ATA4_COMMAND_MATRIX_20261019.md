@@ -36,7 +36,7 @@ M = mandatory General; M-PM = mandatory basic Power Management; CHS = geometry-d
 | 8.19 | MEDIA UNLOCK | `DF` | RM | Non-data command (see 9.9). | ABRT; feature not advertised / optional not implemented |
 | 8.20 | NOP | `00` | O | Non-data (see 9.9). | Present intentional ABRT; no queued commands |
 | 8.21 | PACKET | `A0` | P | Packet (see 9.11). | ABRT; correct for fixed non-PACKET profile |
-| 8.22 | READ BUFFER | `E4` | O | PIO data in (see 9.7). | ABRT; feature not advertised / optional not implemented |
+| 8.22 | READ BUFFER | `E4` | O | PIO data in (see 9.7). | Implemented E4 diagnostic PIO data-in; one sector, no media writes; unrun |
 | 8.23 | READ DMA | `C8 C9` | M | DMA (see 9.10). | C8/C9 decode; DMA bounds/reset/coherence corrections; unrun |
 | 8.24 | READ DMA QUEUED | `C7` | Q | DMA QUEUED (see 9.12). | ABRT; feature not advertised / optional not implemented |
 | 8.25 | READ MULTIPLE | `C4` | M | PIO data in (see 9.7). | Multiple data-in with bounds/coherence/block IRQ corrections; unrun |
@@ -51,14 +51,14 @@ M = mandatory General; M-PM = mandatory basic Power Management; CHS = geometry-d
 | 8.34 | SECURITY UNLOCK | `F2` | SEC | PIO data out (see 9.8). | ABRT; feature not advertised / optional not implemented |
 | 8.35 | SEEK | `70` | M | Non-data (see 9.9). | Valid SEEK succeeds; invalid address IDNF; unrun |
 | 8.36 | SERVICE | `A2` | Q | PACKET or READ/WRITE DMA QUEUED (see 9.11 and 9.12). | ABRT; feature not advertised / optional not implemented |
-| 8.37 | SET FEATURES | `EF` | M | Non-data (see 9.9). | Unsupported selectors/modes ABRT; independent PIO/DMA; durable cache disable; unrun |
+| 8.37 | SET FEATURES | `EF` | M | Non-data (see 9.9). | Validated selectors/modes; 66/CC reset reversion; safe PIO2/MDMA0 defaults; unrun |
 | 8.38 | SET MAX ADDRESS | `F9` | HPA | Non-data command (see 9.9). | ABRT; feature not advertised / optional not implemented |
 | 8.39 | SET MULTIPLE MODE | `C6` | M | Non-data (see 9.9). | Validates 2..128 powers of two; retains zero-disable extension; unrun |
 | 8.40 | SLEEP | `E6` | M-PM | Non-data command (see 9.9). | Sleep command and reset recovery implemented; durable entry; unrun |
-| 8.41 | SMART | `B0` | SMART | Subcommand-specific (8.41.1-8.41.7) | Core selectors present; D2 uses Count; D2/D8/D9 persistent metadata; unrun |
+| 8.41 | SMART | `B0` | SMART | Subcommand-specific (8.41.1-8.41.7) | D0 data, D3 persistence, D4 real bounded offline collection; core settings/status; unrun |
 | 8.42 | STANDBY | `E2` | M-PM | Non-data command (see 9.9). | Standby state and standard timer implemented; durable entry; unrun |
 | 8.43 | STANDBY IMMEDIATE | `E0` | M-PM | Non-data command (see 9.9). | Standby state and durable entry implemented; unrun |
-| 8.44 | WRITE BUFFER | `E8` | O | PIO data out (see 9.8). | ABRT; feature not advertised / optional not implemented |
+| 8.44 | WRITE BUFFER | `E8` | O | PIO data out (see 9.8). | Implemented E8 diagnostic PIO data-out; one sector, reset-safe; unrun |
 | 8.45 | WRITE DMA | `CA CB` | M | DMA (see 9.10). | CA/CB decode; bounded writes/reset/ordering/error corrections; unrun |
 | 8.46 | WRITE DMA QUEUED | `CC` | Q | DMA QUEUED (see 9.12). | ABRT; feature not advertised / optional not implemented |
 | 8.47 | WRITE MULTIPLE | `C5` | M | PIO data out (see 9.8). | Real C5 PIO data-out, block ownership/IRQ/tails/reset; unrun |
@@ -90,3 +90,12 @@ Obsolete 10 RECALIBRATE is implemented for compatibility; 11-1F and 71-7F are re
 ## Verification limits
 
 All 48 families and all 256 opcode cells are accounted for against the retrieved draft. This is a complete command-set source comparison for the stated profile, not electrical bus certification, an exhaustive protocol test, proof of every Sony physical-drive firmware feature, or a claim that PSBBN now boots. Production corrections are checkpointed; compilation, sanitizers, Windows tests and guest execution were not run.
+
+## Subsequent command implementation
+
+READ/WRITE BUFFER and SMART D0/D3/D4 are now implemented, together with SET
+FEATURES66/CC reversion behavior and safe transfer-mode defaults. See
+`DEV9_ATA_BUFFER_COMMANDS_20261020.md`, `DEV9_ATA_SMART_COMMANDS_20261020.md`, and
+`DEV9_ATA_COMMAND_SEMANTICS_20261020.md`. These are source changes; compiled
+regressions and runtime conformance remain unrun. Unclaimed CFA, queued DMA,
+firmware download, standard security and HPA remain separate optional profiles.

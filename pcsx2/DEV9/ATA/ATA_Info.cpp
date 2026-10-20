@@ -213,6 +213,8 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 		(1 << 0) |							//Implemented
 		(1 << 3) |							//Basic Power Management
 		(1 << 5) |							//Implemented
+		(1 << 12) |							//WRITE BUFFER
+		(1 << 13) |							//READ BUFFER
 		(1 << 14)							//Implemented
 		/*| (1 << 1) | (1 << 10)*/));
 	//Supported Feature Sets (83)
@@ -265,6 +267,8 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 		(fetSecurityEnabled << 1) | 		//Variable, not implemented
 		(fetWriteCacheEnabled << 5) | 		//Variable, implemented
 		(fetHostProtectedAreaEnabled << 10)|//Variable, not implemented
+		(1 << 12) |							//WRITE BUFFER
+		(1 << 13) |							//READ BUFFER
 		(1 << 14)));						//Always one
 	//Command set/feature enabled/supported (See word 83)
 	WriteUInt16(identifyData, &index, ( 	//word 86
