@@ -621,12 +621,15 @@ private:
 		}
 
 		const u32 end = result.write_index;
+		bool replay = false;
 		if (!m_seen || end < m_last_end)
 		{
 			// Cold boot, reset, or savestate restore: replay available ring
 			// bytes from their actual guest buffer, not from host history.
 			m_last_end = (end > PSBBN_LOG_BYTES) ? end - PSBBN_LOG_BYTES : 0;
+			m_partial_line.clear();
 			m_seen = true;
+			replay = true;
 			m_text->appendPlainText(tr("[PSBBN printk ring attached / restarted]"));
 		}
 		if (end == m_last_end)
@@ -642,21 +645,40 @@ private:
 		for (u32 i = m_last_end; i < end; i++)
 			chunk.append(result.bytes[static_cast<qsizetype>(i & (PSBBN_LOG_BYTES - 1))]);
 		m_last_end = end;
-		// Kernel owns this byte stream; preserve priorities (<4> etc) and
-		// newlines as written. Do not derive fake host-side kernel messages.
+		// Timestamp *observation*, not historical guest emission. Keep
+		// original printk priority and text exactly; label the initial
+		// backlog as replay so it cannot be mistaken for live timing.
+		const QByteArray prefix = replay ? QByteArray("[replay] ") :
+			(QByteArray("[") + QByteArray::number(Log::GetCurrentMessageTime(), 'f', 4) + "] ");
+		QByteArray formatted;
+		for (char c : chunk)
+		{
+			m_partial_line.append(c);
+			if (c == '\n')
+			{
+				formatted.append(prefix);
+				formatted.append(m_partial_line);
+				m_partial_line.clear();
+			}
+		}
+		if (m_partial_line.size() > PSBBN_LOG_BYTES)
+			m_partial_line.clear(); // no unlimited buffering on invalid/corrupt output
+		if (formatted.isEmpty())
+			return;
 		if (m_file.isOpen())
 		{
-			m_file.write(chunk);
+			m_file.write(formatted);
 			m_file.flush();
 		}
+		QScrollBar* scrollbar = m_text->verticalScrollBar();
+		const bool follow = scrollbar->value() == scrollbar->maximum();
 		QTextCursor cursor = m_text->textCursor();
-		const bool follow = cursor.atEnd();
 		cursor.movePosition(QTextCursor::End);
-		cursor.insertText(QString::fromUtf8(chunk));
+		cursor.insertText(QString::fromUtf8(formatted));
 		if (follow)
 		{
 			m_text->setTextCursor(cursor);
-			m_text->verticalScrollBar()->setValue(m_text->verticalScrollBar()->maximum());
+			scrollbar->setValue(scrollbar->maximum());
 		}
 	}
 
@@ -674,6 +696,7 @@ private:
 	bool m_pending = false;
 	bool m_seen = false;
 	u32 m_last_end = 0;
+	QByteArray m_partial_line;
 };
 
 QPointer<PSBBNKernelLogWindow> s_psbbn_kernel_log_window;
