@@ -13,7 +13,7 @@ The guest Linux 2.4.17_mvl21 mounts root /dev/hda1, then later fails a ReiserFS 
 - Bus-master DMA read/write start/stop, PRD handling, forced breaks, completion interrupts and error propagation.
 - HDD image reads/writes, bounds, buffered write queue, flush, filesystem persistence, synchronization, and partial/short I/O.
 - DEV9/SPEED bridge register semantics and save/load state correctness.
-- Command coverage matrix vs ATA-4, Sony-specific commands separated; avoid falsely advertising ATA-5+ features when emulating ATA-4 target.
+- Command coverage matrix vs relevant ATA-4 host semantics and the image-backed virtual drive model, Sony-specific commands separated; IDENTIFY DEVICE must accurately describe implemented emulated-drive features rather than reflecting a nonexistent physical host disk. Consider later ATA revision bits independently, not as an automatic reason to restrict capacity or feature emulation.
 - Tests for real sector persistence, transfer word counts, multiblock boundaries, zero sector-count semantics, DRQ/IRQ transitions, reset and invalid LBA.
 
 ## Current state
