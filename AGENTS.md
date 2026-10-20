@@ -1,5 +1,10 @@
 # Codex instructions: DEV9 ATA HDD audit branch
 
+## PSBBN host-only kernel log window (2026-10-20)
+
+Read [PSBBN live printk viewer handoff](notes/PSBBN_LIVE_PRINTK_DEBUG_WINDOW_20261020_v1.md). User asked for a **separate** Linux boot log debug window and dedicated on-disk log, without any guest changes. Implemented in `pcsx2-qt/LogWindow.cpp`, exposed from `MainWindow.cpp`, using verified physical EE RAM ring `0x001F84E8` size `0x4000`, cursor `0x001FC4F0`. Guest memory is read-only; no savestate or DEV9 behavior is modified. Offline replay of run12 snapshots confirms 3511 initial bytes, 96 additional bytes (three DMA timeouts), then no further messages. **Qt code not built or run by instruction; verification is needed when user authorizes it.** Do not replace with a guest translation patch or guest framebuffer text, and do not reintroduce HDD savestate restrictions.
+
+
 ## Run12 DMA FIFO checkpoint (2026-10-20)
 
 Read [source finding](notes/PSBBN_RUN12_SPEED_FIFO_DEADLOCK_FINDING_20261020_v1.md) before further DEV9 debugging. The source-derived culprit candidate is the 8 KiB SPEED FIFO's former one-pass pump when Linux requests a 0x3000-byte IOP DMA8 read (then 0x7000/0x8000 retries). `5a8117f325e0` installs progress-checked multi-pass pumping; `baac0b5561c7` adds prospective `core_test` full-path regressions. **Neither has been compiled or executed.** Review reentrancy, interruption and test fixture before treating this as verified. Preserve HDD-enabled savestates (user overrode ban), previous ATA-4 work and no-compilation instruction.
