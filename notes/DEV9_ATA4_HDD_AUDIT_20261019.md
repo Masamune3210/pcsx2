@@ -101,11 +101,30 @@ unrun; the limitations and next commands above apply.
 
 User requested currently unimplemented/incorrect commands. This checkpoint adds
 E4/E8 diagnostic buffer commands, SMART D0 data/D3 real persistence/D4 real offline
-collection, SET FEATURES66/CC volatile reset reversion, and safe power-up PIO2 and
+collection, SET FEATURES 66/CC volatile reset reversion, and safe power-up PIO2 and
 MDMA0 defaults while preserving higher supported modes and SRST UDMA selection.
 See the three focused buffer/SMART/command-semantics notes for clauses and design.
-There are now59 prospective ATA cases plus seven FIFO cases. No configuration,
+There are now 59 prospective ATA cases plus seven FIFO cases. No configuration,
 compilation, C++ execution, Windows build or PSBBN boot was performed. Fresh
 whitespace/bridge/source inventory checks and independent code review were used;
 no important defect was established by source review, which is limited evidence.
 Further optional command families remain separate work; HPA is the next candidate.
+
+## HPA and multiple-error checkpoint, 2026-10-20
+
+The preceding remaining-command batch is pushed as 693ff612a2. This checkpoint
+adds ATA-4 HPA F8/F9: native versus guest-accessible capacity, immediate successful
+F8 prerequisite, volatile/NV persistence, per-power NV quota, CHS and checked
+`.ata-hpa` metadata. It never truncates the image. HPA remains unclaimed for the
+LBA48 profile pending later 27/37 support; existing large-image data support stays.
+SMART's device-side verification intentionally scans native media, including HPA.
+
+READ MULTIPLE now returns a complete ERR/UNC block for a real backing read failure,
+including valid prior blocks and zero-filled unread bytes, then stops. Invalid
+multiple ranges ABRT before DRQ; failed INIT retains its mandatory IDNF result.
+See `DEV9_ATA_HPA_COMMANDS_20261020.md` and `DEV9_ATA_MULTIPLE_ERRORS_20261020.md`.
+There are 75 prospective ATA cases plus seven FIFO cases. Independent source review
+found one IDNF distinction, corrected with expanded regression source. Fresh
+whitespace, bridge constants and command inventory checks passed. No compiling,
+configuration, C++ execution, Windows/sanitizer or PSBBN validation occurred.
+Remaining unclaimed families and runtime/design limits are explicit in the notes.
