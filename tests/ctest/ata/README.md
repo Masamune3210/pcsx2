@@ -65,3 +65,12 @@ The ordinary concurrent worker
 is exercised, but this fixture does not claim deterministic race coverage or
 power-loss durability. A future sanitizer build should run the DMA
 buffer-growth and interrupted-transfer cases to check allocation ownership.
+
+Additional command cases cover E4/E8 diagnostic buffer roundtrips and cancellation,
+SET FEATURES66/CC reversion, safe transfer-mode defaults and selector/timer bounds.
+SMART D0/D3/D4 cases exercise checksummed virtual data, actual bounded image reads,
+scan interruption/resume and persisted results, plus metadata failure/corruption.
+`.ata-smart` preserves SMART history separately from the eight-byte `.ata-settings`
+flags; both must accompany an image to preserve identical virtual-drive metadata.
+No later self-test or error-log capability is claimed. All added C++ cases remain
+uncompiled/unexecuted; the source-only bridge checker is not an executable ATA test.

@@ -786,10 +786,14 @@ namespace
 
 	TEST_F(ATAImageTest, UnsupportedFeaturesAndReservedTransferModesAbort)
 	{
-		drive->Write(ATA_R_FEATURE, 0xFF, 8);
-		Command(0xEF);
-		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
-		Acknowledge();
+		for (u8 feature : {0x01, 0x05, 0x31, 0x55, 0x5D, 0x5E, 0x81, 0x85, 0x95, 0xAA, 0xDD, 0xDE, 0xFF})
+		{
+			SCOPED_TRACE(static_cast<unsigned int>(feature));
+			drive->Write(ATA_R_FEATURE, feature, 8);
+			Command(0xEF);
+			ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+			Acknowledge();
+		}
 		for (u8 mode : {0x01, 0x02, 0x07, 0x0D, 0x0F, 0x23, 0x27, 0x47})
 		{
 			SCOPED_TRACE(static_cast<unsigned int>(mode));
@@ -798,6 +802,119 @@ namespace
 			Command(0xEF);
 			ASSERT_NO_FATAL_FAILURE(ExpectAbort());
 			Acknowledge();
+		}
+	}
+
+	TEST_F(ATAImageTest, TransferModeSelectorsAcceptOnlyImplementedValues)
+	{
+		for (unsigned int selector = 0; selector <= 0xFF; ++selector)
+		{
+			SCOPED_TRACE(selector);
+			const bool supported = selector == 0 || (selector >= 0x08 && selector <= 0x0C) ||
+				(selector >= 0x20 && selector <= 0x22) || (selector >= 0x40 && selector <= 0x46);
+			drive->Write(ATA_R_FEATURE, 3, 8);
+			drive->Write(ATA_R_NSECTOR, selector, 8);
+			Command(0xEF);
+			if (supported)
+				ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			else
+				ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+			Acknowledge();
+		}
+	}
+
+	TEST_F(ATAImageTest, FeatureReversionControlsSoftwareResetOfVolatileSettings)
+	{
+		ASSERT_NO_FATAL_FAILURE(SetSmallChsGeometry());
+		ASSERT_NO_FATAL_FAILURE(SetMultiple(8));
+		for (const auto& setting : std::array<std::array<u8, 2>, 4>{{{3, 0x09}, {3, 0x21}, {0x82, 0}, {0x66, 0}}})
+		{
+			drive->Write(ATA_R_FEATURE, setting[0], 8);
+			drive->Write(ATA_R_NSECTOR, setting[1], 8);
+			Command(0xEF);
+			ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			Acknowledge();
+		}
+		drive->Write(ATA_R_NSECTOR, 1, 8);
+		Command(0xE3);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		drive->Write(ATA_R_CONTROL, 4, 8);
+		drive->Write(ATA_R_CONTROL, 0, 8);
+		ASSERT_TRUE(WaitReady());
+		auto words = Identify();
+		EXPECT_EQ(words[55], 1);
+		EXPECT_EQ(words[56], 10);
+		EXPECT_EQ(words[59] & 0xFF, 8);
+		EXPECT_EQ(words[51] >> 8, 1);
+		EXPECT_EQ(words[63] & 0x0700, 0x0200);
+		EXPECT_EQ(words[85] & (1 << 5), 0);
+		drive->Async(36864000u * 5);
+		ASSERT_NO_FATAL_FAILURE(CheckPower(0));
+
+		drive->Write(ATA_R_FEATURE, 0xCC, 8);
+		Command(0xEF);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		drive->Write(ATA_R_CONTROL, 4, 8);
+		drive->Write(ATA_R_CONTROL, 0, 8);
+		ASSERT_TRUE(WaitReady());
+		words = Identify();
+		EXPECT_EQ(words[55], 16);
+		EXPECT_EQ(words[56], 63);
+		EXPECT_EQ(words[59] & 0xFF, 128);
+		EXPECT_EQ(words[51] >> 8, 2);
+		EXPECT_EQ(words[63] & 0x0700, 0x0100);
+		EXPECT_NE(words[85] & (1 << 5), 0);
+		drive->Async(36864000u * 6);
+		ASSERT_NO_FATAL_FAILURE(CheckPower(0xFF));
+	}
+
+	TEST_F(ATAImageTest, HardwareResetRestoresDefaultsAndReenablesFeatureReversion)
+	{
+		for (u8 feature : {0x82, 0x66})
+		{
+			drive->Write(ATA_R_FEATURE, feature, 8);
+			Command(0xEF);
+			ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			Acknowledge();
+		}
+		drive->ATA_HardReset();
+		ASSERT_TRUE(WaitReady());
+		auto words = Identify();
+		EXPECT_NE(words[85] & (1 << 5), 0);
+		EXPECT_EQ(words[51] >> 8, 2);
+		EXPECT_EQ(words[63] & 0x0700, 0x0100);
+		EXPECT_EQ(words[88] & 0x7F00, 0);
+		drive->Write(ATA_R_FEATURE, 0x82, 8);
+		Command(0xEF);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		drive->Write(ATA_R_CONTROL, 4, 8);
+		drive->Write(ATA_R_CONTROL, 0, 8);
+		ASSERT_TRUE(WaitReady());
+		EXPECT_NE(Identify()[85] & (1 << 5), 0);
+	}
+
+	TEST_F(ATAImageTest, SoftwareResetAlwaysPreservesSelectedUltraDmaMode)
+	{
+		for (u8 reversion : {0x66, 0xCC})
+		{
+			SCOPED_TRACE(static_cast<unsigned int>(reversion));
+			for (const auto& setting : std::array<std::array<u8, 2>, 2>{{{3, 0x46}, {reversion, 0}}})
+			{
+				drive->Write(ATA_R_FEATURE, setting[0], 8);
+				drive->Write(ATA_R_NSECTOR, setting[1], 8);
+				Command(0xEF);
+				ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+				Acknowledge();
+			}
+			drive->Write(ATA_R_CONTROL, 4, 8);
+			drive->Write(ATA_R_CONTROL, 0, 8);
+			ASSERT_TRUE(WaitReady());
+			const auto words = Identify();
+			EXPECT_EQ(words[63] & 0x0700, 0);
+			EXPECT_EQ(words[88] & 0x7F00, 0x4000);
 		}
 	}
 
@@ -824,9 +941,257 @@ namespace
 				const auto after = Identify();
 				EXPECT_EQ(after[63], before[63]);
 				EXPECT_EQ(after[88], before[88]);
-				EXPECT_LE(after[51] >> 8, 2);
+				EXPECT_EQ(after[51] >> 8, pio == 0 ? 2 : std::min(pio & 7, 2));
 			}
 		}
+	}
+
+	// Prospective SMART regressions: no compiler or C++ execution is authorized.
+	class ATASmartImageTest : public ATAImageTest
+	{
+	protected:
+		void Smart(u8 feature, u8 sector = 0, u8 count = 0)
+		{
+			drive->Write(ATA_R_FEATURE, feature, 8);
+			drive->Write(ATA_R_SECTOR, sector, 8);
+			drive->Write(ATA_R_NSECTOR, count, 8);
+			drive->Write(ATA_R_LCYL, 0x4F, 8);
+			drive->Write(ATA_R_HCYL, 0xC2, 8);
+			Command(0xB0);
+		}
+
+		Bytes SmartData()
+		{
+			Smart(0xD0);
+			EXPECT_TRUE(WaitReady());
+			EXPECT_EQ(Status() & (ATA_STAT_ERR | ATA_STAT_DRQ), ATA_STAT_DRQ);
+			EXPECT_TRUE(IRQ());
+			Acknowledge();
+			Bytes data(SectorSize);
+			for (size_t word = 0; word < SectorSize / 2; ++word)
+			{
+				const u16 value = drive->Read(ATA_R_DATA, 16);
+				data[word * 2] = value & 0xFF;
+				data[word * 2 + 1] = value >> 8;
+			}
+			EXPECT_EQ(Status() & (ATA_STAT_BUSY | ATA_STAT_DRQ | ATA_STAT_ERR), 0);
+			EXPECT_FALSE(IRQ());
+			return data;
+		}
+
+		static u64 SmartValue(const Bytes& data, size_t offset, size_t count)
+		{
+			u64 value = 0;
+			for (size_t i = 0; i < count; ++i)
+				value |= u64(data[offset + i]) << (i * 8);
+			return value;
+		}
+	};
+
+	TEST_F(ATASmartImageTest, ReadDataHasChecksumHonestCapabilitiesAndNoPhysicalAttributes)
+	{
+		const Bytes data = SmartData();
+		u8 checksum = 0;
+		for (u8 byte : data)
+			checksum += byte;
+		EXPECT_EQ(checksum, 0);
+		EXPECT_EQ(data[362], 0); // Never scanned, rather than fabricated success.
+		EXPECT_EQ(data[367], 1); // Offline only; no later self-test/log claims.
+		EXPECT_EQ(SmartValue(data, 368, 2), 2); // Event autosave, no power-mode claim.
+		for (size_t i = 2; i < 362; ++i)
+			EXPECT_EQ(data[i], 0); // No invented temperature or physical attributes.
+		for (size_t i = 370; i < 386; ++i)
+			EXPECT_EQ(data[i], 0);
+		Close();
+		EXPECT_EQ(DiskBytes(), initial);
+	}
+
+	TEST_F(ATASmartImageTest, OfflineScanReadsBoundedChunksWithoutChangingGuestTaskfile)
+	{
+		Smart(0xD4, 0xA5, 0x37); // ATA-4 Sector Number is not applicable.
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		const u32 before = TaskLba();
+		const auto irqBefore = ATAHarness::irqCount;
+		drive->Async(36864000);
+		EXPECT_EQ(TaskLba(), before);
+		EXPECT_EQ(drive->Read(ATA_R_NSECTOR, 8), 0x37);
+		EXPECT_EQ(ATAHarness::irqCount, irqBefore);
+		const Bytes data = SmartData();
+		EXPECT_GT(SmartValue(data, 416, 8), 0);
+		EXPECT_LE(SmartValue(data, 416, 8), 128);
+		EXPECT_NE(data[362], 2); // 600 sectors cannot finish in one bounded pump.
+	}
+
+	TEST_F(ATASmartImageTest, OfflineCompletionPersistsEvenWhenAttributeAutosaveDisabled)
+	{
+		Smart(0xD2, 0, 0);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Smart(0xD4);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		for (unsigned int chunk = 0; chunk < 8; ++chunk)
+			drive->Async(36864000);
+		const Bytes complete = SmartData();
+		EXPECT_EQ(complete[362], 2);
+		EXPECT_EQ(SmartValue(complete, 404, 4), 1);
+		EXPECT_EQ(SmartValue(complete, 416, 8), initial.size() / SectorSize);
+		Close();
+		ASSERT_NO_FATAL_FAILURE(Open());
+		EXPECT_EQ(SmartData(), complete);
+		EXPECT_EQ(DiskBytes(), initial);
+	}
+
+	TEST_F(ATASmartImageTest, OfflineReadFailureIsPersistedAndReportedThroughStatus)
+	{
+		std::filesystem::resize_file(image, SectorSize);
+		Smart(0xD4);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		drive->Async(36864000);
+		const Bytes failed = SmartData();
+		EXPECT_EQ(failed[362], 6);
+		EXPECT_EQ(SmartValue(failed, 408, 4), 1);
+		EXPECT_LT(SmartValue(failed, 424, 8), initial.size() / SectorSize);
+		Smart(0xDA);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_EQ(drive->Read(ATA_R_LCYL, 8), 0xF4);
+		EXPECT_EQ(drive->Read(ATA_R_HCYL, 8), 0x2C);
+		Acknowledge();
+		Close();
+		ASSERT_NO_FATAL_FAILURE(Open());
+		EXPECT_EQ(SmartData()[362], 6);
+	}
+
+	TEST_F(ATASmartImageTest, SaveAttributesPersistsRealInterruptedScanState)
+	{
+		Smart(0xD2, 0, 0);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Smart(0xD4);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		drive->Async(36864000);
+		drive->Write(ATA_R_CONTROL, 4, 8);
+		drive->Write(ATA_R_CONTROL, 0, 8);
+		Smart(0xD3);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		const Bytes saved = SmartData();
+		EXPECT_EQ(saved[362], 5);
+		EXPECT_EQ(SmartValue(saved, 400, 4), 1);
+		EXPECT_GT(SmartValue(saved, 416, 8), 0);
+		Close();
+		ASSERT_NO_FATAL_FAILURE(Open());
+		EXPECT_EQ(SmartData(), saved);
+	}
+
+	TEST_F(ATASmartImageTest, SaveAttributesAbortsWithoutTruncatingExistingTemporaryFile)
+	{
+		const std::string temporary = image.string() + ".ata-smart.tmp";
+		{
+			std::ofstream file(temporary, std::ios::binary);
+			file << "preserve-smart-sentinel";
+		}
+		Smart(0xD3);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		std::ifstream file(temporary, std::ios::binary);
+		const std::string actual{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+		EXPECT_EQ(actual, "preserve-smart-sentinel");
+	}
+
+	TEST_F(ATASmartImageTest, StandbySuspendsAndMediaCommandResumesOfflineScan)
+	{
+		Smart(0xD4);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		drive->Async(36864000);
+		Command(0xE0);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		for (unsigned int chunk = 0; chunk < 8; ++chunk)
+			drive->Async(36864000);
+		Bytes media;
+		ASSERT_NO_FATAL_FAILURE(ReadSectors(0x20, 0, 1, 1, &media));
+		const Bytes suspended = SmartData();
+		EXPECT_EQ(suspended[362], 4);
+		EXPECT_LT(SmartValue(suspended, 416, 8), initial.size() / SectorSize);
+		for (unsigned int chunk = 0; chunk < 8; ++chunk)
+			drive->Async(36864000);
+		EXPECT_EQ(SmartData()[362], 2);
+	}
+
+	TEST_F(ATASmartImageTest, DisableAndResetAbortOfflineWithoutFabricatedSuccess)
+	{
+		Smart(0xD4);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Smart(0xD9);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		for (unsigned int chunk = 0; chunk < 8; ++chunk)
+			drive->Async(36864000);
+		Smart(0xD8);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		EXPECT_EQ(SmartData()[362], 5);
+		Smart(0xD4);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		drive->Write(ATA_R_CONTROL, 4, 8);
+		drive->Write(ATA_R_CONTROL, 0, 8);
+		EXPECT_EQ(SmartData()[362], 5);
+	}
+
+	TEST_F(ATASmartImageTest, ResetAutosaveIsControlledByPersistedD2Setting)
+	{
+		for (u8 count : {0x00, 0xF1})
+		{
+			Smart(0xD2, 0, count);
+			ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			Acknowledge();
+			Smart(0xD4);
+			ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			Acknowledge();
+			drive->Async(36864000);
+			drive->Write(ATA_R_CONTROL, 4, 8);
+			drive->Write(ATA_R_CONTROL, 0, 8);
+			EXPECT_EQ(std::filesystem::exists(image.string() + ".ata-smart"), count == 0xF1);
+		}
+	}
+
+	TEST_F(ATASmartImageTest, ChecksumCorruptionInFullSizeSmartStateRejectsOpen)
+	{
+		Smart(0xD3);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Close();
+		const std::string sidecar = image.string() + ".ata-smart";
+		ASSERT_EQ(std::filesystem::file_size(sidecar), SectorSize);
+		{
+			std::fstream file(sidecar, std::ios::binary | std::ios::in | std::ios::out);
+			ASSERT_TRUE(file.is_open());
+			file.seekp(400);
+			file.put(0x7F);
+		}
+		drive = std::make_unique<ATA>();
+		EXPECT_NE(drive->Open(image.string()), 0);
+		Close();
+		EXPECT_EQ(DiskBytes(), initial);
+	}
+
+	TEST_F(ATASmartImageTest, CorruptSmartStateRejectsOpenWithoutChangingImage)
+	{
+		Close();
+		std::ofstream file(image.string() + ".ata-smart", std::ios::binary);
+		file << "invalid-smart-state";
+		file.close();
+		drive = std::make_unique<ATA>();
+		EXPECT_NE(drive->Open(image.string()), 0);
+		Close();
+		EXPECT_EQ(DiskBytes(), initial);
 	}
 
 	TEST_F(ATAImageTest, SmartAutosaveUsesSectorCountRatherThanSectorNumber)
@@ -956,6 +1321,38 @@ namespace
 		ASSERT_NO_FATAL_FAILURE(CheckPower(0x80));
 		drive->Async(36864000u);
 		ASSERT_NO_FATAL_FAILURE(CheckPower(0));
+	}
+
+	TEST_F(ATAImageTest, StandbyTimerEncodingsExpireAtProgrammedBoundary)
+	{
+		constexpr std::array<std::array<u32, 2>, 8> settings{{
+			{1, 5}, {240, 1200}, {241, 1800}, {251, 19800},
+			{252, 1260}, {253, 36000}, {255, 1275}, {0, 0}}};
+		for (const auto& setting : settings)
+		{
+			SCOPED_TRACE(setting[0]);
+			drive->Write(ATA_R_NSECTOR, setting[0], 8);
+			Command(0xE3);
+			ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			Acknowledge();
+			if (setting[1] == 0)
+			{
+				drive->Async(36864000u * 6);
+				ASSERT_NO_FATAL_FAILURE(CheckPower(0x80));
+				continue;
+			}
+			u64 remaining = static_cast<u64>(setting[1]) * 36864000 - 1;
+			while (remaining != 0)
+			{
+				// UINT32_MAX is the internal no-time completion-pump sentinel.
+				const u32 cycles = static_cast<u32>(std::min<u64>(remaining, 0xFFFFFFFEu));
+				drive->Async(cycles);
+				remaining -= cycles;
+			}
+			ASSERT_NO_FATAL_FAILURE(CheckPower(0x80));
+			drive->Async(1);
+			ASSERT_NO_FATAL_FAILURE(CheckPower(0));
+		}
 	}
 
 	TEST_F(ATAImageTest, StandbyTimerRestartsForMediaAndRejectsReservedCount)
@@ -1093,6 +1490,93 @@ namespace
 		EXPECT_TRUE(IRQ());
 	}
 #endif
+
+	TEST_F(ATAImageTest, DiagnosticBufferRoundTripTransfersExactlyOneSectorWithoutDiskWrites)
+	{
+		const Bytes payload = Pattern(1, 0xD7);
+		// Buffer commands ignore sector count and address, including an invalid LBA.
+		Address(0x0FFFFFFF, 0);
+		const auto interrupts = ATAHarness::irqCount;
+		Command(0xE8);
+		ASSERT_EQ(Status() & (ATA_STAT_BUSY | ATA_STAT_DRQ | ATA_STAT_ERR), ATA_STAT_DRQ);
+		EXPECT_FALSE(IRQ());
+		for (size_t i = 0; i < payload.size(); i += 2)
+		{
+			drive->Write(ATA_R_DATA, payload[i] | (payload[i + 1] << 8), 16);
+			if (i + 2 != payload.size())
+			{
+				ASSERT_NE(Status() & ATA_STAT_DRQ, 0);
+				ASSERT_FALSE(IRQ());
+			}
+		}
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_TRUE(IRQ());
+		Acknowledge();
+		drive->Write(ATA_R_DATA, 0xBAD0, 16); // Past the accepted sector: no effect.
+		Command(0xE4);
+		ASSERT_EQ(Status() & (ATA_STAT_BUSY | ATA_STAT_DRQ | ATA_STAT_ERR), ATA_STAT_DRQ);
+		EXPECT_TRUE(IRQ());
+		Acknowledge();
+		for (size_t i = 0; i < payload.size(); i += 2)
+			EXPECT_EQ(drive->Read(ATA_R_DATA, 16), payload[i] | (payload[i + 1] << 8));
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_FALSE(IRQ());
+		EXPECT_EQ(drive->Read(ATA_R_DATA, 16), 0xFFFF);
+		EXPECT_EQ(ATAHarness::irqCount - interrupts, 2u);
+		EXPECT_EQ(TaskLba(), 0x0FFFFFFFu);
+		EXPECT_EQ(drive->Read(ATA_R_NSECTOR, 8), 0);
+		Close();
+		EXPECT_EQ(DiskBytes(), initial);
+	}
+
+	TEST_F(ATAImageTest, ResetCancelsPartialDiagnosticBufferWithoutWritingImage)
+	{
+		Command(0xE4);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort()); // No accepted WRITE BUFFER yet.
+		Acknowledge();
+		Command(0xE8);
+		ASSERT_NE(Status() & ATA_STAT_DRQ, 0);
+		for (int i = 0; i < 73; ++i)
+			drive->Write(ATA_R_DATA, 0xCAFE, 16);
+		drive->Write(ATA_R_CONTROL, 4, 8);
+		drive->Write(ATA_R_CONTROL, 0, 8);
+		Command(0xE4);
+		ASSERT_NO_FATAL_FAILURE(ExpectAbort());
+		Acknowledge();
+		Command(0xE8);
+		for (int i = 0; i < 256; ++i)
+			drive->Write(ATA_R_DATA, static_cast<u16>(i ^ 0xA55A), 16);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Acknowledge();
+		Command(0xE4);
+		for (int i = 0; i < 256; ++i)
+			EXPECT_EQ(drive->Read(ATA_R_DATA, 16), static_cast<u16>(i ^ 0xA55A));
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		Close();
+		EXPECT_EQ(DiskBytes(), initial);
+	}
+
+	TEST_F(ATAImageTest, DiagnosticBufferIrqMasksAndUnsupportedWidthsPreserveData)
+	{
+		drive->Write(ATA_R_CONTROL, 2, 8);
+		Command(0xE8);
+		drive->Write(ATA_R_DATA, 0xFF, 8);
+		EXPECT_EQ(drive->Read(ATA_R_DATA, 16), 0xFFFF); // Wrong direction.
+		for (int i = 0; i < 256; ++i)
+			drive->Write(ATA_R_DATA, static_cast<u16>(i + 1), 16);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_FALSE(IRQ());
+		drive->Write(ATA_R_CONTROL, 0, 8);
+		EXPECT_TRUE(IRQ());
+		Acknowledge();
+		Command(0xE4);
+		Acknowledge();
+		EXPECT_EQ(drive->Read(ATA_R_DATA, 8), 0xFFFF);
+		for (int i = 0; i < 256; ++i)
+			EXPECT_EQ(drive->Read(ATA_R_DATA, 16), i + 1);
+		ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+		EXPECT_EQ(Identify()[82] & (3 << 12), 3 << 12);
+	}
 
 	TEST_F(ATAImageTest, ClosedImageCannotResumeOrStartATransfer)
 	{
