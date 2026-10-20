@@ -1,5 +1,10 @@
 # DEV9 HDD / ATA-4 Audit
 
+## Active mission: PSBBN run12 DMA timeout (2026-10-20)
+
+See [PSBBN run12 DEV9 DMA timeout mission](PSBBN_RUN12_DEV9_DMA_TIMEOUT_MISSION_20261020_v1.md). On `v2.9.92-158-g922ad14d3` with EE interpreter, Linux mounts root `/dev/hda1`, but three DMA timeouts/force breaks occur at host 88.6765s, 118.4130s and 148.6084s after an apparent request at 58.6989s; afterwards a repeat guest TLB exception occurs at `PC=0x0FB6800C`, `BadVAddr=0xFFFF8378`. Earlier snapshots retain the static PS2 logo. The 0xC5 missing-command error is absent in this new log, not proof of full ATA correctness. Mission requires production-path SPEED/ATA/IOP DMA8/IRQ correlation before making causal claims. User's prior **HDD savestate reversion** and **no-compilation instruction** remain in force. No code or tests were run in this mission setup.
+
+
 ## Current decision: HDD savestates restored (2026-10-20)
 
 **Explicit user instruction:** Undo the HDD-enabled savestate ban. Restore normal save and load behavior, including scheduled PSBBN diagnostic snapshots, manual states and resume states. The blanket `SaveState_CheckHDDStateSupport` implementation was reverted **byte-for-byte** to the original PSBBN branch in `pcsx2/SaveState.cpp`, `pcsx2/SaveState.h` and `pcsx2/VMManager.cpp` (revert commits `74a6308c057f`, `6980793d5957`, `8a8c4d4b9873`). **Do not reintroduce an HDD savestate ban or new warning/restore restriction without a specific user request.**
