@@ -1,4 +1,12 @@
 # DEV9 HDD / ATA-4 Audit
+
+## Current decision: HDD savestates restored (2026-10-20)
+
+**Explicit user instruction:** Undo the HDD-enabled savestate ban. Restore normal save and load behavior, including scheduled PSBBN diagnostic snapshots, manual states and resume states. The blanket `SaveState_CheckHDDStateSupport` implementation was reverted **byte-for-byte** to the original PSBBN branch in `pcsx2/SaveState.cpp`, `pcsx2/SaveState.h` and `pcsx2/VMManager.cpp` (revert commits `74a6308c057f`, `6980793d5957`, `8a8c4d4b9873`). **Do not reintroduce an HDD savestate ban or new warning/restore restriction without a specific user request.**
+
+The user understands that savestates do not snapshot, rewind or synchronize an external HDD image. They are valuable forensic snapshots of guest memory/CPU/screenshots; loading may be inconsistent with a mutated external disk. That limitation is acknowledged, **not a reason to prohibit use**. Prior entries below referring to preflight blocking are historical and superseded. The earlier [savestate policy note](DEV9_ATA_SAVESTATE_POLICY_20261020.md) is retained for historical design context but explicitly superseded. No other DEV9/ATA changes reverted. No build/test executed, respecting existing no-compilation instruction.
+
+
 Date: 2026-10-19
 
 ## Purpose
