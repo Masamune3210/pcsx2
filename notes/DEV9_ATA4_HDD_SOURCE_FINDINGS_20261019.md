@@ -116,10 +116,105 @@ from adding write commands and has no demonstrated connection to run11.
 Planned validation: valid LBA 0 and final LBA succeed; one-past-final LBA returns
 ERR/IDNF; inspect regular versus alternate status seek-lock behavior.
 
+## Checkpoint 2: reset, register and host-safety findings
+
+### F5 — High: reset leaves active transfer state behind
+
+Evidence: `ResetBegin/ResetEnd` and diagnostics reset status/signature/geometry
+(`ATA_State.cpp:294-332`; `ATA_CmdExecuteDeviceDiag.cpp:7-54`), but do not clear
+`dmaReady`, `rdTransferred`, `wrTransferred`, `pioPtr/pioEnd`, the PIO callback,
+or the partial `currentWrite` allocation. The same reset is reached by SRST
+(`ATA_State.cpp:490-494`) and HDD hard reset (`DEV9.cpp:753-756`). `ATAreadPIO`
+checks only the retained pointer/end, not DRQ, so data remaining before reset
+can still be read after reset clears DRQ (`ATA_CmdPIOData.cpp:42-55`).
+
+New DMA commands do not reset their byte offsets: read readiness only sets
+DRQ/dmaReady (`ATA_CmdDMA.cpp:7-14`); write readiness replaces `currentWrite`
+without freeing a partial prior allocation (`:30-45`). DMA copy lengths subtract
+the retained offset from the new command's length (`:84-85,111-112`). If an old
+partial offset exceeds the new request length, `std::min` produces a negative
+`int`, which is converted to a huge `size_t` for `memcpy`. A retained offset
+equal to the new length instead completes a zero-byte copy; a write can then
+queue a new uninitialized buffer. This is a source-derived host-memory hazard;
+no crashing sequence was executed here.
+
+Concrete planned case: begin a 32-sector DMA command, transfer 8192 of 16384
+bytes, assert/release SRST, then issue a one-sector command. The stale 8192-byte
+offset yields `512 - 8192 = -7680`. Cover both directions, equal-length offsets,
+PIO reset mid-sector, hard reset, close/reopen, and a fresh IDENTIFY after reset.
+Check no old data/callback/IRQ or partial host buffer survives. Test under memory
+sanitizers when compilation is permitted.
+
+Correction rationale: reset needs one explicit transfer-cancellation contract,
+separating partial unaccepted transfers from completed cached writes that must
+be preserved. Clamping a negative copy length alone would conceal stale state.
+The bridge's FIFO and IOP transfer state also need coordinated cancellation.
+
+### F6 — High: invalid geometry can cause division by zero in IDENTIFY
+
+Evidence: `HDD_InitDevParameters` copies `regNsector` to `curSectors` without
+validation (`ATA_CmdNoData.cpp:44-51`). `CreateHDDinfo` divides by `curSectors`
+while calculating current geometry (`ATA_Info.cpp:55-57`). The sequence
+INITIALIZE DEVICE PARAMETERS (`0x91`) with Sector Count zero, then IDENTIFY
+(`0xEC`), therefore reaches integer division by zero. This command's geometry
+parameter is not the transfer count handled by zero-as-256 conversion.
+
+The same initializer derives heads with `(regSelect & 0x7) + 1`; the declared
+head field is four bits (`ATA.h:75-81`). Requesting 16 heads encodes low nibble
+15, which is reduced to 8 heads. CHS data access itself is explicitly rejected
+by `HDD_GetLBA` (`ATA_State.cpp:576-584`); successful parameter initialization
+does not establish working CHS reads/writes.
+
+Correction rationale: reject invalid geometry before storing it and decode all
+four head bits. Planned validation: sectors zero and valid geometry, heads
+1/8/9/16, followed by IDENTIFY; assert no host fault and consistent words 54-58.
+
+### F7 — Medium: masked PIO events are discarded rather than latched
+
+Evidence: PIO readiness sets `pendingInterrupt` only inside
+`if (regControlEnableIRQ && sendIRQ)` (`ATA_CmdPIOData.cpp:18-23`). With nIEN
+set, a command can become data-ready with no pending event. Unmasking only
+reasserts INTRQ when `pendingInterrupt` is already true
+(`ATA_State.cpp:475-487`). DMA and non-data completion latch the pending event
+regardless of masking (`ATA_CmdDMA.cpp:25-27`; `ATA_CmdNoData.cpp:11-13`).
+
+Correction rationale: separate the internal command event from whether it is
+driven onto INTRQ, consistently across protocols. Planned validation: nIEN set,
+issue IDENTIFY/PIO read, poll alternate status without consuming data, clear
+nIEN, inspect IRQ; normal status should acknowledge, alternate status should
+not. Check multiple-block boundaries and device selection separately.
+
+### F8 — Medium: HOB cannot be cleared by writing Device Control zero
+
+Evidence: Device Control sets `regControlHOBRead` if bit 7 is one but has no
+assignment when it is zero (`ATA_State.cpp:496-497`). Reads of Sector Count and
+LBA bytes continue returning the high-order shadow (`:349-380`) after Control
+`0x80` followed by `0x00`. Writes to feature/count/LBA and Command clear HOB;
+Device/Head writes do not (`:426-473,500-503`).
+
+Correction rationale: reflect the written HOB selector, then review which
+command-block writes must clear it. Planned validation: distinct high/low
+register values, Control `0x80` then `0x00`, and each task-file write. This is
+primarily a later 48-bit-addressing issue, not evidence for ATA-4 run11 failure.
+
+### F9 — High: queue-empty observation races with the consumer's plain tail
+
+Evidence: `SimpleQueue::tail` is an ordinary pointer (`SimpleQueue.h:23-24`).
+`Dequeue` writes it on the worker (`:63-73`), while `IsQueueEmpty` reads it on
+the command thread (`:78-80`). FLUSH CACHE calls `IsQueueEmpty` without taking
+the worker mutex (`ATA_CmdNoData.cpp:34`). The atomic `head` and per-entry
+`ready` protect publication, but do not make unrelated concurrent access to
+`tail` atomic. `IO_Write` performs dequeue outside `ioMutex`
+(`ATA_Transfer.cpp:37-44,84-87`).
+
+Correction rationale: completion/queue observation needs a synchronization
+contract, not just another unsynchronized emptiness check. This data race is
+distinct from the logical in-flight-write gap in F3. Planned validation: Thread
+Sanitizer plus deterministic flush/dequeue interleavings. No sanitizer was run.
+
 ## Outstanding audit work
 
-- Reset and aborted-transfer lifetime, command acceptance while BSY/DRQ.
-- PIO interrupt masking, data-register access and multiple-mode validation.
+- Command acceptance while BSY/DRQ and multiple-mode validation.
 - DMA bridge stop/restart and the historical force-break message's actual source.
 - IDENTIFY advertised features, command coverage and ATA-4 versus later features.
 - Sparse-file correctness, host I/O errors and save-state coverage.
