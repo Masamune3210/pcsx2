@@ -9,17 +9,25 @@ void ATA::DRQCmdPIODataToHost(u8* buff, int buffLen, int buffIndex, int size, bo
 	//Data in PIO ready to be sent
 	pioPtr = 0;
 	pioEnd = size >> 1;
+	pioDataOut = false;
 
-	memcpy(pioBuffer, &buff[buffIndex], size < (buffLen - buffIndex) ? size : (buffLen - buffIndex));
+	if (size <= 0 || size > static_cast<int>(sizeof(pioBuffer)) || buffIndex < 0 ||
+		buffIndex > buffLen || size > buffLen - buffIndex)
+	{
+		pioEnd = 0;
+		CmdNoDataAbort();
+		return;
+	}
+	memcpy(pioBuffer, &buff[buffIndex], size);
 
 	regStatus &= ~ATA_STAT_BUSY;
 	regStatus |= ATA_STAT_DRQ;
 
-	// Only set pendingInterrupt if nIEN is cleared
-	if (regControlEnableIRQ && sendIRQ)
+	if (sendIRQ)
 	{
 		pendingInterrupt = true;
-		_DEV9irq(ATA_INTR_INTRQ, 1);
+		if (regControlEnableIRQ && GetSelectedDevice() == 0)
+			_DEV9irq(ATA_INTR_INTRQ, 1);
 	}
 }
 void ATA::PostCmdPIODataToHost()
@@ -42,9 +50,11 @@ void ATA::PostCmdPIODataToHost()
 u16 ATA::ATAreadPIO()
 {
 	//DevCon.WriteLn("DEV9: *ATA_R_DATA 16bit read, pio_count %i,  pio_size %i", pioPtr, pioEnd);
-	if (pioPtr < pioEnd)
+	if (GetSelectedDevice() == 0 && !pioDataOut && !softwareReset &&
+		(regStatus & (ATA_STAT_BUSY | ATA_STAT_DRQ)) == ATA_STAT_DRQ && pioPtr < pioEnd)
 	{
-		const u16 ret = *(u16*)&pioBuffer[pioPtr * 2];
+		u16 ret;
+		memcpy(&ret, &pioBuffer[pioPtr * 2], sizeof(ret));
 		//DevCon.WriteLn("DEV9: *ATA_R_DATA returned value is  %x", ret);
 		pioPtr++;
 		if (pioPtr >= pioEnd) //Fnished transfer (Changed from MegaDev9)
@@ -52,9 +62,72 @@ u16 ATA::ATAreadPIO()
 
 		return ret;
 	}
-	return 0xFF;
+	return 0xffff;
 }
-//ATAwritePIO
+
+void ATA::ATAwritePIO(u16 value)
+{
+	if (GetSelectedDevice() != 0 || !pioDataOut || softwareReset ||
+		(regStatus & (ATA_STAT_BUSY | ATA_STAT_DRQ)) != ATA_STAT_DRQ ||
+		currentWrite == nullptr || wrTransferred < 0 ||
+		static_cast<u32>(wrTransferred) + sizeof(value) > currentWriteLength)
+		return;
+
+	memcpy(currentWrite + wrTransferred, &value, sizeof(value));
+	wrTransferred += sizeof(value);
+	if (wrTransferred % 512 != 0)
+		return;
+
+	const int completed = wrTransferred / 512;
+	HDD_AdvanceSectors(completed);
+	const bool finalBlock = static_cast<u32>(wrTransferred) == currentWriteLength;
+	const bool blockComplete = finalBlock || completed % sectorsPerInterrupt == 0;
+	if (blockComplete)
+	{
+		// Once the next block is requested, the preceding block is accepted.
+		// Give it independent ownership so SRST can discard only unfinished data.
+		const u32 length = wrTransferred - pioWriteBlockStart;
+		u8* data = new u8[length];
+		memcpy(data, currentWrite + pioWriteBlockStart, length);
+		const WriteQueueEntry entry{data, length, currentWriteSectors + pioWriteBlockStart / 512};
+		{
+			std::lock_guard ioSignallock(ioMutex);
+			writeQueue.Enqueue(entry);
+		}
+		pioWriteBlockStart = wrTransferred;
+	}
+	if (finalBlock)
+	{
+		delete[] currentWrite;
+		currentWrite = nullptr;
+		pioDataOut = false;
+		regStatus &= ~ATA_STAT_DRQ;
+		regStatus |= ATA_STAT_BUSY;
+		HDD_SetErrorAtTransferEnd();
+		HDD_CompleteWrite();
+	}
+	else if (completed % sectorsPerInterrupt == 0)
+	{
+		if (!fetWriteCacheEnabled)
+		{
+			{
+				std::lock_guard ioSignallock(ioMutex);
+				while (IO_Write())
+				{
+				}
+				ioWrite = false;
+				IO_Flush();
+			}
+			if (HDD_ReportIOError())
+				return;
+		}
+		// The first block is polled. Each subsequent DRQ block signals INTRQ;
+		// words and sectors inside a negotiated multiple block do not.
+		pendingInterrupt = true;
+		if (regControlEnableIRQ && GetSelectedDevice() == 0)
+			_DEV9irq(ATA_INTR_INTRQ, 1);
+	}
+}
 
 void ATA::HDD_IdentifyDevice()
 {
@@ -125,6 +198,7 @@ void ATA::HDD_ReadPIOEndBlock()
 {
 	//Log_Info("HDD_ReadPIO End Block");
 	rdTransferred += 512;
+	HDD_AdvanceSectors(rdTransferred / 512);
 	if (rdTransferred >= nsector * 512)
 	{
 		//Log_Info("HDD_ReadPIO Done");
@@ -142,10 +216,28 @@ void ATA::HDD_ReadPIOEndBlock()
 	}
 }
 
-//Write Buffer
+void ATA::HDD_WritePIO(bool isLBA48, bool multiple)
+{
+	if (!PreCmd())
+		return;
+	sectorsPerInterrupt = multiple ? curMultipleSectorsSetting : 1;
+	if (sectorsPerInterrupt == 0)
+	{
+		CmdNoDataAbort();
+		return;
+	}
+	IDE_CmdLBA48Transform(isLBA48);
+	if (!HDD_CanAssessOrSetError())
+		return;
 
-//Write Multiple
-
-//Write Sectors
-
-//Download Microcode (Used for FW updates)
+	regStatus |= ATA_STAT_SEEK;
+	currentWriteLength = nsector * 512;
+	currentWriteSectors = transferStartLBA;
+	currentWrite = new u8[currentWriteLength];
+	wrTransferred = 0;
+	pioWriteBlockStart = 0;
+	nsectorLeft = nsector;
+	pioDataOut = true;
+	regStatus &= ~ATA_STAT_BUSY;
+	regStatus |= ATA_STAT_DRQ;
+}

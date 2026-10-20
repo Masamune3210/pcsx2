@@ -15,7 +15,12 @@ void ATA::IDE_ExecCmd(u16 value)
 			HDD_Recalibrate();
 			break;
 		case 0x20:
+		case 0x21:
 			HDD_ReadSectors(false);
+			break;
+		case 0x30:
+		case 0x31:
+			HDD_WritePIO(false, false);
 			break;
 		case 0x24:
 			if (lba48Supported)
@@ -29,7 +34,15 @@ void ATA::IDE_ExecCmd(u16 value)
 			else
 				HDD_Unk();
 			break;
+		case 0x34:
+		case 0x39:
+			if (lba48Supported)
+				HDD_WritePIO(true, value == 0x39);
+			else
+				HDD_Unk();
+			break;
 		case 0x40:
+		case 0x41:
 			HDD_ReadVerifySectors(false);
 			break;
 		case 0x42:
@@ -53,13 +66,18 @@ void ATA::IDE_ExecCmd(u16 value)
 		case 0xC4:
 			HDD_ReadMultiple(false);
 			break;
+		case 0xC5:
+			HDD_WritePIO(false, true);
+			break;
 		case 0xC6:
 			HDD_SetMultipleMode();
 			break;
 		case 0xC8:
+		case 0xC9:
 			HDD_ReadDMA(false);
 			break;
 		case 0xCA:
+		case 0xCB:
 			HDD_WriteDMA(false);
 			break;
 		case 0x25:
@@ -74,11 +92,13 @@ void ATA::IDE_ExecCmd(u16 value)
 			else
 				HDD_Unk();
 			break;
+		case 0xE0:
 		case 0xE1:
-			HDD_IdleImmediate();
-			break;
+		case 0xE2:
 		case 0xE3:
-			HDD_Idle();
+		case 0xE5:
+		case 0xE6:
+			HDD_PowerCommand();
 			break;
 		case 0xE7:
 			HDD_FlushCache();
@@ -122,7 +142,8 @@ void ATA::HDD_Unk()
 {
 	Console.Error("DEV9: ATA: Unknown cmd %x", regCommand);
 
-	PreCmd();
+	if (!PreCmd())
+		return;
 
 	regError |= ATA_ERR_ABORT;
 	regStatus |= ATA_STAT_ERR;
@@ -143,6 +164,21 @@ bool ATA::PreCmd()
 	regStatus &= ~ATA_STAT_ERR;
 
 	regError = 0;
+	pioPtr = pioEnd = 0;
+	pioDataOut = false;
+	pioDRQEndTransferFunc = nullptr;
+	rdTransferred = wrTransferred = 0;
+	dmaReady = false;
+	if (HDD_ReportIOError())
+		return false;
+	if (regCommand != 0xE5)
+	{
+		standbyRemaining = standbyPeriod;
+		// Commands requiring media access wake a virtual spindle immediately.
+		// Power commands set their requested state in their own handler.
+		if (regCommand < 0xE0 || regCommand > 0xE6)
+			powerState = PowerState::Active;
+	}
 
 	return true;
 }
@@ -150,6 +186,7 @@ bool ATA::PreCmd()
 void ATA::IDE_CmdLBA48Transform(bool islba48)
 {
 	lba48 = islba48;
+	transferRangeError = false;
 	//TODO
 	/* handle the 'magic' 0 nsector count conversion here. to avoid
              * fiddling with the rest of the read logic, we just store the
@@ -174,6 +211,8 @@ void ATA::IDE_CmdLBA48Transform(bool islba48)
 			nsector = (hi << 8) | lo;
 		}
 	}
+	transferStartLBA = HDD_GetLBA();
+	transferSectorsRequested = nsector;
 }
 
 //OTHER FEATURE SETS BELOW (TODO?)
