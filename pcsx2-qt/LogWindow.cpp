@@ -523,10 +523,11 @@ namespace
 {
 constexpr u32 PSBBN_LOG_BASE = 0x001F84E8;
 constexpr u32 PSBBN_LOG_BYTES = 0x4000;
-// 2.4.17 printk.c declares log_start, con_start, log_end, logged_chars.
-// The adjacent run12 RAM words at 0x1FC4EC/0x1FC4F0/0x1FC4F4 all agree
-// initially, but only log_end is the authoritative producer write index.
-constexpr u32 PSBBN_LOG_END = 0x001FC4F4;
+// Original vmlinux native ELF symbols (confirmed in Ghidra):
+// 0x801FC4EC con_start; 0x801FC4F0 log_end;
+// 0x801FC4F4 logged_chars; 0x801FC4F8 console_cmdline.
+// Do not infer global offsets by assuming the source declaration order.
+constexpr u32 PSBBN_LOG_END = 0x001FC4F0;
 constexpr char PSBBN_LOG_WITNESS[] = "<4>PlayStation 2 SIF BIOS:";
 
 // These are specific to SCPN-60160 PSBBN v0.32's vmlinux, validated
