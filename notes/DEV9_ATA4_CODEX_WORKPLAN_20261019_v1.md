@@ -84,3 +84,13 @@ Other audit candidates: `IO_SparseCacheAssertFileZeros` seems to read into `hddS
 - The ATA end-of-range calculation and array delete mismatch have not been exercised under sanitizers or built tests yet; classify as source-verified suspicious/defective patterns until demonstrated.
 - **Zero production fixes or tests** have been applied by this Codex-setup task.
 - The previous live interpreter run was still ongoing at upload; no final outcome is claimed.
+
+### Implementation resumed, 2026-10-20
+
+User instruction: fix the documented bugs, retaining no compilation and checkpoint
+pushes. The first production checkpoint fixes FIFO wrap, invalid copy lengths and
+counter rollover, adds a reset cancellation API, and saves seven prospective FIFO
+regressions. Detailed decisions and unrun validation are in
+`DEV9_FIFO_FIX_20261020.md`; the scoped implementation sequence is in
+`DEV9_ATA_FIX_PLAN_20261020.md`. This supersedes the earlier comparison-only task
+mode. No compiled tests or guest boots have been run. ATA/IO work remains ongoing.
