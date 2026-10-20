@@ -7,14 +7,15 @@
 #include "ATA.h"
 #include "DEV9/DEV9.h"
 
+#include <cerrno>
+#include <cstring>
+
 #if _WIN32
 #include "pathcch.h"
 #include <io.h>
 #elif defined(__POSIX__)
 #define INVALID_HANDLE_VALUE -1
-#if defined(__APPLE__)
 #include <unistd.h>
-#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -30,15 +31,41 @@ ATA::ATA()
 
 ATA::~ATA()
 {
-	if (hddImage)
-		std::fclose(hddImage);
+	Close();
 }
 
 int ATA::Open(const std::string& hddPath)
 {
-	readBufferLen = 256 * 512;
-	readBuffer = new u8[readBufferLen];
+	Close();
+	ATA_HardReset();
 	memset(sceSec, 0, sizeof(sceSec));
+	// SMART configuration is drive metadata, separate from guest disk sectors.
+	fetSmartEnabled = true;
+	smartAutosave = true;
+	smartSettingsPath = (Path::IsAbsolute(hddPath) ? hddPath :
+		Path::Combine(FileSystem::GetWorkingDirectory(), hddPath)) + ".ata-settings";
+	errno = 0;
+	std::FILE* settings = FileSystem::OpenCFile(smartSettingsPath.c_str(), "rb");
+	if (settings)
+	{
+		u8 data[8];
+		const bool valid = std::fread(data, 1, sizeof(data), settings) == sizeof(data) &&
+			std::fgetc(settings) == EOF && !std::ferror(settings) &&
+			std::memcmp(data, "PCSX2A", 6) == 0 && data[6] == 1 && (data[7] & ~0x03) == 0;
+		const bool closed = std::fclose(settings) == 0;
+		if (!valid || !closed)
+		{
+			Console.Error("DEV9: ATA: Invalid SMART settings sidecar");
+			return -1;
+		}
+		fetSmartEnabled = (data[7] & 1) != 0;
+		smartAutosave = (data[7] & 2) != 0;
+	}
+	else if (errno != ENOENT)
+	{
+		Console.Error("DEV9: ATA: Unable to read SMART settings sidecar");
+		return -1;
+	}
 
 	DevCon.WriteLn("DEV9: ATA: HddFile : %s", hddPath.c_str());
 
@@ -51,8 +78,11 @@ int ATA::Open(const std::string& hddPath)
 	if (!hddImage || size < 0)
 	{
 		Console.Error("DEV9: ATA: Failed to open HDD image '%s'", hddPath.c_str());
+		Close();
 		return -1;
 	}
+	readBufferLen = 256 * 512;
+	readBuffer = new u8[readBufferLen];
 
 	// Open and read the content of the hddid file
 	std::string hddidPath = Path::ReplaceExtension(hddPath, "hddid");
@@ -105,12 +135,74 @@ int ATA::Open(const std::string& hddPath)
 		std::lock_guard ioSignallock(ioMutex);
 		ioRead = false;
 		ioWrite = false;
+		ioReadError = false;
+		ioWriteError = false;
+		ioErrorPending = false;
+		ioErrorSector = 0;
+		ioClose.store(false);
+		ioThreadIdle_bool = false;
 	}
 
 	ioThread = std::thread(&ATA::IO_Thread, this);
 	ioRunning = true;
 
 	return 0;
+}
+
+bool ATA::SaveSMARTSettings()
+{
+	if (!hddImage || smartSettingsPath.empty())
+		return false;
+	const u8 data[8] = {'P', 'C', 'S', 'X', '2', 'A', 1,
+		static_cast<u8>((fetSmartEnabled ? 1 : 0) | (smartAutosave ? 2 : 0))};
+	const std::string temporaryPath = smartSettingsPath + ".tmp";
+	// Exclusive creation neither truncates nor follows a pre-existing temp entry.
+	std::FILE* settings = FileSystem::OpenCFile(temporaryPath.c_str(), "wbx");
+	if (!settings)
+		return false;
+	bool success = std::fwrite(data, 1, sizeof(data), settings) == sizeof(data) &&
+		std::fflush(settings) == 0;
+#ifdef _WIN32
+	if (success)
+		success = _commit(_fileno(settings)) == 0;
+#elif defined(__POSIX__)
+	if (success)
+		success = fsync(fileno(settings)) == 0;
+#else
+	success = false;
+#endif
+	if (std::fclose(settings) != 0)
+		success = false;
+	if (success)
+	{
+#ifdef _WIN32
+		const std::wstring source = FileSystem::GetWin32Path(temporaryPath);
+		const std::wstring target = FileSystem::GetWin32Path(smartSettingsPath);
+		success = MoveFileExW(source.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+#else
+		success = FileSystem::RenamePath(temporaryPath.c_str(), smartSettingsPath.c_str());
+#endif
+	}
+	if (!success)
+	{
+		FileSystem::DeleteFilePath(temporaryPath.c_str());
+		return false;
+	}
+	// Rename commits the setting. A later directory-sync failure cannot safely
+	// restore the old file, so retain the committed setting and report the limit.
+#if defined(__POSIX__)
+	const std::string directory = std::string(Path::GetDirectory(smartSettingsPath));
+	const int directoryFD = open(directory.empty() ? "." : directory.c_str(), O_RDONLY | O_DIRECTORY);
+	if (directoryFD < 0)
+		Console.Error("DEV9: ATA: SMART settings committed; unable to sync directory for power-loss durability");
+	else
+	{
+		if (fsync(directoryFD) != 0)
+			Console.Error("DEV9: ATA: SMART settings committed; directory sync failed for power-loss durability");
+		close(directoryFD);
+	}
+#endif
+	return true;
 }
 
 void ATA::InitSparseSupport(const std::string& hddPath)
@@ -262,13 +354,9 @@ void ATA::Close()
 		ioRunning = false;
 	}
 
-	//verify queue
-	if (!writeQueue.IsQueueEmpty())
-	{
-		Console.Error("DEV9: ATA: Write queue not empty, possible data loss");
-		pxAssert(false);
-		abort(); //All data must be written at this point
-	}
+	// Joining drains accepted writes; incomplete commands never enter the queue.
+	if (hddImage && !IO_Flush())
+		Console.Error("DEV9: ATA: Failed to flush HDD image on close");
 
 	//Close File Handle
 	if (hddSparse)
@@ -289,10 +377,47 @@ void ATA::Close()
 
 	delete[] readBuffer;
 	readBuffer = nullptr;
+	readBufferLen = 0;
+	delete[] currentWrite;
+	currentWrite = nullptr;
+	currentWriteLength = 0;
+	dmaReady = false;
+	pioDataOut = false;
+	pioPtr = pioEnd = 0;
+	waitingCmd = nullptr;
+	pioDRQEndTransferFunc = nullptr;
+	awaitFlush = false;
+	rdTransferred = wrTransferred = 0;
+	nsector = nsectorLeft = 0;
 }
 
 void ATA::ResetBegin()
 {
+	// Synchronize with any file read before reusing its buffer/task file. Already
+	// accepted writes remain queued; only the unfinished host transfer is canceled.
+	std::lock_guard ioSignallock(ioMutex);
+	ioRead = false;
+	ioReadError = false;
+	ioErrorPending = ioWriteError;
+	dmaReady = false;
+	pioDataOut = false;
+	pioPtr = pioEnd = 0;
+	pioDRQEndTransferFunc = nullptr;
+	waitingCmd = nullptr;
+	awaitFlush = false;
+	rdTransferred = wrTransferred = 0;
+	nsector = nsectorLeft = 0;
+	delete[] currentWrite;
+	currentWrite = nullptr;
+	currentWriteLength = 0;
+	currentWriteSectors = 0;
+	regStatus = 0;
+	regError = 0;
+	regSelect = 0;
+	regControlHOBRead = false;
+	regFeatureHOB = regNsectorHOB = regSectorHOB = regLcylHOB = regHcylHOB = 0;
+	lba48 = false;
+	DEV9ResetATAFIFO();
 	PreCmdExecuteDeviceDiag();
 }
 void ATA::ResetEnd(bool hard)
@@ -300,12 +425,18 @@ void ATA::ResetEnd(bool hard)
 	curHeads = 16;
 	curSectors = 63;
 	curCylinders = 0;
+	curCHSValid = true;
 	curMultipleSectorsSetting = 128;
+	if (powerState == PowerState::Sleep)
+		powerState = PowerState::Standby;
+	standbyRemaining = standbyPeriod;
 
 	//UDMA Mode setting is preserved
 	//across SRST
 	if (hard)
 	{
+		powerState = PowerState::Active;
+		standbyPeriod = standbyRemaining = 0;
 		pioMode = 4;
 		mdmaMode = 2;
 		udmaMode = -1;
@@ -322,6 +453,8 @@ void ATA::ResetEnd(bool hard)
 
 	HDD_ExecuteDeviceDiag(false);
 	regControlEnableIRQ = false;
+	if (hddImage)
+		CreateHDDinfo(hddImageSize / 512);
 }
 
 void ATA::ATA_HardReset()
@@ -329,6 +462,7 @@ void ATA::ATA_HardReset()
 	//DevCon.WriteLn("DEV9: *ATA_HARD RESET");
 	ResetBegin();
 	ResetEnd(true);
+	softwareReset = false;
 }
 
 u16 ATA::Read(u32 addr, int width)
@@ -336,11 +470,9 @@ u16 ATA::Read(u32 addr, int width)
 	switch (addr)
 	{
 		case ATA_R_DATA:
-			if (width == 8)
-				Console.Error("DEV9:ATA : ATA_R_DATA 8bit read???, Active %s", (GetSelectedDevice() == 0) ? "True" : "False");
-			//else
-			//	DevCon.WriteLn("DEV9: ATA: ATA_R_DATA %dbit read, Active %s", width, hard, (GetSelectedDevice() == 0) ? "True" : "False");
-			return ATAreadPIO();
+			// The emulated drive exposes a 16-bit data port, not the optional
+			// SET FEATURES 8-bit transfer extension. Invalid widths consume no word.
+			return width == 16 ? ATAreadPIO() : 0xffff;
 		case ATA_R_ERROR:
 			//DevCon.WriteLn("DEV9: ATA: ATA_R_ERROR %dbit read %x, Active %s", width, regError, (GetSelectedDevice() == 0) ? "True" : "False");
 			if (GetSelectedDevice() != 0)
@@ -382,6 +514,8 @@ u16 ATA::Read(u32 addr, int width)
 			//DevCon.WriteLn("DEV9: ATA: ATA_R_SELECT %dbit read %x, Active %s", width, regSelect, (GetSelectedDevice() == 0) ? " True " : " False ");
 			return regSelect;
 		case ATA_R_STATUS:
+			if (GetSelectedDevice() != 0)
+				return 0;
 			// Clear irqcause
 			pendingInterrupt = false;
 			dev9.irqcause &= ~ATA_INTR_INTRQ;
@@ -416,9 +550,20 @@ u16 ATA::Read(u32 addr, int width)
 
 void ATA::Write(u32 addr, u16 value, int width)
 {
-	if ((addr != ATA_R_CMD && addr != ATA_R_CONTROL) && (regStatus & (ATA_STAT_BUSY | ATA_STAT_DRQ)) != 0)
+	if (addr == ATA_R_DATA)
 	{
-		Console.Error("DEV9: ATA: DEVICE BUSY, DROPPING WRITE");
+		if (width == 16)
+			ATAwritePIO(value);
+		return;
+	}
+	if (addr != ATA_R_CONTROL && (softwareReset || powerState == PowerState::Sleep))
+		return;
+	if (addr == ATA_R_SELECT && (regStatus & ATA_STAT_DRQ) != 0)
+		value = (regSelect & ~0x10) | (value & 0x10);
+	if (addr != ATA_R_CONTROL &&
+		((regStatus & ATA_STAT_BUSY) != 0 || ((regStatus & ATA_STAT_DRQ) != 0 && addr != ATA_R_SELECT)))
+	{
+		// Invalid host sequencing must not replace a live transfer's buffer.
 		return;
 	}
 	switch (addr)
@@ -455,6 +600,7 @@ void ATA::Write(u32 addr, u16 value, int width)
 			break;
 		case ATA_R_SELECT:
 		{
+			ClearHOB();
 			//DevCon.WriteLn("DEV9: ATA: ATA_R_SELECT %dbit write %x", width, value);
 			const int oldDev = GetSelectedDevice();
 			const int newDev = (value >> 4) & 1;
@@ -487,17 +633,24 @@ void ATA::Write(u32 addr, u16 value, int width)
 				regControlEnableIRQ = true;
 			}
 
-			if ((value & 0x4) != 0)
+			if ((value & 0x4) != 0 && !softwareReset)
 			{
-				DevCon.WriteLn("DEV9: *ATA_R_CONTROL RESET");
 				ResetBegin();
-				ResetEnd(false);
+				softwareReset = true;
 			}
-			if ((value & 0x80) != 0)
-				regControlHOBRead = true;
+			else if ((value & 0x4) == 0 && softwareReset)
+			{
+				ResetEnd(false);
+				softwareReset = false;
+				regControlEnableIRQ = (value & 2) == 0;
+			}
+			regControlHOBRead = (value & 0x80) != 0;
 
 			break;
 		case ATA_R_CMD:
+			// Device 1 is absent. EXECUTE DEVICE DIAGNOSTIC addresses both devices.
+			if (GetSelectedDevice() != 0 && value != 0x90)
+				return;
 			//DevCon.WriteLn("DEV9: ATA: ATA_R_CMD %dbit write %x", width, value);
 			regCommand = value;
 			regControlHOBRead = false;
@@ -511,43 +664,64 @@ void ATA::Write(u32 addr, u16 value, int width)
 	}
 }
 
-void ATA::Async(uint cycles)
+void ATA::Async(u32 cycles)
 {
 	if (!hddImage)
 		return;
 
-	if ((regStatus & (ATA_STAT_BUSY | ATA_STAT_DRQ)) == 0 ||
-		awaitFlush || (waitingCmd != nullptr))
+	// Internal completion pumps pass -1 and must not advance emulated time.
+	if (cycles != static_cast<u32>(-1) && standbyPeriod != 0 &&
+		(powerState == PowerState::Active || powerState == PowerState::Idle) &&
+		(regStatus & (ATA_STAT_BUSY | ATA_STAT_DRQ)) == 0)
 	{
+		if (cycles >= standbyRemaining)
+			powerState = PowerState::Standby;
+		else
+			standbyRemaining -= cycles;
+	}
+
+	bool reportError;
+	{
+		std::lock_guard ioSignallock(ioMutex);
+		if (ioRead || ioWrite)
+			return;
+		reportError = ioErrorPending;
+	}
+	if (reportError && HDD_ReportIOError())
+		return;
+
+	if (waitingCmd != nullptr)
+	{
+		if (HDD_ReportIOError())
+			return;
+		const auto cmd = waitingCmd;
+		waitingCmd = nullptr;
+		(this->*cmd)();
+		return;
+	}
+
+	if ((regStatus & (ATA_STAT_BUSY | ATA_STAT_DRQ)) == 0 || awaitFlush)
+	{
+		bool startWrites = false;
 		{
 			std::lock_guard ioSignallock(ioMutex);
-			if (ioRead || ioWrite)
-				//IO Running
-				return;
-		}
-
-		//Note, ioThread may still be working.
-		if (waitingCmd != nullptr) //Are we waiting to continue a command?
-		{
-			//Log_Info("Running waiting command");
-			void (ATA::*cmd)() = waitingCmd;
-			waitingCmd = nullptr;
-			(this->*cmd)();
-		}
-		else if (!writeQueue.IsQueueEmpty()) //Flush cache
-		{
-			//Log_Info("Starting async write");
+			if (!writeQueue.IsQueueEmpty())
 			{
-				std::lock_guard ioSignallock(ioMutex);
 				ioWrite = true;
+				startWrites = true;
 			}
-			ioReady.notify_all();
+			else if (awaitFlush)
+				IO_Flush();
 		}
-		else if (awaitFlush) //Fire IRQ on flush completion?
+		if (startWrites)
+			ioReady.notify_all();
+		else if (awaitFlush)
 		{
-			//Log_Info("Flush done, raise IRQ");
-			awaitFlush = false;
-			PostCmdNoData();
+			if (!HDD_ReportIOError())
+			{
+				awaitFlush = false;
+				PostCmdNoData();
+			}
 		}
 	}
 }
@@ -575,13 +749,12 @@ s64 ATA::HDD_GetLBA()
 	}
 	else
 	{
-		regStatus |= static_cast<u8>(ATA_STAT_ERR);
-		regError |= static_cast<u8>(ATA_ERR_ABORT);
-
-		Console.Error("DEV9: ATA: Tried to get LBA address while LBA mode disabled");
-		//(c.Nh + h).Ns+(s-1)
-		//s64 CHSasLBA = ((regLcyl + (regHcyl << 8)) * curHeads + (regSelect & 0x0F)) * curSectors + (regSector - 1);
-		return -1;
+		const u32 cylinder = regLcyl | (regHcyl << 8);
+		const u32 head = regSelect & 0x0f;
+		if (!curCHSValid || cylinder >= curCylinders || head >= curHeads ||
+			regSector == 0 || regSector > curSectors)
+			return -1;
+		return (static_cast<s64>(cylinder) * curHeads + head) * curSectors + regSector - 1;
 	}
 }
 
@@ -608,11 +781,23 @@ void ATA::HDD_SetLBA(s64 sectorNum)
 	}
 	else
 	{
-		regStatus |= ATA_STAT_ERR;
-		regError |= ATA_ERR_ABORT;
-
-		Console.Error("DEV9: ATA: Tried to set LBA address while LBA mode disabled");
+		const s64 track = sectorNum / curSectors;
+		const u32 cylinder = static_cast<u32>(track / curHeads);
+		regSector = static_cast<u8>(sectorNum % curSectors + 1);
+		regSelect = static_cast<u8>((regSelect & 0xf0) | (track % curHeads));
+		regLcyl = static_cast<u8>(cylinder);
+		regHcyl = static_cast<u8>(cylinder >> 8);
 	}
+}
+
+void ATA::HDD_AdvanceSectors(int completed)
+{
+	const int remaining = std::max(0, transferSectorsRequested - completed);
+	regNsector = static_cast<u8>(remaining);
+	if (lba48)
+		regNsectorHOB = static_cast<u8>(remaining >> 8);
+	HDD_SetLBA(transferStartLBA + completed);
+	nsectorLeft = std::max(0, nsector - completed);
 }
 
 bool ATA::HDD_CanSeek()
@@ -623,30 +808,24 @@ bool ATA::HDD_CanSeek()
 
 bool ATA::HDD_CanAccess(int* sectors)
 {
-	s64 maxLBA = hddImageSize / 512 - 1;
-	if ((regSelect & 0x40) == 0) //CHS mode
-		maxLBA = std::min<s64>(maxLBA, curCylinders * curHeads * curSectors);
-
-	const s64 posStart = HDD_GetLBA();
-	if (posStart == -1)
-		return false;
-
-	//DevCon.WriteLn("DEV9: LBA :%i", lba);
-	if (posStart > maxLBA)
+	// Capacity is an exclusive count of complete sectors. Subtracting first
+	// avoids overflow, and an empty/sub-sector image has no valid seek address.
+	u64 capacity = std::min<u64>(hddImageSize / 512,
+		lba48 ? (1ULL << 48) - 1 : (1ULL << 28) - 1);
+	if ((regSelect & 0x40) == 0)
+		capacity = std::min<u64>(capacity, static_cast<u64>(curCylinders) * curHeads * curSectors);
+	const s64 start = HDD_GetLBA();
+	if (!curCHSValid || start < 0 || static_cast<u64>(start) >= capacity || *sectors < 0)
 	{
 		*sectors = -1;
 		return false;
 	}
-
-	const s64 posEnd = posStart + *sectors;
-	if (posEnd > maxLBA)
+	const u64 available = capacity - static_cast<u64>(start);
+	if (static_cast<u64>(*sectors) > available)
 	{
-		const s64 overshoot = posEnd - maxLBA;
-		s64 space = *sectors - overshoot;
-		*sectors = static_cast<int>(space);
+		*sectors = static_cast<int>(available);
 		return false;
 	}
-
 	return true;
 }
 

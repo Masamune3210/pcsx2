@@ -23,7 +23,7 @@ void ATA::PostCmdDMADataToHost()
 	dmaReady = false;
 
 	pendingInterrupt = true;
-	if (regControlEnableIRQ)
+	if (regControlEnableIRQ && GetSelectedDevice() == 0)
 		_DEV9irq(ATA_INTR_INTRQ, 1);
 }
 
@@ -33,6 +33,7 @@ void ATA::DRQCmdDMADataFromHost()
 	if (!HDD_CanAssessOrSetError())
 		return;
 
+	wrTransferred = 0;
 	nsectorLeft = nsector;
 	currentWrite = new u8[nsector * 512];
 	currentWriteLength = nsector * 512;
@@ -45,26 +46,30 @@ void ATA::DRQCmdDMADataFromHost()
 	DEV9runFIFO();
 	//PCSX2 will Start DMA
 }
-void ATA::PostCmdDMADataFromHost()
+void ATA::HDD_CompleteWrite()
 {
-	WriteQueueEntry entry{0};
-	entry.data = currentWrite;
-	entry.length = currentWriteLength;
-	entry.sector = currentWriteSectors;
-	writeQueue.Enqueue(entry);
+	// PIO blocks already own their queued copies. DMA hands over its complete
+	// buffer here; incomplete DMA buffers are never queued on reset.
+	if (currentWrite != nullptr)
+	{
+		const WriteQueueEntry entry{currentWrite, currentWriteLength, currentWriteSectors};
+		std::lock_guard ioSignallock(ioMutex);
+		writeQueue.Enqueue(entry);
+	}
 	currentWrite = nullptr;
 	currentWriteLength = 0;
 	currentWriteSectors = 0;
 	nsectorLeft = 0;
 
 	regStatus &= ~ATA_STAT_DRQ;
+	regStatus |= ATA_STAT_BUSY;
 	dmaReady = false;
 
 	if (fetWriteCacheEnabled)
 	{
 		regStatus &= ~ATA_STAT_BUSY;
 		pendingInterrupt = true;
-		if (regControlEnableIRQ)
+		if (regControlEnableIRQ && GetSelectedDevice() == 0)
 			_DEV9irq(ATA_INTR_INTRQ, 1);
 	}
 	else
@@ -77,7 +82,8 @@ int ATA::ReadDMAToFIFO(u8* buffer, int space)
 {
 	if (udmaMode >= 0 || mdmaMode >= 0)
 	{
-		if (space == 0 || nsector == -1)
+		if (!dmaReady || space <= 0 || nsector <= 0 || rdTransferred < 0 ||
+			rdTransferred >= nsector * 512 || readBuffer == nullptr)
 			return 0;
 
 		// Read to FIFO
@@ -88,6 +94,7 @@ int ATA::ReadDMAToFIFO(u8* buffer, int space)
 
 		if (rdTransferred >= nsector * 512)
 		{
+			HDD_AdvanceSectors(nsector);
 			HDD_SetErrorAtTransferEnd();
 
 			nsector = 0;
@@ -104,7 +111,8 @@ int ATA::WriteDMAFromFIFO(u8* buffer, int available)
 {
 	if (udmaMode >= 0 || mdmaMode >= 0)
 	{
-		if (available == 0 || nsector == -1)
+		if (!dmaReady || available <= 0 || nsector <= 0 || wrTransferred < 0 ||
+			wrTransferred >= nsector * 512 || currentWrite == nullptr)
 			return 0;
 
 		// Write to FIFO
@@ -115,11 +123,12 @@ int ATA::WriteDMAFromFIFO(u8* buffer, int available)
 
 		if (wrTransferred >= nsector * 512)
 		{
+			HDD_AdvanceSectors(nsector);
 			HDD_SetErrorAtTransferEnd();
 
 			nsector = 0;
 			wrTransferred = 0;
-			PostCmdDMADataFromHost();
+			HDD_CompleteWrite();
 		}
 
 		return size;

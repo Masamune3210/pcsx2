@@ -25,11 +25,11 @@ private:
 	bool lba48Supported = false;
 
 	std::FILE* hddImage = nullptr;
-	u64 hddImageSize;
+	u64 hddImageSize = 0;
 
 	bool hddSparse = false;
-	u64 hddSparseBlockSize;
-	u64 HddSparseStart;
+	u64 hddSparseBlockSize = 4096;
+	u64 HddSparseStart = 0;
 	std::unique_ptr<u8[]> hddSparseBlock;
 	bool hddSparseBlockValid = false;
 
@@ -39,14 +39,15 @@ private:
 	int hddNativeHandle = -1;
 #endif
 
-	int pioMode;
-	int mdmaMode;
-	int udmaMode;
+	int pioMode = 4;
+	int mdmaMode = 2;
+	int udmaMode = -1;
 
 	//Info
 	u8 curHeads = 16;
 	u8 curSectors = 63;
 	u16 curCylinders = 0;
+	bool curCHSValid = true;
 
 	u8 curMultipleSectorsSetting = 128;
 
@@ -57,57 +58,66 @@ private:
 
 	//Enable/disable features
 	bool fetSmartEnabled = true;
+	std::string smartSettingsPath;
 	bool fetSecurityEnabled = false;
 	bool fetWriteCacheEnabled = true;
 	bool fetHostProtectedAreaEnabled = false;
 
 	//Regs
-	u16 regCommand; //WriteOnly, Only to be written BSY and DRQ are cleared, DMACK is not set and device is not sleeping, except for DEVICE RESET
+	u16 regCommand = 0; //WriteOnly, Only to be written BSY and DRQ are cleared, DMACK is not set and device is not sleeping, except for DEVICE RESET
 	//PIO Read/Write, Only to be written DMACK is not set and DRQ is 1
 	//COMMAND REG (WriteOnly) Only to be written DMACK is not set
 	//Bit 0 = 0
 	bool regControlEnableIRQ = false; //Bit 1 = 1 Disable Interrupt
 	//Bit 2 = 1 Software Reset
 	bool regControlHOBRead = false; //Bit 7 = HOB (cleared by any write to RegCommand, Sets if Low order or High order bytes are read in ATAread16)
+	bool softwareReset = false;
 	//End COMMAND REG
-	u8 regError; //ReadOnly
+	u8 regError = 0; //ReadOnly
 
 	//DEVICE REG (Read/Write)
-	u8 regSelect;
+	u8 regSelect = 0;
 	//Bit 0-3: LBA Bits 24-27 (Unused in 48bit) or Command Dependent
 	//Bit 4: Selected Device
 	//Bit 5: Obsolete (All?)
 	//Bit 6: Command Dependent
 	//Bit 7: Obsolete (All?)
 	//End COMMAND REG
-	u8 regFeature; //WriteOnly, Only to be written BSY and DRQ are cleared and DMACK is not set
-	u8 regFeatureHOB;
+	u8 regFeature = 0; //WriteOnly, Only to be written BSY and DRQ are cleared and DMACK is not set
+	u8 regFeatureHOB = 0;
 
 	//Following regs are Read/Write, Only to be written BSY and DRQ are cleared and DMACK is not set
-	u8 regSector; //Sector Number or LBA Low
-	u8 regSectorHOB;
-	u8 regLcyl; //LBA Mid
-	u8 regLcylHOB;
-	u8 regHcyl; //LBA High
-	u8 regHcylHOB;
+	u8 regSector = 0; //Sector Number or LBA Low
+	u8 regSectorHOB = 0;
+	u8 regLcyl = 0; //LBA Mid
+	u8 regLcylHOB = 0;
+	u8 regHcyl = 0; //LBA High
+	u8 regHcylHOB = 0;
 	//TODO handle nsector code
-	u8 regNsector;
-	u8 regNsectorHOB;
+	u8 regNsector = 0;
+	u8 regNsectorHOB = 0;
 
-	u8 regStatus; // ReadOnly. When read via AlternateStatus, pending interrupts are not cleared.
+	u8 regStatus = 0; // ReadOnly. When read via AlternateStatus, pending interrupts are not cleared.
 	// When an error occurs, the SEEK bit shall not be changed until the Status Register is read,
 	// after which this bit again indicates Seek completed.
 	// A value of -1 is locked clear, a value of 1 is locked set, 0 is unlocked.
-	s8 regStatusSeekLock; 
+	s8 regStatusSeekLock = 0;
 
 	bool pendingInterrupt = false;
+	enum class PowerState { Active, Idle, Standby, Sleep };
+	PowerState powerState = PowerState::Active;
+	u64 standbyPeriod = 0; // IOP cycles, independent of host wall time.
+	u64 standbyRemaining = 0;
 
 	//Transfer
 	//Write Buffer(s)
 	bool awaitFlush = false;
-	u8* currentWrite; //array
-	u32 currentWriteLength;
-	u64 currentWriteSectors;
+	u8* currentWrite = nullptr; //array
+	u32 currentWriteLength = 0;
+	u64 currentWriteSectors = 0;
+	s64 transferStartLBA = 0;
+	int transferSectorsRequested = 0;
+	bool transferRangeError = false;
 
 	struct WriteQueueEntry
 	{
@@ -126,8 +136,15 @@ private:
 
 	std::condition_variable ioReady;
 	std::atomic_bool ioClose{false};
-	bool ioWrite;
-	bool ioRead;
+	// All queue operations, file access and these completion flags use ioMutex.
+	bool ioWrite = false;
+	bool ioRead = false;
+	bool ioReadError = false;
+	bool ioWriteError = false; // Deferred write failures remain latched until reopen.
+	bool ioErrorPending = false;
+	u64 ioErrorSector = 0;
+	u64 ioReadSector = 0;
+	u32 ioReadSectors = 0;
 	void (ATA::*waitingCmd)() = nullptr;
 	//Write Buffer(s)
 
@@ -136,16 +153,18 @@ private:
 	int wrTransferred = 0;
 	//Max tranfer on 24bit is 256*512 = 128KB
 	//Max tranfer on 48bit is 65536*512 = 32MB
-	int readBufferLen;
+	int readBufferLen = 0;
 	u8* readBuffer = nullptr;
 	//Read Buffer
 
 	//PIO Buffer
-	int pioPtr;
-	int pioEnd;
-	u8 pioBuffer[512];
+	int pioPtr = 0;
+	int pioEnd = 0;
+	u8 pioBuffer[512] = {};
+	bool pioDataOut = false;
+	int pioWriteBlockStart = 0;
 
-	int sectorsPerInterrupt;
+	int sectorsPerInterrupt = 1;
 	void (ATA::*pioDRQEndTransferFunc)() = nullptr;
 	//PIO Buffer
 
@@ -175,10 +194,11 @@ public:
 	int WriteDMAFromFIFO(u8* buffer, int available);
 
 	u16 ATAreadPIO();
-	//ATAwritePIO;
+	void ATAwritePIO(u16 value);
 
 private:
 	void InitSparseSupport(const std::string& hddPath);
+	bool SaveSMARTSettings();
 
 	//Info
 	void CreateHDDinfo(u64 sizeSectors);
@@ -202,6 +222,7 @@ private:
 
 	s64 HDD_GetLBA();
 	void HDD_SetLBA(s64 sectorNum);
+	void HDD_AdvanceSectors(int completed);
 
 	bool HDD_CanSeek();
 	bool HDD_CanAccess(int* sectors);
@@ -212,9 +233,11 @@ private:
 	void IO_Thread();
 	void IO_Read();
 	bool IO_Write();
+	bool IO_Flush(); // Caller holds ioMutex, or has joined the worker.
+	bool HDD_ReportIOError(); // Acquires ioMutex; caller must not hold it.
 	bool IO_SparseZero(u64 byteOffset, u64 byteSize);
 	void IO_SparseCacheUpdateLocation(u64 Offset);
-	void IO_SparseCacheLoad();
+	bool IO_SparseCacheLoad();
 #if defined(PCSX2_DEBUG) || defined(PCSX2_DEVBUILD)
 	void IO_SparseCacheAssertFileZeros(u64 hddSparseBlockSizeReadable);
 #endif
@@ -235,7 +258,7 @@ private:
 	void DRQCmdDMADataToHost();
 	void PostCmdDMADataToHost();
 	void DRQCmdDMADataFromHost();
-	void PostCmdDMADataFromHost();
+	void HDD_CompleteWrite();
 	void HDD_ReadDMA(bool isLBA48);
 	void HDD_WriteDMA(bool isLBA48);
 
@@ -248,13 +271,13 @@ private:
 	void HDD_FlushCache();
 	void HDD_InitDevParameters();
 	void HDD_ReadVerifySectors(bool isLBA48);
+	void HDD_ReadVerifyComplete();
 	void HDD_Recalibrate();
 	void HDD_SeekCmd();
 	void HDD_SetFeatures();
 	void HDD_SetMultipleMode();
 	void HDD_Nop();
-	void HDD_Idle();
-	void HDD_IdleImmediate();
+	void HDD_PowerCommand();
 
 	void DRQCmdPIODataToHost(u8* buff, int buffLen, int buffIndex, int size, bool sendIRQ);
 	void PostCmdPIODataToHost();
@@ -265,7 +288,7 @@ private:
 	void HDD_ReadPIO(bool isLBA48);
 	void HDD_ReadPIOS2();
 	void HDD_ReadPIOEndBlock();
-	//HDD_Write*
+	void HDD_WritePIO(bool isLBA48, bool multiple);
 
 	void HDD_Smart();
 	void SMART_SetAutoSaveAttribute();
