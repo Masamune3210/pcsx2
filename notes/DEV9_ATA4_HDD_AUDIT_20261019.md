@@ -17,7 +17,7 @@ The guest Linux 2.4.17_mvl21 mounts root /dev/hda1, then later fails a ReiserFS 
 - Tests for real sector persistence, transfer word counts, multiblock boundaries, zero sector-count semantics, DRQ/IRQ transitions, reset and invalid LBA.
 
 ## Current state
-First source pass completed against baseline `0dcd36309877d5da59344893d61c7a374a7851e3`. No production behavior changed. See [checkpointed source findings](DEV9_ATA4_HDD_SOURCE_FINDINGS_20261019.md) for fourteen findings with evidence, priorities, reproduction plans and validation limits, and [command coverage/regression plan](DEV9_ATA4_HDD_COVERAGE_20261019.md) for the protocol inventory. User instructions: **no compiling**, document reasoning for changes, and push checkpoints to this branch. The Ghidra extension is deferred.
+Historical comparison baseline (superseded by implementation below): first source pass completed against baseline `0dcd36309877d5da59344893d61c7a374a7851e3`. No production behavior changed. See [checkpointed source findings](DEV9_ATA4_HDD_SOURCE_FINDINGS_20261019.md) for fourteen findings with evidence, priorities, reproduction plans and validation limits, and [command coverage/regression plan](DEV9_ATA4_HDD_COVERAGE_20261019.md) for the protocol inventory. User instructions: **no compiling**, document reasoning for changes, and push checkpoints to this branch. The Ghidra extension is deferred.
 
 ## Next step
 The requested full command-set source comparison is now complete against retrieved T13/1153D revision 18 (a working draft, not a final-standard certification): [comparison and evidence](DEV9_ATA4_COMMAND_SET_COMPARE_20261019.md), [all 48 command families](DEV9_ATA4_COMMAND_MATRIX_20261019.md), and [all 256 opcode bytes](DEV9_ATA4_OPCODE_INVENTORY_20261019.csv). For a >8 GB LBA-only fixed HDD, 18 unconditional families occupy 23 bytes; 12 have direct cases and 11 encodings are missing (`21 30 31 41 C5 C9 CB E0 E2 E5 E6`). Add conditional CHS command `91` when its geometry profile applies. Handler counts are not test passes. Basic Power Management is mandatory; SMART autosave uses the wrong register; SET FEATURES violates unsupported-parameter and independent-mode rules. Exact clauses, optional-feature distinctions and later/Sony extensions are documented in the comparison. Keep PS2/SPEED controller capability, physical Sony drive evidence and virtual drive features separate. No production changes or compilation.
@@ -34,3 +34,15 @@ See [FIFO rationale](DEV9_FIFO_FIX_20261020.md) and the
 [implementation plan](DEV9_ATA_FIX_PLAN_20261020.md). Whitespace/source inspection
 checks passed; C++ tests are uncompiled and unrun under the no-compilation rule.
 ATA state-machine and backing-file fixes are in progress separately.
+
+## ATA implementation checkpoint, 2026-10-20
+
+Production corrections now cover the PIO write state machine, accepted-block
+persistence across reset, DMA bounds/lifecycle, EOF/CHS, coherent queued reads,
+durable flush and guest-visible host errors, parameters, IRQ/HOB/selection,
+mandatory aliases/power commands, SMART metadata persistence and IDENTIFY claims.
+See [implementation ledger and remaining risks](DEV9_ATA_IMPLEMENTATION_20261020.md).
+All23 compared mandatory LBA-only opcode bytes now dispatch; this is source
+coverage, not runtime conformance. Added39 prospective ATA integration cases and
+registered seven FIFO cases. Source checks/independent review only; **no compiling
+or runtime execution**. Save-state safety policy is a separate pending checkpoint.

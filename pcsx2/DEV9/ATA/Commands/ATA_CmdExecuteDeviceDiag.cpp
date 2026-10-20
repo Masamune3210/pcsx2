@@ -25,7 +25,7 @@ void ATA::PostCmdExecuteDeviceDiag(bool sendIRQ)
 	if (sendIRQ)
 	{
 		pendingInterrupt = true;
-		if (regControlEnableIRQ)
+		if (regControlEnableIRQ && GetSelectedDevice() == 0)
 			_DEV9irq(ATA_INTR_INTRQ, 1);
 	}
 }

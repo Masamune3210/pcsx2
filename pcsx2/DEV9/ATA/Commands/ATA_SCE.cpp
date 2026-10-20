@@ -38,7 +38,8 @@ void ATA::HDD_SCE()
 // PS2 ID Dumper can be used as test case
 void ATA::SCE_IDENTIFY_DRIVE()
 {
-	PreCmd();
+	if (!PreCmd())
+		return;
 
 	pioDRQEndTransferFunc = nullptr;
 	DRQCmdPIODataToHost(sceSec, 256 * 2, 0, 256 * 2, true);
