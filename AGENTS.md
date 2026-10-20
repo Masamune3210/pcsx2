@@ -1,5 +1,10 @@
 # Codex instructions: DEV9 ATA HDD audit branch
 
+## Run12 DMA FIFO checkpoint (2026-10-20)
+
+Read [source finding](notes/PSBBN_RUN12_SPEED_FIFO_DEADLOCK_FINDING_20261020_v1.md) before further DEV9 debugging. The source-derived culprit candidate is the 8 KiB SPEED FIFO's former one-pass pump when Linux requests a 0x3000-byte IOP DMA8 read (then 0x7000/0x8000 retries). `5a8117f325e0` installs progress-checked multi-pass pumping; `baac0b5561c7` adds prospective `core_test` full-path regressions. **Neither has been compiled or executed.** Review reentrancy, interruption and test fixture before treating this as verified. Preserve HDD-enabled savestates (user overrode ban), previous ATA-4 work and no-compilation instruction.
+
+
 ## Current focused mission (2026-10-20)
 
 Read `notes/PSBBN_RUN12_DEV9_DMA_TIMEOUT_MISSION_20261020_v1.md` for the active run12 DMA timeout investigation. This supersedes the broad audit as the immediate focus, **without** discarding existing ATA-4 scope, source fixes or review handoffs. Reconstruct the failed ATA -> SPEED FIFO -> IOP DMA8 -> IRQ transaction and distinguish host vs guest cause of `ATA DMA force break`. Write narrowly scoped tests/instrumentation; **do not compile or run tests** unless user authorizes. Explicit user decision: **do not disable HDD-enabled savestates**, including scheduled PSBBN forensic capture; prior blocking guard was reverted. This guidance is for Codex continuing on the existing branch.
