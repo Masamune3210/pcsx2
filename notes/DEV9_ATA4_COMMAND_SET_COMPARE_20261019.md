@@ -13,6 +13,12 @@ audit checkpoint: `26e221cbd8a8887032d5841bb02edcae40b0bd85`.
 The intended default is a fixed ATA HDD behind PS2 DEV9/SPEED, compatible with
 Sony's 40 GB HDD software. Three independent questions must be answered:
 
+The attached drive is virtual and image-backed, not host ATA pass-through. The
+image supplies sector data, not IDENTIFY capabilities. Physical Sony hardware
+evidence informs compatibility but does not define the virtual drive's feature
+table. Existing advanced features must be assessed on their own merits rather
+than removed solely because the controller is described as ATA-4.
+
 1. Which commands ATA/ATAPI-4 requires for a fixed ATA device, and which become
    required only when an optional feature set is implemented.
 2. Which commands actual PS2 software uses, including Sony's vendor extensions.
