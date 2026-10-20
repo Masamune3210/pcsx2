@@ -128,3 +128,18 @@ found one IDNF distinction, corrected with expanded regression source. Fresh
 whitespace, bridge constants and command inventory checks passed. No compiling,
 configuration, C++ execution, Windows/sanitizer or PSBBN validation occurred.
 Remaining unclaimed families and runtime/design limits are explicit in the notes.
+
+### Remaining-command durable handoff
+
+Pushed implementation checkpoints `693ff612a2` (buffer, SMART and reversion) and
+`87a3a63258` (ATA-4 HPA and multiple-error blocks). Local/remote source HEAD matched
+at `87a3a63258` with a clean worktree. Fresh full-range whitespace checks,31 bridge
+constant comparisons,256 CSV source-line references,48 family rows and registration
+of75 ATA plus seven FIFO prospective cases passed source-only verification.
+Independent review's failed-INIT IDNF finding was corrected and rechecked.
+
+No configuration, compilation, C++ test execution, sanitizer, Windows build or
+PSBBN run occurred. Later HPA27/37, standard security, queued DMA, CFA/PACKET,
+firmware download and undocumented Sony security remain unsupported/unclaimed as
+appropriate to the virtual fixed-disk profile. See the current matrix and focused
+notes; do not treat unsupported encodings as successful command implementations.

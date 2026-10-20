@@ -169,3 +169,10 @@ found one IDNF distinction, corrected with expanded regression source. Fresh
 whitespace, bridge constants and command inventory checks passed. No compiling,
 configuration, C++ execution, Windows/sanitizer or PSBBN validation occurred.
 Remaining unclaimed families and runtime/design limits are explicit in the notes.
+
+Remaining-command source handoff: `693ff612a2` and `87a3a63258` are pushed; remote
+and local source HEAD matched, and the worktree was clean. Fresh source-only checks
+covered whitespace,31 bridge constants,256 opcode references,48 families and75 ATA
+plus seven FIFO prospective cases. Full compiled/runtime verification remains
+unrun under the user's no-compilation constraint. The final documentation-only
+checkpoint records this result; source behavior is unchanged after `87a3a63258`.
