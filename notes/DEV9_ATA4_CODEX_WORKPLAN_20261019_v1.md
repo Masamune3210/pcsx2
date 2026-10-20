@@ -1,5 +1,13 @@
 # Codex task: end-to-end DEV9 HDD and ATA protocol correctness
 
+## Current override: do not block HDD savestates (2026-10-20)
+
+**User-directed reversion completed.** All restrictions introduced by `SaveState_CheckHDDStateSupport` were removed from `pcsx2/SaveState.cpp`, `pcsx2/SaveState.h` and `pcsx2/VMManager.cpp`, byte-for-byte restoring those files to the pre-audit state. Commits: `74a6308c057f`, `6980793d5957`, `8a8c4d4b9873`. This explicitly **overrides** earlier instructions in this workplan advocating a fail-closed HDD-enabled save/load policy.
+
+Do not reapply an HDD savestate prohibition, preflight guard or other loss of functionality. Keep manual, scheduled diagnostic, and resume savestates usable. HDD image rollback is **not** implied; the user understands the risk of restoring against changed external disk contents. No unrelated ATA source or test behavior was reverted. No compilation or runtime verification performed.
+
+
+
 **Task mode:** implement and test, not just summarize. **Branch:** `note-working/dev9-ata4-hdd-audit-20261019`. **Starting point:** existing audit note and `AGENTS.md` at repo root. **Current state:** production corrections are now implemented in the 2026-10-20 checkpoints below. Historical audit sections describe the original baseline; compiled/runtime validation remains prohibited and unrun.
 
 ## Why this work exists
