@@ -38,7 +38,7 @@ Type: uint32_t             # actual printk producer write cursor
 Type: uint32_t             # printk character count
 ```
 
-The lower addresses are **physical EE offsets** with the KSEG0 `0x80000000` prefix omitted (`0x001F84E8` and `0x001FC4F0`). Witness text at buffer start: `<4>PlayStation 2 SIF BIOS:`.
+The lower addresses are **physical EE offsets** with the KSEG0 `0x80000000` prefix omitted (`0x001F84E8` and `0x001FC4F4`). Witness text at buffer start: `<4>PlayStation 2 SIF BIOS:`.
 
 Direct offline read-only checks against extracted `eeMemory.bin` images:
 
