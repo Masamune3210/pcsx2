@@ -52,7 +52,6 @@ class ArchiveEntryList;
 
 // Wrappers to generate a save state compatible across all frontends.
 // These functions assume that the caller has paused the core thread.
-extern bool SaveState_CheckHDDStateSupport(Error* error);
 extern std::unique_ptr<ArchiveEntryList> SaveState_DownloadState(Error* error);
 extern std::unique_ptr<SaveStateScreenshotData> SaveState_SaveScreenshot();
 extern bool SaveState_ZipToDisk(
