@@ -103,6 +103,12 @@ void ATA::IDE_ExecCmd(u16 value)
 		case 0xE7:
 			HDD_FlushCache();
 			break;
+		case 0xE4:
+			HDD_ReadBuffer();
+			break;
+		case 0xE8:
+			HDD_WriteBuffer();
+			break;
 		case 0xEA:
 			if (lba48Supported)
 				HDD_FlushCache();
@@ -167,6 +173,7 @@ bool ATA::PreCmd()
 	pioPtr = pioEnd = 0;
 	pioDataOut = false;
 	pioDRQEndTransferFunc = nullptr;
+	pioDataOutComplete = nullptr;
 	rdTransferred = wrTransferred = 0;
 	dmaReady = false;
 	if (HDD_ReportIOError())
