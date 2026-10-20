@@ -70,6 +70,14 @@ Other audit candidates: `IO_SparseCacheAssertFileZeros` seems to read into `hddS
 
 ## State of verification at handoff
 
+### Subsequent command-comparison checkpoint (2026-10-19)
+
+- User requested a full ATA-4 command-set comparison and continues to prohibit compilation. The narrower current task is comparison, not implementation of every workplan phase in this turn.
+- See `DEV9_ATA4_COMMAND_SET_COMPARE_20261019.md` for pinned PS2SDK source evidence and explicit limits. Its shutdown callback issues `E0 STANDBY IMMEDIATE`; the current PCSX2 dispatcher aborts it. Primary ATA-4 revision-18 retrieval is blocked by network access, so normative mandatory/optional classifications remain pending.
+- Preserve existing virtual-drive extensions while assessing consistency. Physical-drive evidence is supplementary; neither an image nor a host disk supplies the virtual drive's IDENTIFY fields.
+- Correction to the historical FIFO-wrap assertion above: at production baseline `0dcd36309877d5da59344893d61c7a374a7851e3`, `DEV9.cpp:339` already targets `dev9.fifo` for the wrapped second copy. Do not change that correct destination based on this older handoff assertion. Runtime wrap testing is still unrun.
+- No production changes or compiled tests in this command-comparison checkpoint. Remote documentation commits were merged without rewriting branch history.
+
 - Source paths checked from GitHub branch. The two PIO write omissions and FIFO wrap destination are direct source observations.
 - The ATA end-of-range calculation and array delete mismatch have not been exercised under sanitizers or built tests yet; classify as source-verified suspicious/defective patterns until demonstrated.
 - **Zero production fixes or tests** have been applied by this Codex-setup task.
