@@ -211,6 +211,9 @@ QWidget* MainWindow::getContentParent()
 void MainWindow::setupAdditionalUi()
 {
 	makeIconsMasks(menuBar());
+	// Separate from emulog, read-only, and opt-in: no guest kernel modifications.
+	QAction* psbbn_kernel_log_action = m_ui.menuTools->addAction(tr("PSBBN Linux Kernel Log..."));
+	connect(psbbn_kernel_log_action, &QAction::triggered, this, &ShowPSBBNKernelLogWindow);
 	updateAdvancedSettingsVisibility();
 	setupStatusBarWidgets();
 
@@ -832,6 +835,7 @@ void MainWindow::destroySubWindows()
 
 	SettingsWindow::closeGamePropertiesDialogs();
 
+	DestroyPSBBNKernelLogWindow();
 	LogWindow::destroy();
 }
 
