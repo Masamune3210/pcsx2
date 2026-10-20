@@ -23,10 +23,10 @@ M = mandatory General; M-PM = mandatory basic Power Management; CHS = geometry-d
 | 8.6 | CHECK POWER MODE | `E5` | M-PM | Non-data command (see 9.9). | Implemented CHECK POWER; preserves state/timer; unrun |
 | 8.7 | DEVICE RESET | `08` | P | Device reset (see 9.4 ). | ABRT; correct for fixed non-PACKET profile |
 | 8.8 | DOWNLOAD MICROCODE | `92` | O | PIO data out (see 9.8). | ABRT; feature not advertised / optional not implemented |
-| 8.9 | EXECUTE DEVICE DIAGNOSTIC | `90` | M | Device diagnostics (see 9.5 ). | Diagnostic retained; reset/lifetime/init corrections; unrun |
+| 8.9 | EXECUTE DEVICE DIAGNOSTIC | `90` | M | Device diagnostics (see 9.5 ). | Full ATA signature including Device/Head=0; reset/lifetime/init corrections; unrun |
 | 8.10 | FLUSH CACHE | `E7` | O | Non-data command (see 9.9). | Queue/in-flight ordering and native durable flush implemented; unrun |
 | 8.11 | GET MEDIA STATUS | `DA` | RM | Non-data command (see 9.9). | ABRT; feature not advertised / optional not implemented |
-| 8.12 | IDENTIFY DEVICE | `EC` | M | PIO data in (see 9.7). | Geometry/mode/SMART/PM/flush capability claims aligned; unrun |
+| 8.12 | IDENTIFY DEVICE | `EC` | M | PIO data in (see 9.7). | ASCII first character in high byte; geometry/mode/SMART/PM/flush claims aligned; unrun |
 | 8.13 | IDENTIFY PACKET DEVICE | `A1` | P | PIO data in (see 9.7). | ABRT; correct for fixed non-PACKET profile |
 | 8.14 | IDLE | `E3` | M-PM | Non-data command (see 9.9). | Idle transition and standard standby timer implemented; unrun |
 | 8.15 | IDLE IMMEDIATE | `E1` | M-PM | Non-data command (see 9.9). | Idle transition implemented; unrun |

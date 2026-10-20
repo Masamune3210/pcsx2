@@ -295,6 +295,43 @@ namespace
 		}
 	};
 
+	TEST_F(ATAImageTest, IdentifyStringsPutFirstCharacterInHighByteOfEachWord)
+	{
+		const auto words = Identify();
+		const auto decode = [&words](size_t first, size_t count) {
+			std::string text;
+			for (size_t i = first; i < first + count; ++i)
+			{
+				text.push_back(static_cast<char>(words[i] >> 8));
+				text.push_back(static_cast<char>(words[i] & 0xff));
+			}
+			return text;
+		};
+		EXPECT_EQ(words[10], 0x5043); // 'P' on DD15:8, 'C' on DD7:0.
+		const std::string identity = "PCSX2-DEV9-ATA-HDD";
+		EXPECT_EQ(decode(10, 10), identity + std::string(20 - identity.size(), ' '));
+		EXPECT_EQ(decode(23, 4), "FIRM100 ");
+		EXPECT_EQ(decode(27, 20), identity + std::string(40 - identity.size(), ' '));
+	}
+
+	TEST_F(ATAImageTest, ExecuteDiagnosticRestoresCompleteAtaSignatureForEitherSelection)
+	{
+		for (u8 selection : {0xEF, 0xFF})
+		{
+			drive->Write(ATA_R_SELECT, selection, 8);
+			Command(0x90);
+			ASSERT_NO_FATAL_FAILURE(ExpectSuccess());
+			EXPECT_EQ(drive->Read(ATA_R_SELECT, 8), 0);
+			EXPECT_EQ(drive->Read(ATA_R_NSECTOR, 8), 1);
+			EXPECT_EQ(drive->Read(ATA_R_SECTOR, 8), 1);
+			EXPECT_EQ(drive->Read(ATA_R_LCYL, 8), 0);
+			EXPECT_EQ(drive->Read(ATA_R_HCYL, 8), 0);
+			EXPECT_EQ(drive->Read(ATA_R_ERROR, 8), 1);
+			EXPECT_TRUE(IRQ());
+			Acknowledge();
+		}
+	}
+
 	TEST_F(ATAImageTest, SingleSectorWritesAndAliasesPersistAfterCloseAndReopen)
 	{
 		for (u8 command : {0x30, 0x31})

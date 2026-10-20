@@ -4,6 +4,12 @@
 
 ## Why this work exists
 
+Continued command review corrected IDENTIFY ASCII byte ordering and the complete
+standalone 90h Device/Head signature, with two source-first prospective cases
+(77 ATA total). See [reasoning](DEV9_ATA_IDENTIFY_DIAGNOSTIC_FIX_20261020.md).
+Independent review checked the production changes and caught a test padding-count
+mistake, which was corrected. No compilation or executable tests were run.
+
 PS2 BB Navigator v0.32, SCPN-60160, boots Sony Linux 2.4.17_mvl21 from an HDD image. In the running EE-interpreter experiment, Linux *successfully* mounts `/dev/hda1`, but later gets ATA errors while mounting `/dev/hda4` and fails its ReiserFS journal replay. The host logged 27 `DEV9: ATA: Unknown cmd c5` in ~230–232s. Command `0xC5 WRITE MULTIPLE` is handled by fallback `HDD_Unk`, which explicitly sets ABRT/ERR and never drives the DATA register DRQ phase. This explains a concrete class of Linux `no DRQ after issuing MULTWRITE` errors. The guest has also logged `hda: timeout waiting for DMA`; host emitted `ATA DMA force break` earlier (~177s), so there is more to review than command `0xC5`. The screen progresses through blue-white animated orbs and later stays black while kernel and userspace still execute. The latter black-screen symptom and ATA errors are temporally associated but not yet proven one-to-one.
 
 **Do not confuse this with JIT's separate earlier `journal-2005` root mount panic**. JIT got as far as finishing installation on a clean HDD, then failed in guest ReiserFS bitmap-slot initialization. The interpreter's later `journal-837` I/O failure is distinct. A full change must be verified from cloned/disposable drive images rather than assuming existing test HDD files are undamaged.

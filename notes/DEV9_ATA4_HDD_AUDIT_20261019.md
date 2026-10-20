@@ -18,6 +18,11 @@ The guest Linux 2.4.17_mvl21 mounts root /dev/hda1, then later fails a ReiserFS 
 
 ## Current state
 
+Latest continued-command corrections: IDENTIFY ASCII word ordering and the full
+standalone EXECUTE DEVICE DIAGNOSTIC signature are corrected. See
+[rationale and prospective regressions](DEV9_ATA_IDENTIFY_DIAGNOSTIC_FIX_20261020.md).
+The regression source now has 77 ATA cases; all remain uncompiled and unrun.
+
 Production fixes are checkpointed at `58dc04a4fe` (FIFO) and `874309ca1c`
 (ATA state, PIO writes, I/O ordering/errors, power, parameters and SMART).
 The final lifecycle checkpoint adds closed-image command rejection, FIFO

@@ -42,6 +42,8 @@ void ATA::HDD_ExecuteDeviceDiag(bool sendIRQ)
 	//Passed self-Diag
 	regError = (0x01 | (regError & ATA_ERR_ICRC));
 
+	// The ATA signature includes all Device/Head bits, not only DEV.
+	regSelect = 0;
 	regNsector = 1;
 	regSector = 1;
 	regLcyl = 0;
