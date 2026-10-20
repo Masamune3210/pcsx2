@@ -1,5 +1,10 @@
 # DEV9 HDD / ATA-4 Audit
 
+## PSBBN Linux kernel log debug window (2026-10-20)
+
+A read-only viewer is implemented in PCSX2 Qt: **Tools → PSBBN Linux Kernel Log...**, logging to `<Logs>/psbbn-kernel-log.txt` independently of `emulog.txt`. The kernel's actual 16 KiB printk ring at EE physical `0x001F84E8`, write index `0x001FC4F0`, was established from savestates #004/#020/#038; the incremental 96 bytes match precisely three DMA timeouts. See [design, Ghidra labels, usage and verification status](PSBBN_LIVE_PRINTK_DEBUG_WINDOW_20261020_v1.md). Source changes: `pcsx2-qt/LogWindow.cpp`, `LogWindow.h`, `MainWindow.cpp`. Display and separate file sink are opt-in; historical lines are marked `[replay]`, live lines get observation-time prefixes. **Not compiled or emulator-tested.** No DEV9 guest/hardware, savestate, HDD-image, ELF/kernel, or video output changes. Preserve explicit user directive **do not disable HDD savestates**.
+
+
 ## Run12 DMA > FIFO fix awaiting tests (2026-10-20)
 
 The [run12 single-pass FIFO deadlock analysis](PSBBN_RUN12_SPEED_FIFO_DEADLOCK_FINDING_20261020_v1.md) found that the 8 KiB SPEED ring and `DEV9runFIFO`'s old single drain/refill leave oversized 12/28/32 KiB IOP DMA8 reads incomplete; this matches the guest's 30-second timeout/retry pattern. Commit `5a8117f325e0` adds a progress-checked repeat pump and removes invalid DMA8 <= FIFO-size assertions. Commit `baac0b5561c7` adds an uncompiled production-path image-backed regression for all three lengths. Code changed only in `pcsx2/DEV9/DEV9.cpp` and `tests/ctest/core/dev9_fifo_tests_20261020.cpp`. No compilation, test, emulator run or production HDD image modification. The diagnosis is a high-confidence source-backed failure mechanism, **pending runtime demonstration**. Existing manual/scheduled/resume HDD savestates remain permitted per explicit user request.
