@@ -41,3 +41,5 @@ extern void PSBBNTraceReturnStackAccess(u32 pc, u32 opcode);
 extern void PSBBNTraceReturnSlotTranslation(u32 pc, u32 opcode, u32 sp, const char* phase);
 extern void PSBBNTraceGpFrameBefore(u32 pc, u32 opcode);
 extern void PSBBNTraceGpFrameAfter(u32 pc, u32 opcode, u32 priorGp);
+// Targeted EE JIT ReiserFS read-after-write witness; phase: pre/post SW, pre/post LW.
+extern void PSBBNTraceJournalWordAccess(u32 guestPc, u32 phase);
