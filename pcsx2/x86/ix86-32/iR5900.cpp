@@ -2241,7 +2241,7 @@ static void memory_protect_recompiled_code(u32 startpc, u32 size)
 
 			while (stg > 0)
 			{
-				xCMP(ptr32[PSM(HWADDR(lpc))], *(u32*)PSM(HWADDR(lpc)));
+				xCMP(ptr32[PSM(lpc)], *(u32*)PSM(lpc));
 				xJNE(DispatchBlockDiscard);
 
 				stg -= 4;
