@@ -13,6 +13,7 @@
 #include "R3000A.h"
 #include "R5900OpcodeTables.h"
 #include "EEActiveTLB.h"
+#include "EEExecutionProfile.h"
 #include "VMManager.h"
 #include "vtlb.h"
 #include "x86/BaseblockEx.h"
@@ -1386,7 +1387,9 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause)
 	}
 	// Invalidation cannot remove a compiled block from a RAM page which has
 	// never contained recompiled instructions during this cache generation.
-	if (!s_recCompiledPhysicalPages.MayContainCode(addr, size))
+	if (EEExecutionProfile::IsExtendedMMU() &&
+		EECanSkipPhysicalCodeClear(EEExecutionProfileMode::ExtendedMMU,
+			 s_recCompiledPhysicalPages.MayContainCode(addr, size)))
 	{
 		if (interval)
 		{
