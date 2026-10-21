@@ -1502,7 +1502,7 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause, u32 trig
 // Translate before applying the physical cache's high-water mark.
 void recClear(u32 addr, u32 size)
 {
-	recClearPhysical(HWADDR(addr), size, EEJitInvalidationCause::VirtualClear);
+	recClearPhysical(HWADDR(addr), size, EEJitInvalidationCause::VirtualClear, addr);
 }
 
 
