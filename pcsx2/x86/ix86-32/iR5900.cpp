@@ -63,7 +63,9 @@ static u64 s_recCompiledBlocks = 0;
 static u64 s_recCompiledBytes = 0;
 static u64 s_recPhysicalClearCalls = 0;
 static u64 s_recSkippedUncompiledPageClears = 0;
-static EERecCompiledPhysicalPages<Ps2MemSize::ExposedRam> s_recCompiledPhysicalPages;
+// ExposedRam is selected at runtime. Cover the full allocated RAM ceiling so
+// retail/development memory changes cannot truncate the conservative bitmap.
+static EERecCompiledPhysicalPages<Ps2MemSize::TotalRam> s_recCompiledPhysicalPages;
 
 // Preserve the original 64 KiB JIT dispatch for standard PS2 execution.
 // Only transition to per-4 KiB dispatch when a real guest instruction fetch
