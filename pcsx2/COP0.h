@@ -12,6 +12,8 @@ extern void WriteTLB(int i);
 extern void UnmapTLB(const tlbs& t, int i);
 extern void MapTLB(const tlbs& t, int i);
 extern void SyncActiveTLBMappings();
+// Bounded diagnostics, reported at JIT resets and every 4096 TLB syncs when COP0 tracing is enabled.
+extern void EEReportTLBChurn(const char* reason);
 extern bool EETLBStoreNeedsModification(u32 address);
 extern bool EEInterpreterTLBStoreNeedsModification(u32 address);
 extern void ResetActiveTLBMappings();
