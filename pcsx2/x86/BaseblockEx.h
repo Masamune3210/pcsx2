@@ -149,6 +149,10 @@ protected:
 	BaseBlockArray blocks;
 
 public:
+	// Called only for blocks that are actually removed from the metadata table.
+	// An observer must not modify BaseBlocks or retain the borrowed reference.
+	using RemovalObserver = void (*)(const BASEBLOCKEX& block, void* context);
+
 	// Caller-owned bounded aggregates; passing nullptr keeps other recompilers
 	// free of accounting work. Retirement is logical, never arena reclamation.
 	struct Metrics
@@ -245,13 +249,17 @@ public:
 		return (*this)[Index(startpc)];
 	}
 
-	__fi void Remove(int first, int last, Metrics* metrics = nullptr)
+	__fi void Remove(int first, int last, Metrics* metrics = nullptr,
+		RemovalObserver observer = nullptr, void* observerContext = nullptr)
 	{
 		pxAssert(first <= last);
 		int idx = first;
 		do
 		{
 			pxAssert(idx <= last);
+
+			if (observer)
+				observer(blocks[idx], observerContext);
 
 			//u32 startpc = blocks[idx].startpc;
 			std::pair<linkiter_t, linkiter_t> range = links.equal_range(blocks[idx].startpc);
