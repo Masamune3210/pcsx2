@@ -951,12 +951,14 @@ __fi void COP0_UpdatePCCR()
 namespace
 {
 EEActiveTLBPageMap s_active_tlb_pages;
+EEActiveTLBProjectionMemo s_active_tlb_projection;
 
 // Bounded host-side diagnostics selected by existing EE COP0 trace.
 struct EETLBChurnStats
 {
 	u64 syncs = 0, tlbWrites = 0, asidChanges = 0;
 	u64 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
+	u64 projectionRebuilds = 0, projectionRebuildsSkipped = 0, projectionPagesRetained = 0;
 	u64 physicalClearRequests = 0, duplicatePhysicalClearsAvoided = 0, scratchClearRequests = 0;
 	u64 syncMicroseconds = 0;
 };
@@ -968,7 +970,7 @@ void EEReportTLBChurn(const char* reason)
 	if (!PSBBNTlbTraceEnabled())
 		return;
 	const auto& s = s_ee_tlb_churn;
-	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu permissionOnlyUpdates=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu",
+	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu permissionOnlyUpdates=%llu projectionRebuilds=%llu projectionRebuildsSkipped=%llu projectionPagesRetained=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu",
 		reason, static_cast<unsigned long long>(s.syncs),
 		static_cast<unsigned long long>(s.tlbWrites),
 		static_cast<unsigned long long>(s.asidChanges),
@@ -976,6 +978,9 @@ void EEReportTLBChurn(const char* reason)
 		static_cast<unsigned long long>(s.installed),
 		static_cast<unsigned long long>(s.unchanged),
 		static_cast<unsigned long long>(s.permissionOnlyUpdates),
+		static_cast<unsigned long long>(s.projectionRebuilds),
+		static_cast<unsigned long long>(s.projectionRebuildsSkipped),
+		static_cast<unsigned long long>(s.projectionPagesRetained),
 		static_cast<unsigned long long>(s.physicalClearRequests),
 		static_cast<unsigned long long>(s.duplicatePhysicalClearsAvoided),
 		static_cast<unsigned long long>(s.scratchClearRequests),
@@ -987,10 +992,10 @@ void EEReportTLBChurn(const char* reason)
 // 4 KiB guest virtual->physical aliases as vTLB data accesses.
 void recMapTLBPage(u32 virtualPage, u32 physicalPage);
 void recUnmapTLBPage(u32 virtualPage);
-void recClearPhysical(u32 addr, u32 size);
 #endif
 
-static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping)
+static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping,
+	EEJitInvalidationCause cause)
 {
 #if defined(_M_X64) || defined(__x86_64__)
 	if (!mapping.scratchpad)
@@ -999,7 +1004,7 @@ static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping)
 		// mode is selected or whether the virtual alias is installed yet.
 		if (PSBBNTlbTraceEnabled())
 			++s_ee_tlb_churn.physicalClearRequests;
-		recClearPhysical(mapping.physicalAddress, 0x400);
+		recClearPhysical(mapping.physicalAddress, 0x400, cause);
 		return;
 	}
 #endif
@@ -1011,13 +1016,45 @@ static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping)
 	}
 }
 
-void SyncActiveTLBMappings()
+void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 {
 	const bool profiling = PSBBNTlbTraceEnabled();
 	std::chrono::steady_clock::time_point started;
 	if (profiling)
 		started = std::chrono::steady_clock::now();
 	u32 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
+	auto finishSync = [&]()
+	{
+		if (!profiling)
+			return;
+		auto& s = s_ee_tlb_churn;
+		++s.syncs;
+		s.removed += removed;
+		s.installed += installed;
+		s.unchanged += unchanged;
+		s.permissionOnlyUpdates += permissionOnlyUpdates;
+		s.syncMicroseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - started).count());
+		if ((s.syncs & 0xfffu) == 0)
+			EEReportTLBChurn("4096-syncs");
+	};
+	const u8 asid = static_cast<u8>(cpuRegs.CP0.n.EntryHi);
+	if (s_active_tlb_projection.Matches(tlb, std::size(tlb), asid))
+	{
+		// Read at most 48 compact inputs instead of expanding large PageMasks,
+		// allocating a new unordered_map, and looking up every projected page.
+		// WriteTLB's descriptors and Random side effects have already occurred.
+		unchanged = static_cast<u32>(s_active_tlb_pages.size());
+		if (profiling)
+		{
+			++s_ee_tlb_churn.projectionRebuildsSkipped;
+			s_ee_tlb_churn.projectionPagesRetained += unchanged;
+		}
+		finishSync();
+		return;
+	}
+	if (profiling)
+		++s_ee_tlb_churn.projectionRebuilds;
 	// Invalidation is keyed by compiled guest *physical* code. Removing an
 	// alias and installing a replacement can touch the same physical page
 	// several times in one synchronous TLB projection. It is sufficient to
@@ -1033,55 +1070,52 @@ void SyncActiveTLBMappings()
 			return;
 		}
 #endif
-		ClearActiveTLBCodePage(page, mapping);
+		ClearActiveTLBCodePage(page, mapping, cause);
 	};
 	EEActiveTLBPageMap desired =
-		BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi));
+		BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid);
 
 	// Remove obsolete mappings first. Every removal also invalidates generated
 	// guest code and fastmem aliases through the existing PCSX2 machinery.
-	for (const auto& [page, old] : s_active_tlb_pages)
-	{
-		const auto match = desired.find(page);
-		if (match == desired.end() || !old.HasSameBacking(match->second))
-		{
-			++removed;
-			memClearPageAddr(page << 12);
-			clearCodeForMapping(page, old);
-#if defined(_M_X64) || defined(__x86_64__)
-			recUnmapTLBPage(page << 12);
-#endif
-		}
-	}
 	std::unordered_set<u32> scratchBasesToUpdate;
-	for (const auto& [page, now] : desired)
-	{
-		const auto old = s_active_tlb_pages.find(page);
-		if (old != s_active_tlb_pages.end() && old->second.HasSameBacking(now))
+	PlanEEActiveTLBMappingChanges(s_active_tlb_pages, desired,
+		[&](EEActiveTLBMappingAction action, u32 page, const EEActiveTLBPage& mapping)
 		{
-			if (old->second.writable == now.writable)
-				++unchanged;
-			else
-				++permissionOnlyUpdates;
-			// D is checked against s_active_tlb_pages before stores. The swap
-			// below publishes the new permission without rebuilding an identical
-			// host mapping, disturbing SMC protection, or discarding unchanged code.
-			continue;
-		}
-		++installed;
-		if (now.scratchpad)
-		{
-			// Preserve the existing 16KB scratchpad fastmem path; mapping it
-			// one 4KB page at a time would unnecessarily force JIT slowmem.
-			scratchBasesToUpdate.insert(page - (now.physicalAddress >> 12));
-			continue;
-		}
-		memSetPageAddr(page << 12, now.physicalAddress);
-		clearCodeForMapping(page, now);
+			if (action == EEActiveTLBMappingAction::Remove)
+			{
+				++removed;
+				memClearPageAddr(page << 12);
+				clearCodeForMapping(page, mapping);
 #if defined(_M_X64) || defined(__x86_64__)
-		recMapTLBPage(page << 12, now.physicalAddress);
+				recUnmapTLBPage(page << 12);
 #endif
-	}
+				return;
+			}
+			if (action == EEActiveTLBMappingAction::Unchanged || action == EEActiveTLBMappingAction::PermissionOnly)
+			{
+				if (action == EEActiveTLBMappingAction::Unchanged)
+					++unchanged;
+				else
+					++permissionOnlyUpdates;
+				// D is checked against s_active_tlb_pages before stores. The swap
+				// below publishes the new permission without rebuilding an identical
+				// host mapping, disturbing SMC protection, or discarding unchanged code.
+				return;
+			}
+			++installed;
+			if (mapping.scratchpad)
+			{
+				// Preserve the existing 16KB scratchpad fastmem path; mapping it
+				// one 4KB page at a time would unnecessarily force JIT slowmem.
+				scratchBasesToUpdate.insert(page - (mapping.physicalAddress >> 12));
+				return;
+			}
+			memSetPageAddr(page << 12, mapping.physicalAddress);
+			clearCodeForMapping(page, mapping);
+#if defined(_M_X64) || defined(__x86_64__)
+			recMapTLBPage(page << 12, mapping.physicalAddress);
+#endif
+		});
 	for (const u32 basePage : scratchBasesToUpdate)
 	{
 		bool contiguous = true;
@@ -1117,19 +1151,8 @@ void SyncActiveTLBMappings()
 		}
 	}
 	s_active_tlb_pages.swap(desired);
-	if (profiling)
-	{
-		auto& s = s_ee_tlb_churn;
-		++s.syncs;
-		s.removed += removed;
-		s.installed += installed;
-		s.unchanged += unchanged;
-		s.permissionOnlyUpdates += permissionOnlyUpdates;
-		s.syncMicroseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::microseconds>(
-			std::chrono::steady_clock::now() - started).count());
-		if ((s.syncs & 0xfffu) == 0)
-			EEReportTLBChurn("4096-syncs");
-	}
+	s_active_tlb_projection.Remember(tlb, std::size(tlb), asid);
+	finishSync();
 }
 
 // All active translations remain readable through the existing vTLB mapping;
@@ -1151,10 +1174,11 @@ bool EEInterpreterTLBStoreNeedsModification(u32 address)
 
 void ResetActiveTLBMappings()
 {
+	s_active_tlb_projection.Invalidate();
 	for (const auto& [page, mapping] : s_active_tlb_pages)
 	{
 		memClearPageAddr(page << 12);
-		ClearActiveTLBCodePage(page, mapping);
+		ClearActiveTLBCodePage(page, mapping, EEJitInvalidationCause::ProjectionReset);
 #if defined(_M_X64) || defined(__x86_64__)
 		recUnmapTLBPage(page << 12);
 #endif
@@ -1170,7 +1194,7 @@ void WriteCP0EntryHi(u32 value)
 	{
 		if (PSBBNTlbTraceEnabled())
 			++s_ee_tlb_churn.asidChanges;
-		SyncActiveTLBMappings();
+		SyncActiveTLBMappings(EEJitInvalidationCause::ASIDProjection);
 	}
 }
 

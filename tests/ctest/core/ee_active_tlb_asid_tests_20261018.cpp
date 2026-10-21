@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 namespace
 {
 tlbs MakeEntry(u32 vpn, u8 asid, u32 physical0, u32 physical1, bool global = false)
@@ -336,4 +338,269 @@ TEST(EEActiveTLB, CodeInvalidationDedupHandlesMoreThanInlineCapacity)
 		EXPECT_TRUE(sync.ShouldInvalidate(EEActiveTLBPage{0x00100000 + (page << 12), false, true}, ram));
 	for (u32 page = 0; page < 40; ++page)
 		EXPECT_FALSE(sync.ShouldInvalidate(EEActiveTLBPage{0x00100000 + (page << 12), false, true}, ram));
+}
+
+namespace
+{
+struct MappingAction
+{
+	EEActiveTLBMappingAction action;
+	u32 page;
+	EEActiveTLBPage mapping;
+	bool operator==(const MappingAction&) const = default;
+};
+
+std::vector<MappingAction> MappingActions(const EEActiveTLBPageMap& before, const EEActiveTLBPageMap& after)
+{
+	std::vector<MappingAction> actions;
+	PlanEEActiveTLBMappingChanges(before, after,
+		[&](EEActiveTLBMappingAction action, u32 page, const EEActiveTLBPage& mapping)
+		{
+			actions.push_back({action, page, mapping});
+		});
+	return actions;
+}
+
+// Independent bounded-address model: enumerate virtual pages first, then pick
+// the earliest eligible slot. No production projection/memo helpers are used.
+EEActiveTLBPageMap ModelSmallTLB(const std::array<tlbs, 48>& entries, u8 asid)
+{
+	EEActiveTLBPageMap result;
+	for (u32 page = 0; page < 64; ++page)
+	{
+		for (const tlbs& t : entries)
+		{
+			if (!(t.EntryLo0.G && t.EntryLo1.G) && t.EntryHi.ASID != asid)
+				continue;
+			const u32 mask = t.PageMask.Mask;
+			const u32 first = (t.EntryHi.VPN2 & ~mask) * 2;
+			if (t.EntryLo0.S)
+			{
+				if (page < first || page - first >= 4)
+					continue;
+				result.emplace(page, EEActiveTLBPage{(page - first) << 12, true, true});
+				break;
+			}
+			if (page < first || page - first >= 2 * (mask + 1) ||
+				(page & ((~mask << 1) & 0xfffff)) != (first & ((~mask << 1) & 0xfffff)))
+				continue;
+			const u32 half = (page - first) / (mask + 1);
+			const EntryLo_t& lo = half ? t.EntryLo1 : t.EntryLo0;
+			if (!lo.V)
+				continue;
+			result.emplace(page, EEActiveTLBPage{
+				((lo.PFN & ~mask) + (page - first) % (mask + 1)) << 12, false, lo.D != 0});
+			break;
+		}
+	}
+	return result;
+}
+}
+
+TEST(EEActiveTLB, ProductionPlannerEmitsPermissionChangesWithoutMappingChanges)
+{
+	const EEActiveTLBPage writable{0x100000, false, true};
+	const EEActiveTLBPage readOnly{0x100000, false, false};
+	const EEActiveTLBPageMap before{{0x20000, writable}};
+	const EEActiveTLBPageMap after{{0x20000, readOnly}};
+	EXPECT_EQ(MappingActions(before, after), (std::vector<MappingAction>{
+		{EEActiveTLBMappingAction::PermissionOnly, 0x20000, readOnly}}));
+	EXPECT_EQ(MappingActions(after, before), (std::vector<MappingAction>{
+		{EEActiveTLBMappingAction::PermissionOnly, 0x20000, writable}}));
+	EXPECT_EQ(MappingActions(before, before), (std::vector<MappingAction>{
+		{EEActiveTLBMappingAction::Unchanged, 0x20000, writable}}));
+}
+
+TEST(EEActiveTLB, ProductionPlannerRemovesBeforeInstallingPFNAndValidityChanges)
+{
+	const EEActiveTLBPage old{0x100000, false, true};
+	const EEActiveTLBPage replacement{0x200000, false, true};
+	const EEActiveTLBPageMap before{{0x20000, old}};
+	const EEActiveTLBPageMap after{{0x20000, replacement}};
+	EXPECT_EQ(MappingActions(before, after), (std::vector<MappingAction>{
+		{EEActiveTLBMappingAction::Remove, 0x20000, old},
+		{EEActiveTLBMappingAction::Install, 0x20000, replacement}}));
+	EXPECT_EQ(MappingActions(before, {}), (std::vector<MappingAction>{
+		{EEActiveTLBMappingAction::Remove, 0x20000, old}}));
+	EXPECT_EQ(MappingActions({}, after), (std::vector<MappingAction>{
+		{EEActiveTLBMappingAction::Install, 0x20000, replacement}}));
+}
+
+TEST(EEActiveTLB, ProjectionMemoSkipsOnlyUnchangedSelectedInputs)
+{
+	std::array<tlbs, 48> entries{};
+	entries[47] = MakeEntry(0x20000000, 5, 0x100000, 0x101000);
+	EEActiveTLBProjectionMemo memo;
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+	memo.Remember(entries.data(), entries.size(), 5);
+	EXPECT_TRUE(memo.Matches(entries.data(), entries.size(), 5));
+	entries[47].EntryLo1.D = 0;
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+	entries[47].EntryLo1.D = 1;
+	entries[47].EntryLo1.PFN++;
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+	entries[47].EntryLo1.PFN--;
+	entries[47].EntryLo1.V = 0;
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+	entries[47].EntryLo1.V = 1;
+	entries[47].PageMask.Mask = 3;
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+	entries[47].PageMask.Mask = 0;
+	entries[47].EntryLo0.S = 1;
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+	entries[47].EntryLo0.S = 0;
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 6));
+	memo.Invalidate();
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+}
+
+TEST(EEActiveTLB, ProjectionMemoIgnoresInactiveAndCacheDescriptorOnlyChanges)
+{
+	std::array<tlbs, 48> entries{};
+	entries[0] = MakeEntry(0x20000000, 5, 0x100000, 0x101000, true);
+	entries[47] = MakeEntry(0x30000000, 7, 0x200000, 0x201000);
+	EEActiveTLBProjectionMemo memo;
+	memo.Remember(entries.data(), entries.size(), 5);
+	entries[0].EntryLo0.C = 3; // WriteTLB must still refresh cachedTlbs.
+	entries[0].EntryHi.ASID = 99; // global selection ignores ASID
+	entries[47].EntryLo1.PFN++;
+	EXPECT_TRUE(memo.Matches(entries.data(), entries.size(), 6));
+	entries[0].EntryLo1.G = 0; // one G bit does not make a global pair
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 6));
+}
+
+TEST(EEActiveTLB, ProjectionMemoRejectsEntryCountChangesAndOversizedInputs)
+{
+	std::array<tlbs, 49> entries{};
+	EEActiveTLBProjectionMemo memo;
+	memo.Remember(entries.data(), 48, 0);
+	EXPECT_FALSE(memo.Matches(entries.data(), 47, 0));
+	EXPECT_FALSE(memo.Matches(entries.data(), 49, 0));
+	memo.Remember(entries.data(), 49, 0);
+	EXPECT_FALSE(memo.Matches(entries.data(), 48, 0));
+}
+
+TEST(EEActiveTLB, ProjectionMemoAndPlannerPreserveASIDReuseGlobalAndOverlapPriority)
+{
+	std::array<tlbs, 48> entries{};
+	entries[0] = MakeEntry(0x20000000, 5, 0x100000, 0x101000);
+	entries[1] = MakeEntry(0x20000000, 6, 0x200000, 0x201000);
+	entries[47] = MakeEntry(0x20000000, 5, 0x300000, 0x301000, true);
+	entries[0].EntryLo1.V = entries[1].EntryLo1.V = entries[47].EntryLo1.V = 0;
+	const auto five = BuildEEActiveTLBPageMap(entries.data(), entries.size(), 5);
+	const auto six = BuildEEActiveTLBPageMap(entries.data(), entries.size(), 6);
+	EXPECT_EQ(MappingActions(five, six), (std::vector<MappingAction>{
+		{EEActiveTLBMappingAction::Remove, 0x20000, {0x100000, false, true}},
+		{EEActiveTLBMappingAction::Install, 0x20000, {0x200000, false, true}}}));
+	EEActiveTLBProjectionMemo memo;
+	memo.Remember(entries.data(), entries.size(), 5);
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 6));
+	entries[0].EntryLo0.PFN = 0x400; // reuse ASID 5 with different source
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+	entries[0].EntryLo0.V = 0; // lower-priority global slot becomes visible
+	const auto global = BuildEEActiveTLBPageMap(entries.data(), entries.size(), 5);
+	EXPECT_EQ(global.at(0x20000).physicalAddress, 0x300000U);
+	EXPECT_EQ(MappingActions(five, global), (std::vector<MappingAction>{
+		{EEActiveTLBMappingAction::Remove, 0x20000, {0x100000, false, true}},
+		{EEActiveTLBMappingAction::Install, 0x20000, {0x300000, false, true}}}));
+}
+
+TEST(EEActiveTLB, ProjectionMemoNormalizesOnlyIrrelevantScratchpadAndInvalidHalfFields)
+{
+	std::array<tlbs, 48> entries{};
+	entries[0] = MakeEntry(0x70000000, 5, 0, 0);
+	entries[0].EntryLo0.S = 1;
+	entries[47] = MakeEntry(0x20000000, 5, 0x100000, 0x101000);
+	entries[47].EntryLo1.V = 0;
+	EEActiveTLBProjectionMemo memo;
+	memo.Remember(entries.data(), entries.size(), 5);
+	entries[0].EntryLo0.V = entries[0].EntryLo0.D = 0;
+	entries[0].EntryLo1.PFN = 99;
+	entries[47].EntryLo1.PFN = 100;
+	entries[47].EntryLo1.D = 0;
+	EXPECT_TRUE(memo.Matches(entries.data(), entries.size(), 5));
+	entries[47].EntryLo1.V = 1;
+	EXPECT_FALSE(memo.Matches(entries.data(), entries.size(), 5));
+}
+
+TEST(EEActiveTLB, SeededProjectionAndProductionActionsMatchIndependentModel)
+{
+	std::array<tlbs, 48> entries{};
+	EEActiveTLBProjectionMemo memo;
+	EEActiveTLBPageMap active;
+	u32 state = 0x9e3779b9;
+	auto random = [&]()
+	{
+		state ^= state << 13;
+		state ^= state >> 17;
+		state ^= state << 5;
+		return state;
+	};
+	u8 asid = 0;
+	u32 memoHits = 0;
+	for (u32 step = 0; step < 1500; ++step)
+	{
+		const std::size_t slot = random() % entries.size();
+		tlbs& t = entries[slot];
+		switch (step % 12)
+		{
+			case 0:
+			{
+				// Keep PRNG consumption ordered across C++ compilers.
+				const u32 vpn = (random() % 16) << 13;
+				const u8 entryAsid = static_cast<u8>(random() % 4);
+				const u32 physical0 = (random() % 64) << 12;
+				const u32 physical1 = (random() % 64) << 12;
+				const bool global = (random() & 3) == 0;
+				t = MakeEntry(vpn, entryAsid, physical0, physical1, global);
+				break;
+			}
+			case 1: t.EntryLo0.D ^= 1; break;
+			case 2: t.EntryLo1.V ^= 1; break;
+			case 3: asid = static_cast<u8>(random() % 4); break;
+			case 4: t.EntryLo0.PFN = random() % 64; break;
+			case 5: t.PageMask.Mask = (random() & 1) ? 3 : 0; break;
+			case 6: t.EntryLo0.G ^= 1; t.EntryLo1.G ^= 1; break;
+			case 7: t.EntryLo0.S ^= 1; break;
+			case 8: memo.Invalidate(); break; // reset/load requires reprojection
+			case 9: t.EntryHi.ASID = random() % 4; break;
+			case 10: t.EntryLo1.D ^= 1; break;
+			case 11: break; // consecutive identical state
+		}
+		const auto expected = ModelSmallTLB(entries, asid);
+		if (memo.Matches(entries.data(), entries.size(), asid))
+		{
+			++memoHits;
+			EXPECT_EQ(active, expected) << "step=" << step;
+			continue;
+		}
+		const auto desired = BuildEEActiveTLBPageMap(entries.data(), entries.size(), asid);
+		ASSERT_EQ(desired, expected) << "step=" << step;
+		bool installing = false;
+		for (const auto& [action, page, mapping] : MappingActions(active, desired))
+		{
+			if (action == EEActiveTLBMappingAction::Remove)
+			{
+				EXPECT_FALSE(installing);
+				EXPECT_TRUE(!desired.contains(page) || !mapping.HasSameBacking(desired.at(page)));
+				EXPECT_EQ(active.erase(page), 1U);
+			}
+			else
+			{
+				installing = true;
+				if (action == EEActiveTLBMappingAction::Install)
+					EXPECT_FALSE(active.contains(page));
+				else
+				{
+					ASSERT_TRUE(active.contains(page));
+					EXPECT_TRUE(active.at(page).HasSameBacking(mapping));
+					EXPECT_EQ(action == EEActiveTLBMappingAction::Unchanged, active.at(page) == mapping);
+				}
+				active.insert_or_assign(page, mapping);
+			}
+		}
+		EXPECT_EQ(active, expected) << "step=" << step;
+		memo.Remember(entries.data(), entries.size(), asid);
+	}
+	EXPECT_GT(memoHits, 100U);
 }
