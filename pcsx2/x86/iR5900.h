@@ -86,6 +86,8 @@ void recTraceUnknownCompile();
 bool recNeedsDIBoundaryContinuation();
 // Runtime interpreter executes DI's deferred next opcode without eagerly fetching it.
 void EEInterpretDINextInstructionFromJIT(u32 nextPC);
+// Trace-only compile-time summary of constant host pointer/handler dependencies.
+void recRecordConstantDataLookup(u32 guestAddress, bool store, bool direct);
 void recResetControlFlowTrace();
 
 void iFlushCall(int flushtype);
