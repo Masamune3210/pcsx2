@@ -14,6 +14,7 @@
 #include <memory>
 
 extern void EEInterpretCrossPageBranchFromJIT(u32 branchPC);
+extern void EEInterpretDINextInstructionFromJIT(u32 nextPC);
 
 namespace
 {
@@ -172,4 +173,63 @@ TEST_F(EERecBoundaryBridge, JALRLinkIsVisibleToEntryHiDelaySlot)
 		EXPECT_EQ(cpuRegs.CP0.n.EntryHi, BranchPC + 8);
 	});
 }
+TEST_F(EERecBoundaryBridge, DIContinuationExecutesMappedNextInstructionBeforeDisabling)
+{
+	RunIsolated([this] {
+		slotPage[0] = 0x24420001u; // addiu v0,v0,1
+		vtlb_VMapBuffer(BranchPC + 4, slotPage.data(), 4096);
+		cpuRegs.CP0.n.Status.b.EIE = 1;
+		EEInterpretDINextInstructionFromJIT(BranchPC + 4);
+		EXPECT_EQ(cpuRegs.pc, BranchPC + 8);
+		EXPECT_EQ(cpuRegs.GPR.r[2].UD[0], 1u);
+		EXPECT_EQ(cpuRegs.CP0.n.Status.b.EIE, 0u);
+		EXPECT_EQ(cpuRegs.cycle, 100u + std::max(1u, R5900::GetInstruction(0x24420001u).cycles >> 3));
+		EXPECT_EQ(Cpu, &recCpu);
+	});
+}
+
+TEST_F(EERecBoundaryBridge, DIContinuationUnmappedFetchKeepsEIEAndPreciseEPC)
+{
+	RunIsolated([this] {
+		cpuRegs.CP0.n.Status.b.EIE = 1;
+		EEInterpretDINextInstructionFromJIT(BranchPC + 4);
+		EXPECT_EQ(cpuRegs.CP0.n.EPC, BranchPC + 4);
+		EXPECT_EQ(cpuRegs.CP0.n.BadVAddr, BranchPC + 4);
+		EXPECT_EQ(cpuRegs.CP0.n.Cause & 0x80000000u, 0u);
+		EXPECT_EQ(cpuRegs.CP0.n.Cause & 0x7cu, 8u);
+		EXPECT_EQ(cpuRegs.CP0.n.Status.b.EIE, 1u); // deferred DI not yet applied
+		EXPECT_EQ(Cpu, &recCpu);
+	});
+}
+
+TEST_F(EERecBoundaryBridge, DIContinuationUntakenBranchExecutesItsDelaySlot)
+{
+	RunIsolated([this] {
+		slotPage[0] = 0x10200008u; // beq at,zero: untaken
+		slotPage[1] = 0x24420001u; // slot: addiu v0,v0,1
+		vtlb_VMapBuffer(BranchPC + 4, slotPage.data(), 4096);
+		cpuRegs.CP0.n.Status.b.EIE = 1;
+		EEInterpretDINextInstructionFromJIT(BranchPC + 4);
+		EXPECT_EQ(cpuRegs.pc, BranchPC + 12);
+		EXPECT_EQ(cpuRegs.GPR.r[2].UD[0], 1u);
+		EXPECT_EQ(cpuRegs.CP0.n.Status.b.EIE, 0u);
+		EXPECT_EQ(Cpu, &recCpu);
+	});
+}
+
+TEST_F(EERecBoundaryBridge, DIContinuationUntakenLikelyAnnulsSlot)
+{
+	RunIsolated([this] {
+		slotPage[0] = 0x50200008u; // beql at,zero: untaken / annul slot
+		slotPage[1] = 0x24420001u;
+		vtlb_VMapBuffer(BranchPC + 4, slotPage.data(), 4096);
+		cpuRegs.CP0.n.Status.b.EIE = 1;
+		EEInterpretDINextInstructionFromJIT(BranchPC + 4);
+		EXPECT_EQ(cpuRegs.pc, BranchPC + 12);
+		EXPECT_EQ(cpuRegs.GPR.r[2].UD[0], 0u);
+		EXPECT_EQ(cpuRegs.CP0.n.Status.b.EIE, 0u);
+		EXPECT_EQ(Cpu, &recCpu);
+	});
+}
+
 } // namespace
