@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Common.h"
+#include "MemoryTypes.h"
 #include "x86/EERecCodeCache.h"
 
 #include <gtest/gtest.h>
@@ -261,6 +262,46 @@ TEST(EERecPhysicalPagePresence, ResetDiscardsSeenPages)
 	EXPECT_TRUE(pages.MayContainCode(0x11000, 0x400));
 	pages.Reset();
 	EXPECT_FALSE(pages.MayContainCode(0x11000, 0x400));
+}
+
+TEST(EERecPhysicalPagePresence, CoversEntirePotentialRamWindow)
+{
+	// ExposedRam is runtime-selected (retail/development RAM), so bitmap
+	// storage must use the compile-time allocation ceiling instead.
+	EERecCompiledPhysicalPages<Ps2MemSize::TotalRam> pages;
+	constexpr u32 lastPage = Ps2MemSize::TotalRam - 0x1000;
+	EXPECT_FALSE(pages.MayContainCode(lastPage, 0x400));
+	pages.Mark(lastPage);
+	EXPECT_TRUE(pages.MayContainCode(lastPage, 0x400));
+	pages.Reset();
+	EXPECT_FALSE(pages.MayContainCode(lastPage, 0x400));
+}
+
+TEST(EERecPhysicalPagePresence, NonRamAndOverflowingRangesRemainConservative)
+{
+	EERecCompiledPhysicalPages<0x20000> pages;
+	EXPECT_FALSE(pages.MayContainCode(0x1000, 0));
+	EXPECT_TRUE(pages.MayContainCode(0x20000, 1));
+	EXPECT_TRUE(pages.MayContainCode(0x1fffc, 2));
+	EXPECT_TRUE(pages.MayContainCode(0xfffffffc, 2));
+	EXPECT_TRUE(pages.MayContainCode(0x1000, 0xffffffff));
+}
+
+TEST_F(EERecCodeCache, PresenceFilterRetainsOverlappingBlockAndIncomingLinkInvalidation)
+{
+	EERecCompiledPhysicalPages<RAMSize> pages;
+	pages.Mark(0x3000);
+	AddBlock(0x3000, 8, reinterpret_cast<uptr>(firstCode.data()));
+	AddBlock(0x3010, 4, reinterpret_cast<uptr>(secondCode.data()));
+	s32 incoming = 0;
+	blocks.Link(0x3000, &incoming);
+	ASSERT_TRUE(pages.MayContainCode(0x3014, 1));
+	Clear(0x3014, 1);
+	EXPECT_EQ(blocks.Get(0x3000), nullptr);
+	EXPECT_EQ(blocks.Get(0x3010), nullptr);
+	EXPECT_EQ(incoming, static_cast<s32>(compiler - reinterpret_cast<uptr>(&incoming + 1)));
+	// An individual clear must not erase the generation's seen bit.
+	EXPECT_TRUE(pages.MayContainCode(0x3000, 0x400));
 }
 
 } // namespace
