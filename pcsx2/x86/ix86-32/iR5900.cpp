@@ -258,12 +258,12 @@ static void recTraceRemainingBlocks(const char* reason)
 		return;
 	// This is the other actual retirement path: a complete arena reset clears
 	// live metadata without going through BaseBlocks::Remove.
-	const EERecEvictionTraceContext context{reason, 0u, 0u};
+	EERecEvictionTraceContext context{reason, 0u, 0u};
 	const u32 liveCount = static_cast<u32>(recBlocks.GetLiveMetrics().blocks);
 	for (u32 i = 0; i < liveCount; ++i)
 	{
 		if (const BASEBLOCKEX* block = recBlocks[static_cast<int>(i)])
-			recTraceRemovedBlock(*block, const_cast<EERecEvictionTraceContext*>(&context));
+			recTraceRemovedBlock(*block, &context);
 	}
 	Console.WriteLn("EE-JIT-EVICT-SUMMARY reason=%s gen=%u seen=%llu printed=%llu suppressed=%llu liveRetired=%u limit=%u",
 		reason, s_recEvictionTraceGeneration,
@@ -1197,6 +1197,12 @@ alignas(16) static u8 manual_counter[Ps2MemSize::TotalRam >> 12];
 ////////////////////////////////////////////////////
 static void recResetRaw()
 {
+	// The flag and cap are read at the JIT reset boundary, not for every
+	// host memory write or TLB projection. The event cap persists across all
+	// internal arena resets in the same VM session.
+	s_recEvictionTraceEnabled = Host::GetBoolSettingValue("EmuCore", "EEJitEvictionTrace", false);
+	s_recEvictionTraceLimit = static_cast<u32>(std::clamp(
+		Host::GetIntSettingValue("EmuCore", "EEJitEvictionTraceLimit", 20000), 0, 1000000));
 	// Internal code-cache exhaustion and the first guest-dispatch transition
 	// must retain the selected mode. The CPU-provider Reset callback retains
 	// its existing native policy (also used for settings/savestate cache clears).
@@ -1227,6 +1233,9 @@ static void recResetRaw()
 	s_recThunkBytes = s_recBackpatches = s_recBackpatchBytes = 0;
 	if (s_recResetReasons & 2u)
 		s_recSourceHistory.Reset();
+	if (s_recEvictionTraceEnabled)
+		recTraceRemainingBlocks("arena-reset");
+	++s_recEvictionTraceGeneration;
 	s_recResetReasons = 0;
 	EERecResetDispatchMode(g_recUseGuestTLBDispatch, eeRecResetToNative);
 	eeRecResetToNative = false;
@@ -1272,6 +1281,10 @@ static void recResetRaw()
 
 void recShutdown()
 {
+	recTraceRemainingBlocks("provider-shutdown");
+	s_recEvictionTraceEnabled = false;
+	s_recEvictionTraceSeen = s_recEvictionTracePrinted = 0;
+	s_recEvictionTraceGeneration = 0;
 	recRAMCopy.deallocate();
 	recLutReserve_RAM.deallocate();
 
@@ -1430,7 +1443,7 @@ void R5900::Dynarec::OpcodeImpl::recBREAK()
 // Physical write-protection/manual-integrity callbacks must not translate
 // their RAM address through the guest's current KUSEG instruction mapping.
 // Size is in dwords (4 bytes).
-void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause)
+void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause, u32 triggeringVirtualPage)
 {
 	const bool profiling = PSBBNTlbTraceEnabled();
 	if (static_cast<size_t>(cause) >= s_recInvalidations.size())
@@ -1474,8 +1487,12 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause)
 		++interval->clearCalls;
 		started = EEJitClock::now();
 	}
+	EERecEvictionTraceContext evictionContext{EEJitInvalidationCauseName(cause),
+		addr, size, triggeringVirtualPage};
 	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
-		reinterpret_cast<uptr>(JITCompile), addr, size, interval ? &interval->mutations : nullptr);
+		reinterpret_cast<uptr>(JITCompile), addr, size, interval ? &interval->mutations : nullptr,
+		s_recEvictionTraceEnabled ? &recTraceRemovedBlock : nullptr,
+		s_recEvictionTraceEnabled ? &evictionContext : nullptr);
 	if (interval)
 		interval->clearNanoseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
 			EEJitClock::now() - started).count());
