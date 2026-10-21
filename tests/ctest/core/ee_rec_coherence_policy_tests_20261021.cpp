@@ -103,3 +103,13 @@ TEST(EEExecutionProfile, RuntimeSelectionIsLatchedUntilShutdown)
 	EXPECT_FALSE(EEExecutionProfile::IsExtendedMMU());
 	EEExecutionProfile::ResetAtShutdown();
 }
+
+TEST(EEExecutionProfile, StandardNeverSuppressesPhysicalClearFromNegativePageFilter)
+{
+	// A bitmap is only an optimization. The Standard profile must always
+	// reach the real invalidation machinery, even if the filter says empty.
+	EXPECT_FALSE(EECanSkipPhysicalCodeClear(EEExecutionProfileMode::Standard, false));
+	EXPECT_FALSE(EECanSkipPhysicalCodeClear(EEExecutionProfileMode::Standard, true));
+	EXPECT_TRUE(EECanSkipPhysicalCodeClear(EEExecutionProfileMode::ExtendedMMU, false));
+	EXPECT_FALSE(EECanSkipPhysicalCodeClear(EEExecutionProfileMode::ExtendedMMU, true));
+}
