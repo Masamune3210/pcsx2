@@ -11,6 +11,7 @@
 #include "Patch.h"
 #include "R3000A.h"
 #include "R5900OpcodeTables.h"
+#include "EEActiveTLB.h"
 #include "VMManager.h"
 #include "vtlb.h"
 #include "x86/BaseblockEx.h"
@@ -46,13 +47,18 @@ static bool eeCpuExecuting = false;
 static bool eeRecExitRequested = false;
 static bool g_resetEeScalingStats = false;
 
-#define PC_GETBLOCK(x) PC_GETBLOCK_(x, recLUT)
+// The original 64 KiB LUT cannot represent MIPS 4 KiB guest TLB mappings.
+#define PC_GETBLOCK(x) ((BASEBLOCK*)(recLUTPages[(static_cast<u32>(x)) >> 12] + (static_cast<uptr>(static_cast<u32>(x)) * (sizeof(BASEBLOCK) / 4))))
 
 u32 maxrecmem = 0;
 alignas(16) static uptr recLUT[_64kb];
 alignas(16) static u32 hwLUT[_64kb];
+// The legacy tables remain solely for initializing fixed segment aliases.
+// Guest TLB mappings are applied at the real 4 KiB page granularity.
+alignas(16) static uptr recLUTPages[0x100000];
+alignas(16) static u32 hwLUTPages[0x100000];
 
-static __fi u32 HWADDR(u32 mem) { return hwLUT[mem >> 16] + mem; }
+static __fi u32 HWADDR(u32 mem) { return hwLUTPages[mem >> 12] + mem; }
 
 u32 s_nBlockCycles = 0; // cycles of current block recompiling
 bool s_nBlockInterlocked = false; // Block is VU0 interlocked
@@ -84,6 +90,40 @@ static BASEBLOCK* recRAM = nullptr; // and the ptr to the blocks here
 static BASEBLOCK* recROM = nullptr; // and here
 static BASEBLOCK* recROM1 = nullptr; // also here
 static BASEBLOCK* recROM2 = nullptr; // also here
+
+// Maintain physical code-block identity across user/kernel TLB aliases.
+// Each virtual 4 KiB page points into the same compiled-block array as its
+// backing physical page. The 64 KiB legacy table cannot express this.
+void recMapTLBPage(u32 virtualPage, u32 physicalPage)
+{
+	if (!recRAM || (virtualPage & 0xfff) || (physicalPage & 0xfff) ||
+		physicalPage >= Ps2MemSize::ExposedRam)
+		return;
+	const u32 index = virtualPage >> 12;
+	recLUTPages[index] = reinterpret_cast<uptr>(recRAM) +
+		static_cast<sptr>(static_cast<s64>(physicalPage) - virtualPage) * (sizeof(BASEBLOCK) / 4);
+	hwLUTPages[index] = physicalPage - virtualPage;
+}
+
+void recUnmapTLBPage(u32 virtualPage)
+{
+	if (!recRAM || (virtualPage & 0xfff))
+		return;
+	const u32 index = virtualPage >> 12;
+	// Keep boot-time fixed segment aliases, but never treat a KSEG2/3
+	// translation as a direct physical alias after its guest TLB entry goes.
+	if (virtualPage >= 0xc0000000u)
+	{
+		recLUTPages[index] = reinterpret_cast<uptr>(recLutUnmapped.data()) -
+			static_cast<uptr>(virtualPage & 0xffff0000u) * (sizeof(BASEBLOCK) / 4);
+		hwLUTPages[index] = 0;
+	}
+	else
+	{
+		recLUTPages[index] = recLUT[index >> 4];
+		hwLUTPages[index] = hwLUT[index >> 4];
+	}
+}
 
 static BaseBlocks recBlocks;
 static u8* recPtr = nullptr;
@@ -426,8 +466,8 @@ static const void* _DynGen_JITCompile()
 	// base[addr >> 2]();
 	xMOV(eax, ptr[&cpuRegs.pc]);
 	xMOV(edx, eax);
-	xSHR(eax, 16);
-	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUT, rax * wordsize)]);
+	xSHR(eax, 12);
+	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUTPages, rax * wordsize)]);
 	xJMP(ptrNative[rdx * (wordsize / 4) + rcx]);
 
 	return retval;
@@ -444,8 +484,8 @@ static const void* _DynGen_DispatcherReg()
 	// base[addr >> 2]();
 	xMOV(eax, ptr[&cpuRegs.pc]);
 	xMOV(edx, eax);
-	xSHR(eax, 16);
-	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUT, rax * wordsize)]);
+	xSHR(eax, 12);
+	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUTPages, rax * wordsize)]);
 	xJMP(ptrNative[rdx * (wordsize / 4) + rcx]);
 
 	return retval;
@@ -654,6 +694,21 @@ static void recReserveRAM()
 		recLUT_SetPage(recLUT, hwLUT, recROM2, 0x8000, i, i - 0x1e40);
 		recLUT_SetPage(recLUT, hwLUT, recROM2, 0xa000, i, i - 0x1e40);
 	}
+	// Expand 64 KiB boot aliases to a 4 KiB dispatch/identity table. Later
+	// TLBWI/TLBWR operations replace individual guest virtual page aliases.
+	for (u32 block = 0; block < 0x10000; block++)
+		for (u32 sub = 0; sub < 16; sub++)
+		{
+			recLUTPages[block * 16 + sub] = recLUT[block];
+			hwLUTPages[block * 16 + sub] = hwLUT[block];
+		}
+	// A recResetRaw() can run while guest mappings are live; reconstruct
+	// physical dispatch aliases from the architectural entries, not stale
+	// cached pointers from before the recompiler reset.
+	const auto pages = BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi));
+	for (const auto& [page, mapping] : pages)
+		if (!mapping.scratchpad)
+			recMapTLBPage(page << 12, mapping.physicalAddress);
 }
 
 static void recReserve()
@@ -857,7 +912,7 @@ void R5900::Dynarec::OpcodeImpl::recBREAK()
 // Size is in dwords (4 bytes)
 void recClear(u32 addr, u32 size)
 {
-	if ((addr) >= maxrecmem || !(recLUT[(addr) >> 16] + (addr & ~0xFFFFUL)))
+	if ((addr) >= maxrecmem || !(recLUTPages[(addr) >> 12] + (addr & ~0xFFFUL)))
 		return;
 	addr = HWADDR(addr);
 
@@ -991,7 +1046,7 @@ bool TrySwapDelaySlot(u32 rs, u32 rt, u32 rd, bool allow_loadstore)
 	if (g_recompilingDelaySlot)
 		return false;
 
-	const u32 opcode_encoded = *(u32*)PSM(pc);
+	const u32 opcode_encoded = *(u32*)PSM(HWADDR(pc));
 	if (opcode_encoded == 0)
 	{
 		recompileNextInstruction(true, true);
@@ -1745,7 +1800,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 	{
 #ifdef DUMP_BLOCKS
 		std::string disasm;
-		disR5900Fasm(disasm, *(u32*)PSM(pc), pc, false);
+		disR5900Fasm(disasm, *(u32*)PSM(HWADDR(pc)), pc, false);
 		fprintf(stderr, "Compiling delay slot %08X %s\n", pc, disasm.c_str());
 #endif
 
@@ -1753,7 +1808,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 		_clearNeededXMMregs();
 	}
 
-	s_pCode = (int*)PSM(pc);
+	s_pCode = (int*)PSM(HWADDR(pc));
 	pxAssert(s_pCode);
 
 #if 0
@@ -2148,7 +2203,7 @@ static void memory_protect_recompiled_code(u32 startpc, u32 size)
 
 			while (stg > 0)
 			{
-				xCMP(ptr32[PSM(lpc)], *(u32*)PSM(lpc));
+				xCMP(ptr32[PSM(HWADDR(lpc))], *(u32*)PSM(HWADDR(lpc)));
 				xJNE(DispatchBlockDiscard);
 
 				stg -= 4;
@@ -2432,7 +2487,7 @@ static void recRecompile(const u32 startpc)
 		}
 
 		//HUH ? PSM ? whut ? THIS IS VIRTUAL ACCESS GOD DAMMIT
-		cpuRegs.code = *(int*)PSM(i);
+		cpuRegs.code = *(int*)PSM(HWADDR(i));
 
 		if (is_timeout_loop)
 		{
@@ -2558,7 +2613,7 @@ StartRecomp:
 		{
 			if (i == s_nEndBlock - 8)
 				continue;
-			cpuRegs.code = *(u32*)PSM(i);
+			cpuRegs.code = *(u32*)PSM(HWADDR(i));
 			// nop
 			if (cpuRegs.code == 0)
 				continue;
@@ -2647,7 +2702,7 @@ StartRecomp:
 
 		for (i = s_nEndBlock; i > startpc; i -= 4)
 		{
-			cpuRegs.code = *(int*)PSM(i - 4);
+			cpuRegs.code = *(int*)PSM(HWADDR(i - 4));
 			pcur[-1] = pcur[0];
 			recBackpropBSC(cpuRegs.code, pcur - 1, pcur);
 			pcur--;
@@ -2702,7 +2757,7 @@ StartRecomp:
 			if (dump_block)
 			{
 				std::string disasm;
-				disR5900Fasm(disasm, *(u32*)PSM(pc), pc, false);
+				disR5900Fasm(disasm, *(u32*)PSM(HWADDR(pc)), pc, false);
 				fprintf(stderr, "Compiling %08X %s\n", pc, disasm.c_str());
 
 				const u8* inst_start = x86Ptr;
@@ -2772,7 +2827,7 @@ StartRecomp:
 			}
 		}
 
-		memcpy(&recRAMCopy[HWADDR(startpc)], PSM(startpc), pc - startpc);
+		memcpy(&recRAMCopy[HWADDR(startpc)], PSM(HWADDR(startpc)), pc - startpc);
 	}
 
 	s_pCurBlock->SetFnptr((uptr)recPtr);
