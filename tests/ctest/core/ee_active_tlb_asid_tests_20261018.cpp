@@ -215,3 +215,50 @@ TEST(EEActiveTLB, ScratchpadMappingDoesNotUseNormalDirtyFaults)
 	for (u32 offset = 0; offset < 0x4000; offset += 0x1000)
 		EXPECT_FALSE(EEActiveTLBStoreNeedsModification(m, 0x70000000 + offset));
 }
+
+TEST(EEActiveTLB, CapturedReadOnlyReturnStackRequiresModification)
+{
+	tlbs t{};
+	t.PageMask.UL = 0;
+	t.EntryHi.UL = 0x7fff6107;
+	t.EntryLo0.UL = 0x0000f51a;
+	t.EntryLo1.UL = 0x000076da;
+	const auto active = BuildEEActiveTLBPageMap(&t, 1, 7);
+	ASSERT_EQ(active.at(0x7fff7).physicalAddress, 0x001db000u);
+	EXPECT_TRUE(EEActiveTLBStoreNeedsModification(active, 0x7fff7624));
+	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(BuildEEActiveTLBPageMap(&t, 1, 5), 0x7fff7624));
+}
+
+TEST(EEActiveTLB, FixedKernelAliasesIgnoreOverlappingReadOnlyTLBEntries)
+{
+	// TLB entries do not control KSEG0/1, even if a malformed guest inserts one.
+	for (const u32 address : {0x80000040u, 0x9ffff040u, 0xa0000040u, 0xbffff040u})
+	{
+		tlbs t = MakeEntry(address, 7, 0x00100000, 0x00101000);
+		t.EntryLo0.D = t.EntryLo1.D = 0;
+		const auto active = BuildEEActiveTLBPageMap(&t, 1, 7);
+		ASSERT_TRUE(active.contains(address >> 12));
+		EXPECT_FALSE(EEActiveTLBStoreNeedsModification(active, address));
+	}
+}
+
+TEST(EEActiveTLB, StoreAddressPreservesSignedOffsetsAndWraparound)
+{
+	EXPECT_EQ(EEActiveTLBStoreAddress(0x7fff7600, 0xafbf0024), 0x7fff7624u);
+	EXPECT_EQ(EEActiveTLBStoreAddress(0x7fff7600, 0xafbffffc), 0x7fff75fcu);
+	EXPECT_EQ(EEActiveTLBStoreAddress(0xfffffff0, 0xafbf0024), 0x00000014u);
+}
+
+TEST(EEActiveTLB, QuadwordStorePermissionUsesAlignedAddress)
+{
+	EXPECT_EQ(EEActiveTLBStoreAddress(0x7fff7605, 0x7fbf0024), 0x7fff7620u); // SQ
+	EXPECT_EQ(EEActiveTLBStoreAddress(0x7fff7605, 0xfbbf0024), 0x7fff7620u); // SQC2
+}
+
+TEST(EEActiveTLB, ReadModifyWriteStorePermissionKeepsOriginalFaultAddress)
+{
+	// SWL/SWR/SDL/SDR perform aligned host accesses internally, but permission
+	// faults still identify the guest effective address, including its low bits.
+	for (const u32 opcode : {0xabbf0025u, 0xbbbf0025u, 0xb3bf0025u, 0xb7bf0025u})
+		EXPECT_EQ(EEActiveTLBStoreAddress(0x7fff7600, opcode), 0x7fff7625u);
+}

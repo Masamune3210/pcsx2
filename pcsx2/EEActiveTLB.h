@@ -26,11 +26,22 @@ using EEActiveTLBPageMap = std::unordered_map<u32, EEActiveTLBPage>;
 
 // A matched, valid and non-writable mapping must raise TLB Modification on a
 // guest store. An absent entry is NOT Mod; normal TLB miss handling applies.
-// A direct-mapped kernel page is intentionally not represented in this map.
+// Fixed kernel aliases bypass TLB write permissions, even if present in the map.
 inline bool EEActiveTLBStoreNeedsModification(const EEActiveTLBPageMap& active, u32 address)
 {
+	if (address >= 0x80000000u && address < 0xc0000000u)
+		return false; // fixed KSEG0/1 aliases are not governed by TLB entries
 	const auto page = active.find(address >> 12);
 	return page != active.end() && !page->second.scratchpad && !page->second.writable;
+}
+
+// Base/immediate arithmetic wraps at 32 bits. SQ and SQC2 ignore the low four
+// address bits; merged word/dword stores retain their original fault address.
+inline u32 EEActiveTLBStoreAddress(u32 base, u32 opcode)
+{
+	const u32 address = base + static_cast<s32>(static_cast<s16>(opcode & 0xffffu));
+	const u32 op = opcode >> 26;
+	return (op == 0x1fu || op == 0x3eu) ? address & ~0xfu : address;
 }
 
 // Pure selector: no host memory access and no emulated CPU side effects.

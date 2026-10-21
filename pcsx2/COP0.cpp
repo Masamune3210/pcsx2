@@ -1054,17 +1054,21 @@ void SyncActiveTLBMappings()
 	s_active_tlb_pages.swap(desired);
 }
 
-// This is an interpreter-only write-permission predicate. All active
-// translations remain readable through the existing vTLB mapping; a matched
-// valid EntryLo with D=0 must fault *before* the interpreter writes RAM.
+// All active translations remain readable through the existing vTLB mapping;
+// a matched valid EntryLo with D=0 must fault before either CPU writes RAM.
 // Absence from this map is not a TLB Modification: existing vTLB miss
 // handling determines whether the address has no entry or an invalid entry.
-// Direct-mapped kernel pages are not in the active-TLB projection.
+// The shared predicate exempts fixed kernel aliases even with overlapping entries.
+bool EETLBStoreNeedsModification(u32 address)
+{
+	return EEActiveTLBStoreNeedsModification(s_active_tlb_pages, address);
+}
+
 bool EEInterpreterTLBStoreNeedsModification(u32 address)
 {
 	if (Cpu != &intCpu)
 		return false;
-	return EEActiveTLBStoreNeedsModification(s_active_tlb_pages, address);
+	return EETLBStoreNeedsModification(address);
 }
 
 void ResetActiveTLBMappings()
