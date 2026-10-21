@@ -12,13 +12,13 @@
 // independently remappable target VPN must be resolved at execution, including
 // pending targets which have no BaseBlocks metadata to invalidate yet.
 inline void EERecLinkStaticBlock(BaseBlocks& blocks, bool useGuestTLB, u32 virtualStart,
-	u32 virtualTarget, u32 physicalTarget, s32* jump, uptr dispatcher)
+	u32 virtualTarget, u32 physicalTarget, s32* jump, uptr dispatcher, BaseBlocks::Metrics* metrics = nullptr)
 {
 	const bool managedTarget = virtualTarget < 0x80000000u || virtualTarget >= 0xc0000000u;
 	if (useGuestTLB && managedTarget && (virtualStart >> 12) != (virtualTarget >> 12))
-		*jump = static_cast<s32>(dispatcher - reinterpret_cast<uptr>(jump + 1));
+		BaseBlocks::PatchLink(jump, dispatcher, metrics);
 	else
-		blocks.Link(physicalTarget, jump);
+		blocks.Link(physicalTarget, jump, metrics);
 }
 
 // A readable physical RAM pointer does not make an unmapped guest VPN executable.
@@ -117,15 +117,19 @@ public:
 // Shared with the standalone cache regressions. This is the recompiler's
 // existing overlap/link invalidation, using physical dispatch entries only.
 inline void EERecClearPhysicalBlocks(BaseBlocks& blocks, const uptr* physicalLUT,
-	BASEBLOCK* compilingBlock, uptr recompile, u32 address, u32 size)
+	BASEBLOCK* compilingBlock, uptr recompile, u32 address, u32 size, BaseBlocks::Metrics* metrics = nullptr)
 {
 	if (size == 0)
 		return;
-	int blockidx = blocks.LastIndex(address + size * 4 - 4);
+	// Clear sizes are dwords. Keep range arithmetic wide, including a request
+	// reaching the top of the 32-bit physical address space, without wrapping.
+	constexpr u64 physicalEnd = u64{1} << 32;
+	const u64 end = std::min(physicalEnd, static_cast<u64>(address) + static_cast<u64>(size) * 4);
+	int blockidx = blocks.LastIndex(static_cast<u32>(end - 4));
 	if (blockidx == -1)
 		return;
 
-	u32 lowerextent = static_cast<u32>(-1), upperextent = 0, ceiling = static_cast<u32>(-1);
+	u64 lowerextent = physicalEnd, upperextent = 0, ceiling = physicalEnd;
 	BASEBLOCKEX* block = blocks[blockidx + 1];
 	if (block)
 		ceiling = block->startpc;
@@ -134,12 +138,12 @@ inline void EERecClearPhysicalBlocks(BaseBlocks& blocks, const uptr* physicalLUT
 	while ((block = blocks[blockidx]))
 	{
 		const u32 blockstart = block->startpc;
-		const u32 blockend = blockstart + block->size * 4;
+		const u64 blockend = std::min(physicalEnd, static_cast<u64>(blockstart) + static_cast<u64>(block->size) * 4);
 		BASEBLOCK* dispatch = EERecGetPhysicalBlock(physicalLUT, blockstart);
 		if (dispatch == compilingBlock)
 		{
 			if (toRemoveLast != blockidx)
-				blocks.Remove(blockidx + 1, toRemoveLast);
+				blocks.Remove(blockidx + 1, toRemoveLast, metrics);
 			toRemoveLast = --blockidx;
 			continue;
 		}
@@ -148,27 +152,47 @@ inline void EERecClearPhysicalBlocks(BaseBlocks& blocks, const uptr* physicalLUT
 			lowerextent = std::max(lowerextent, blockend);
 			break;
 		}
-		lowerextent = std::min(lowerextent, blockstart);
+		lowerextent = std::min(lowerextent, static_cast<u64>(blockstart));
 		upperextent = std::max(upperextent, blockend);
-		dispatch->SetFnptr(recompile);
+		if (metrics)
+			metrics->dispatchWriteAttempts++;
+		if (dispatch->GetFnptr() != recompile)
+		{
+			dispatch->SetFnptr(recompile);
+			if (metrics)
+				metrics->dispatchWrites++;
+		}
+		else if (metrics)
+			metrics->dispatchWriteSkips++;
 		blockidx--;
 	}
 	if (toRemoveLast != blockidx)
-		blocks.Remove(blockidx + 1, toRemoveLast);
+		blocks.Remove(blockidx + 1, toRemoveLast, metrics);
 	upperextent = std::min(upperextent, ceiling);
 
 	for (int i = 0; (block = blocks[i]); i++)
 	{
 		if (compilingBlock == EERecGetPhysicalBlock(physicalLUT, block->startpc))
 			continue;
-		const u32 blockend = block->startpc + block->size * 4;
-		pxAssertMsg(!((block->startpc >= address && block->startpc < address + size * 4) ||
+		const u64 blockend = static_cast<u64>(block->startpc) + static_cast<u64>(block->size) * 4;
+		pxAssertMsg(!((block->startpc >= address && block->startpc < end) ||
 			(block->startpc < address && blockend > address)), "[EE] Impossible block clearing failure");
 	}
 	if (upperextent > lowerextent)
 	{
-		BASEBLOCK* const first = EERecGetPhysicalBlock(physicalLUT, lowerextent);
-		for (u32 i = 0; i < (upperextent - lowerextent) / 4; i++)
-			first[i].SetFnptr(recompile);
+		BASEBLOCK* const first = EERecGetPhysicalBlock(physicalLUT, static_cast<u32>(lowerextent));
+		for (u64 i = 0; i < (upperextent - lowerextent) / 4; i++)
+		{
+			if (metrics)
+				metrics->dispatchWriteAttempts++;
+			if (first[i].GetFnptr() != recompile)
+			{
+				first[i].SetFnptr(recompile);
+				if (metrics)
+					metrics->dispatchWrites++;
+			}
+			else if (metrics)
+				metrics->dispatchWriteSkips++;
+		}
 	}
 }
