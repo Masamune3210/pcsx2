@@ -113,3 +113,18 @@ TEST(EEExecutionProfile, StandardNeverSuppressesPhysicalClearFromNegativePageFil
 	EXPECT_TRUE(EECanSkipPhysicalCodeClear(EEExecutionProfileMode::ExtendedMMU, false));
 	EXPECT_FALSE(EECanSkipPhysicalCodeClear(EEExecutionProfileMode::ExtendedMMU, true));
 }
+
+TEST(EEExecutionProfile, ConsecutiveVMSessionsDoNotInheritEarlierBootSelection)
+{
+	EEExecutionProfile::ResetAtShutdown();
+	EXPECT_TRUE(EEExecutionProfile::SelectAtBoot(ResolveEEExecutionProfile(
+		EEExecutionProfilePreference::Auto, "SCPN-60160")));
+	EXPECT_TRUE(EEExecutionProfile::IsExtendedMMU());
+	// VMManager::Shutdown on normal exit and CPUThreadShutdown on thread exit
+	// must perform this reset; otherwise the next boot's SelectAtBoot fails.
+	EEExecutionProfile::ResetAtShutdown();
+	EXPECT_TRUE(EEExecutionProfile::SelectAtBoot(ResolveEEExecutionProfile(
+		EEExecutionProfilePreference::Auto, "SLUS-00000")));
+	EXPECT_FALSE(EEExecutionProfile::IsExtendedMMU());
+	EEExecutionProfile::ResetAtShutdown();
+}
