@@ -1804,6 +1804,10 @@ void VMManager::Shutdown(bool save_resume_state)
 
 	cdvdUnlock();
 
+	// Successful boots cancel the startup-failure guard, so reset the
+	// boot-latched host JIT policy on actual VM destruction as well. Without
+	// this, a subsequent game on the same CPU thread inherits the old mode.
+	EEExecutionProfile::ResetAtShutdown();
 	s_state.store(VMState::Shutdown, std::memory_order_release);
 	FullscreenUI::OnVMDestroyed();
 	SaveStateSelectorUI::Clear();
