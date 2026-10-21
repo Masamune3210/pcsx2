@@ -38,7 +38,7 @@ inline constexpr const char* EEJitInvalidationCauseName(EEJitInvalidationCause c
 // remain separate so a known physical address is never translated twice.
 void recClearPhysical(u32 address, u32 dwords,
 	EEJitInvalidationCause cause = EEJitInvalidationCause::Unknown,
-	u32 triggeringVirtualPage = 0xffffffffu);
+	u32 triggeringVirtualPage = 0xffffffffu, const char* mappingAction = "none");
 void EEJitRecordFastmemBackpatch(u32 hostBytes);
 
 // Diagnostic source fingerprints are NOT a correctness/reuse key: data mapping,
