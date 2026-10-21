@@ -85,6 +85,7 @@ void recTLBWR() { recCall(Interp::TLBWR); }
 void recERET()
 {
 	recBranchCall(Interp::ERET);
+	recEmitControlFlowTrace(pc - 4, 1);
 }
 
 void recEI()
