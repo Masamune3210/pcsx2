@@ -109,6 +109,17 @@ void recDI()
 	// Fixes booting issues in the following games:
 	// Jak X, Namco 50th anniversary, Spongebob the Movie, Spongebob Battle for Bikini Bottom,
 	// The Incredibles, The Incredibles rize of the underminer, Soukou kihei armodyne, Garfield Saving Arlene, Tales of Fandom Vol. 2.
+	if (recNeedsDIBoundaryContinuation())
+	{
+		// Do not eagerly compile the next virtual instruction into this block.
+		// At a 4 KiB boundary it can have an unrelated physical backing (or
+		// raise TLBL). Preserve DI's established one-instruction delay using
+		// the real interpreter fetch/exception path at guest runtime instead.
+		iFlushCall(FLUSH_INTERPRETER);
+		xFastCall((const void*)EEInterpretDINextInstructionFromJIT, pc);
+		g_branch = 2; // use normal JIT event test after the interpreter restores Cpu
+		return;
+	}
 	if (!g_recompilingDelaySlot)
 		recompileNextInstruction(false, false); // DI execution is delayed by one instruction
 
