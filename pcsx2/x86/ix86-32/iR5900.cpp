@@ -42,6 +42,10 @@
 using namespace x86Emitter;
 using namespace R5900;
 
+// Rare fallback implemented in Interpreter.cpp. It executes one branch plus
+// its delay slot with the interpreter's normal virtual fetch/TLB semantics.
+extern void EEInterpretCrossPageBranchFromJIT(u32 branchPC);
+
 static bool eeRecNeedsReset = false;
 static bool eeCpuExecuting = false;
 static bool eeRecExitRequested = false;
@@ -2365,6 +2369,8 @@ static void recRecompile(const u32 startpc)
 {
 	u32 i = 0;
 	u32 willbranch3 = 0;
+	bool interpretUnmappedBoundaryBranch = false;
+	u32 interpreterBranchPC = 0;
 
 	pxAssert(startpc);
 
@@ -2636,6 +2642,30 @@ static void recRecompile(const u32 startpc)
 
 StartRecomp:
 
+	// Branches at the last word of a 4 KiB guest page extend the block by
+	// one delay-slot instruction. The next page might not yet be mapped in
+	// the guest TLB, even though the branch itself can be fetched.
+	// Do not dereference PSM(nullptr) in the backward opcode-analysis pass.
+	// Run this rare boundary branch using the interpreter at execution time,
+	// allowing it to raise a precise TLBL/BD exception when appropriate.
+	if ((s_nEndBlock & 0xfffu) == 4u && s_nEndBlock >= startpc + 8u)
+	{
+		const u32 branchPC = s_nEndBlock - 8u;
+		const u32 delayPC = s_nEndBlock - 4u;
+		if ((branchPC & 0xfffu) == 0xffcu && !PSM(HWADDR(delayPC)))
+		{
+			const u32* const branchOpcode = static_cast<const u32*>(PSM(HWADDR(branchPC)));
+			if (branchOpcode && (GetInstruction(*branchOpcode).flags & IS_BRANCH))
+			{
+				interpretUnmappedBoundaryBranch = true;
+				interpreterBranchPC = branchPC;
+				s_nEndBlock = delayPC; // exclude the unmapped slot from every compile-time pass
+				Console.WriteLn("EE JIT cross-page delay-slot interpreter fallback: branch=%08x slot=%08x",
+					branchPC, delayPC);
+			}
+		}
+	}
+
 	// The idea here is that as long as a loop doesn't write to a register it's already read
 	// (excepting registers initialised with constants or memory loads) or use any instructions
 	// which alter the machine state apart from registers, it will do the same thing on every
@@ -2832,7 +2862,18 @@ StartRecomp:
 				recompileNextInstruction(false, false);
 			}
 #else
-			recompileNextInstruction(false, false); // For the love of recursion, batman!
+			if (interpretUnmappedBoundaryBranch && pc == interpreterBranchPC)
+			{
+				// All preceding instructions remain JIT compiled. Only execute
+				// this branch and its potentially faulting delay slot through
+				// the interpreter, preserving branch-likely annulment and BD/EPC.
+				iFlushCall(FLUSH_INTERPRETER);
+				xFastCall((const void*)EEInterpretCrossPageBranchFromJIT, interpreterBranchPC);
+				pc += 4;
+				g_branch = 2; // branch already set cpuRegs.pc; do regular event check
+			}
+			else
+				recompileNextInstruction(false, false);
 #endif
 		}
 	}
