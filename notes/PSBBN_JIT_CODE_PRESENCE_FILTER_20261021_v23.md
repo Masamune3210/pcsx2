@@ -1,5 +1,7 @@
 # EE JIT physical code presence filter: completed integration review
 
+Next: [permission-only TLB fast path and cache-retention priorities](PSBBN_JIT_CHURN_NEXT_STEPS_20261021_v24.md).
+
 Branch: `note-working/psbbn-jit-reiserfs-mmu-witness-20261020`.
 The remote advanced from `62876d3827` to `90ebb45b69` during this review. Those
 commits already install the filter instance, mark the source start before block
