@@ -1,0 +1,775 @@
+{
+  "log": {
+    "path": "G:\\Users\\Johnny\\Documents\\PCSX2\\logs\\emulog.txt",
+    "sha256": "f8bad2c67c38164b8f50763f6edf5e2362db12601646a46b42531a080d8886b1",
+    "bytes": 4513069,
+    "lines": 49801
+  },
+  "snapshots": [
+    {
+      "path": "H:\\Emulation Files\\pcsx2\\sstates\\PSBBN-auto-1792560903592519-001.p2s",
+      "sha256": "dc7e2e3aaf9276dfcaea8778ab9b027a705f4a03bcd12017eb097b9af06f788b",
+      "pc": "8000dad0",
+      "physical_word_windows": {
+        "01e4e180": [
+          "ae220000 8fa40010 aca30004 0c00068a acb00000 080002ba 02001021 24630001",
+          "24a50040 8e220008 00000000 0062102a 1440ffe5 26100040 8fa40010 0c00068a",
+          "00000000 00001021 8fbf0020 8fb1001c 8fb00018 03e00008 27bd0028 8c820010",
+          "2403fffd ac800018 00431024 03e00008 ac820010 8c830024 8c820018 00000000",
+          "14400002 0062001a 0007000d 2401ffff 14410004 3c018000 14610002 00000000",
+          "0006000d 00001010 24430001 ac820024 ac830024 8c830014 00021180 03e00008",
+          "00621021 27bdffe8 04a00006 afbf0010 8c820020 00000000 00a2102a 14400005",
+          "00051180 0c0002c5 00000000 080002e8 00000000 8c83001c 00000000 00621021"
+        ],
+        "01e4e240": [
+          "00621021 27bdffe8 04a00006 afbf0010 8c820020 00000000 00a2102a 14400005",
+          "00051180 0c0002c5 00000000 080002e8 00000000 8c83001c 00000000 00621021",
+          "8fbf0010 00000000 03e00008 27bd0018 27bdffe0 afb10014 3c028000 afb00010",
+          "00808021 afbf0018 8e030020 3442000a 10620009 00a08821 0043102b 1440001b",
+          "3c028000 34420009 1062000e 00000000 08000313 00000000 8e03001c 00000000",
+          "8c62001c 00000000 10400010 00000000 8c640020 0040f809 00000000 08000313",
+          "00000000 8e03001c 8e020024 00000000 ac620024 8e020028 00000000 ac620014",
+          "8e02002c 00000000 ac620018 8e10001c 00000000 8e020008 00000000 04400004"
+        ],
+        "001db5e0": [
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
+        ],
+        "001db630": [
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
+        ],
+        "001db680": [
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
+        ]
+      },
+      "cycle": 1820453637,
+      "cp0": {
+        "EntryHi": "e005e000",
+        "Status": "70030c00",
+        "Cause": "00000020",
+        "EPC": "002226e8"
+      },
+      "screenshot_sha256": "c3bf9db77bb9ea26af0ff8a0c7282a1aa90de8047e985a4967decbad112bd481",
+      "archive_bytes": 4326122
+    },
+    {
+      "path": "H:\\Emulation Files\\pcsx2\\sstates\\PSBBN-auto-1792560903592519-002.p2s",
+      "sha256": "bed1132380d73a5cfba4a9c84d28524a6d6d209d7eed5bbcbd52b5fc6bc5d79c",
+      "pc": "800185d8",
+      "physical_word_windows": {
+        "01e4e180": [
+          "3c1c000d 279cd280 0399e021 27bdffd0 afbc0010 00802821 2404ffff 00003021",
+          "00003821 afbf0024 afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024",
+          "03e00008 27bd0030 00000000 00000000 3c1c000d 279cd230 0399e021 27bdffd0",
+          "afbc0010 00003821 afbf0024 afbc0020 8f99812c 0320f809 00000000 8fbc0010",
+          "8fbf0024 03e00008 27bd0030 00000000 3c1c000d 279cd1f0 0399e021 27bdffd0",
+          "afbc0010 00801021 00a01821 00c03821 2404ffff 00402821 00603021 afbf0024",
+          "afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024 03e00008 27bd0030",
+          "8f9984f4 03200008 00000000 3c1c000d 279cd194 0399e021 24021012 0000000c"
+        ],
+        "01e4e240": [
+          "afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024 03e00008 27bd0030",
+          "8f9984f4 03200008 00000000 3c1c000d 279cd194 0399e021 24021012 0000000c",
+          "14e0fff7 00000000 03e00008 00000000 00000000 00000000 00000000 00000000",
+          "3c1c000d 279cd160 0399e021 27bdffc0 afbc0010 afb00030 00c08021 00e03021",
+          "24030001 afbf0038 10830007 afbc0034 1080000d 24020002 10820007 00000000",
+          "1000000b 00000000 10a00009 00a02021 1000000d 00000000 10a30005 00052023",
+          "10000009 00000000 10000007 2404ffff 8f99a1f4 0320f809 00000000 8fbc0010",
+          "10000008 24030016 16000009 27a50020 8f99a1f4 0320f809 00000000 8fbc0010"
+        ],
+        "001db5e0": [
+          "00000000 00000000 0000000c 01045398 00000000 00000000 2abb8c08 00402878",
+          "00000000 00000000 00000000 00000000 00000000 2abb8c64 00000004 0fb89e1c",
+          "2ac26400 00409540 00000004 2abd45b0 2abd45e0 00409540 2abd45d0 2abd45b0",
+          "7fff76d0 004090a8 00409540 00402878 2ac26400 2abba2a0 2abba1e4 004090a8",
+          "2ac26400 0040938c 7fff7a40 00402878 2ac1c774 2ac1c774 00002008 7fff78f0",
+          "00402620 7fff7958 00402780 00402878 2ac26400 00402650 2ab23548 00000063",
+          "2ac26400 00408324 00408314 00402878 2ac26400 00402650 0fb71118 00000000",
+          "100016e8 00000053 7fff78f4 7fff78f0 00402620 2ac26400 2ab19a2c 00000000"
+        ],
+        "001db630": [
+          "2abd45e0 00409540 2abd45d0 2abd45b0 7fff76d0 004090a8 00409540 00402878",
+          "2ac26400 2abba2a0 2abba1e4 004090a8 2ac26400 0040938c 7fff7a40 00402878",
+          "2ac1c774 2ac1c774 00002008 7fff78f0 00402620 7fff7958 00402780 00402878",
+          "2ac26400 00402650 2ab23548 00000063 2ac26400 00408324 00408314 00402878",
+          "2ac26400 00402650 0fb71118 00000000 100016e8 00000053 7fff78f4 7fff78f0",
+          "00402620 2ac26400 2ab19a2c 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00007e7e 6f626572 2ac26400 00000000 00000000 ffffffff",
+          "0000001e 00000053 00000009 7fff7970 2ac26400 2ab804dc 00000000 00000000"
+        ],
+        "001db680": [
+          "00402620 7fff7958 00402780 00402878 2ac26400 00402650 2ab23548 00000063",
+          "2ac26400 00408324 00408314 00402878 2ac26400 00402650 0fb71118 00000000",
+          "100016e8 00000053 7fff78f4 7fff78f0 00402620 2ac26400 2ab19a2c 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00007e7e 6f626572",
+          "2ac26400 00000000 00000000 ffffffff 0000001e 00000053 00000009 7fff7970",
+          "2ac26400 2ab804dc 00000000 00000000 00000000 00000000 00000000 00000000",
+          "2ac26400 00000000 00000000 00000000 00000000 ffffffff ffffffff 00000000",
+          "00000020 00000063 00000000 00000000 00000000 00000000 00000000 00000000"
+        ]
+      },
+      "cycle": 4482238550,
+      "cp0": {
+        "EntryHi": "00400110",
+        "Status": "10010c01",
+        "Cause": "00000400",
+        "EPC": "800185d8"
+      },
+      "screenshot_sha256": "95843424d6df0995e32ef8ae3da5caf053c48be6b042e974f1c996aff7ea5021",
+      "archive_bytes": 3153522
+    },
+    {
+      "path": "H:\\Emulation Files\\pcsx2\\sstates\\PSBBN-auto-1792560903592519-003.p2s",
+      "sha256": "98118b779fce3ad7f8bc12cdccf940610f5958e1cef9681f4513a5834e510e49",
+      "pc": "800185d8",
+      "physical_word_windows": {
+        "01e4e180": [
+          "3c1c000d 279cd280 0399e021 27bdffd0 afbc0010 00802821 2404ffff 00003021",
+          "00003821 afbf0024 afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024",
+          "03e00008 27bd0030 00000000 00000000 3c1c000d 279cd230 0399e021 27bdffd0",
+          "afbc0010 00003821 afbf0024 afbc0020 8f99812c 0320f809 00000000 8fbc0010",
+          "8fbf0024 03e00008 27bd0030 00000000 3c1c000d 279cd1f0 0399e021 27bdffd0",
+          "afbc0010 00801021 00a01821 00c03821 2404ffff 00402821 00603021 afbf0024",
+          "afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024 03e00008 27bd0030",
+          "8f9984f4 03200008 00000000 3c1c000d 279cd194 0399e021 24021012 0000000c"
+        ],
+        "01e4e240": [
+          "afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024 03e00008 27bd0030",
+          "8f9984f4 03200008 00000000 3c1c000d 279cd194 0399e021 24021012 0000000c",
+          "14e0fff7 00000000 03e00008 00000000 00000000 00000000 00000000 00000000",
+          "3c1c000d 279cd160 0399e021 27bdffc0 afbc0010 afb00030 00c08021 00e03021",
+          "24030001 afbf0038 10830007 afbc0034 1080000d 24020002 10820007 00000000",
+          "1000000b 00000000 10a00009 00a02021 1000000d 00000000 10a30005 00052023",
+          "10000009 00000000 10000007 2404ffff 8f99a1f4 0320f809 00000000 8fbc0010",
+          "10000008 24030016 16000009 27a50020 8f99a1f4 0320f809 00000000 8fbc0010"
+        ],
+        "001db5e0": [
+          "00000000 00000000 0000000c 01045398 00000000 00000000 2abb8c08 00402878",
+          "00000000 00000000 00000000 00000000 00000000 2abb8c64 00000004 0fb89e1c",
+          "2ac26400 00409540 00000004 2abd45b0 2abd45e0 00409540 2abd45d0 2abd45b0",
+          "7fff76d0 004090a8 00409540 00402878 2ac26400 2abba2a0 2abba1e4 004090a8",
+          "2ac26400 0040938c 7fff7a40 00402878 2ac1c774 2ac1c774 00002008 7fff78f0",
+          "00402620 7fff7958 00402780 00402878 2ac26400 00402650 2ab23548 00000063",
+          "2ac26400 00408324 00408314 00402878 2ac26400 00402650 0fb71118 00000000",
+          "100016e8 00000053 7fff78f4 7fff78f0 00402620 2ac26400 2ab19a2c 00000000"
+        ],
+        "001db630": [
+          "2abd45e0 00409540 2abd45d0 2abd45b0 7fff76d0 004090a8 00409540 00402878",
+          "2ac26400 2abba2a0 2abba1e4 004090a8 2ac26400 0040938c 7fff7a40 00402878",
+          "2ac1c774 2ac1c774 00002008 7fff78f0 00402620 7fff7958 00402780 00402878",
+          "2ac26400 00402650 2ab23548 00000063 2ac26400 00408324 00408314 00402878",
+          "2ac26400 00402650 0fb71118 00000000 100016e8 00000053 7fff78f4 7fff78f0",
+          "00402620 2ac26400 2ab19a2c 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00007e7e 6f626572 2ac26400 00000000 00000000 ffffffff",
+          "0000001e 00000053 00000009 7fff7970 2ac26400 2ab804dc 00000000 00000000"
+        ],
+        "001db680": [
+          "00402620 7fff7958 00402780 00402878 2ac26400 00402650 2ab23548 00000063",
+          "2ac26400 00408324 00408314 00402878 2ac26400 00402650 0fb71118 00000000",
+          "100016e8 00000053 7fff78f4 7fff78f0 00402620 2ac26400 2ab19a2c 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00007e7e 6f626572",
+          "2ac26400 00000000 00000000 ffffffff 0000001e 00000053 00000009 7fff7970",
+          "2ac26400 2ab804dc 00000000 00000000 00000000 00000000 00000000 00000000",
+          "2ac26400 00000000 00000000 00000000 00000000 ffffffff ffffffff 00000000",
+          "00000020 00000063 00000000 00000000 00000000 00000000 00000000 00000000"
+        ]
+      },
+      "cycle": 7434310551,
+      "cp0": {
+        "EntryHi": "00400110",
+        "Status": "10010c01",
+        "Cause": "00000400",
+        "EPC": "800185f0"
+      },
+      "screenshot_sha256": "95843424d6df0995e32ef8ae3da5caf053c48be6b042e974f1c996aff7ea5021",
+      "archive_bytes": 3153291
+    },
+    {
+      "path": "H:\\Emulation Files\\pcsx2\\sstates\\PSBBN-auto-1792560903592519-004.p2s",
+      "sha256": "5f557bda6d29771c8679b5e6ec32e009da53e74ca420f9a289e31c43329b52ca",
+      "pc": "800185f0",
+      "physical_word_windows": {
+        "01e4e180": [
+          "3c1c000d 279cd280 0399e021 27bdffd0 afbc0010 00802821 2404ffff 00003021",
+          "00003821 afbf0024 afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024",
+          "03e00008 27bd0030 00000000 00000000 3c1c000d 279cd230 0399e021 27bdffd0",
+          "afbc0010 00003821 afbf0024 afbc0020 8f99812c 0320f809 00000000 8fbc0010",
+          "8fbf0024 03e00008 27bd0030 00000000 3c1c000d 279cd1f0 0399e021 27bdffd0",
+          "afbc0010 00801021 00a01821 00c03821 2404ffff 00402821 00603021 afbf0024",
+          "afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024 03e00008 27bd0030",
+          "8f9984f4 03200008 00000000 3c1c000d 279cd194 0399e021 24021012 0000000c"
+        ],
+        "01e4e240": [
+          "afbc0020 8f99812c 0320f809 00000000 8fbc0010 8fbf0024 03e00008 27bd0030",
+          "8f9984f4 03200008 00000000 3c1c000d 279cd194 0399e021 24021012 0000000c",
+          "14e0fff7 00000000 03e00008 00000000 00000000 00000000 00000000 00000000",
+          "3c1c000d 279cd160 0399e021 27bdffc0 afbc0010 afb00030 00c08021 00e03021",
+          "24030001 afbf0038 10830007 afbc0034 1080000d 24020002 10820007 00000000",
+          "1000000b 00000000 10a00009 00a02021 1000000d 00000000 10a30005 00052023",
+          "10000009 00000000 10000007 2404ffff 8f99a1f4 0320f809 00000000 8fbc0010",
+          "10000008 24030016 16000009 27a50020 8f99a1f4 0320f809 00000000 8fbc0010"
+        ],
+        "001db5e0": [
+          "00000000 00000000 0000000c 01045398 00000000 00000000 2abb8c08 00402878",
+          "00000000 00000000 00000000 00000000 00000000 2abb8c64 00000004 0fb89e1c",
+          "2ac26400 00409540 00000004 2abd45b0 2abd45e0 00409540 2abd45d0 2abd45b0",
+          "7fff76d0 004090a8 00409540 00402878 2ac26400 2abba2a0 2abba1e4 004090a8",
+          "2ac26400 0040938c 7fff7a40 00402878 2ac1c774 2ac1c774 00002008 7fff78f0",
+          "00402620 7fff7958 00402780 00402878 2ac26400 00402650 2ab23548 00000063",
+          "2ac26400 00408324 00408314 00402878 2ac26400 00402650 0fb71118 00000000",
+          "100016e8 00000053 7fff78f4 7fff78f0 00402620 2ac26400 2ab19a2c 00000000"
+        ],
+        "001db630": [
+          "2abd45e0 00409540 2abd45d0 2abd45b0 7fff76d0 004090a8 00409540 00402878",
+          "2ac26400 2abba2a0 2abba1e4 004090a8 2ac26400 0040938c 7fff7a40 00402878",
+          "2ac1c774 2ac1c774 00002008 7fff78f0 00402620 7fff7958 00402780 00402878",
+          "2ac26400 00402650 2ab23548 00000063 2ac26400 00408324 00408314 00402878",
+          "2ac26400 00402650 0fb71118 00000000 100016e8 00000053 7fff78f4 7fff78f0",
+          "00402620 2ac26400 2ab19a2c 00000000 00000000 00000000 00000000 00000000",
+          "00000000 00000000 00007e7e 6f626572 2ac26400 00000000 00000000 ffffffff",
+          "0000001e 00000053 00000009 7fff7970 2ac26400 2ab804dc 00000000 00000000"
+        ],
+        "001db680": [
+          "00402620 7fff7958 00402780 00402878 2ac26400 00402650 2ab23548 00000063",
+          "2ac26400 00408324 00408314 00402878 2ac26400 00402650 0fb71118 00000000",
+          "100016e8 00000053 7fff78f4 7fff78f0 00402620 2ac26400 2ab19a2c 00000000",
+          "00000000 00000000 00000000 00000000 00000000 00000000 00007e7e 6f626572",
+          "2ac26400 00000000 00000000 ffffffff 0000001e 00000053 00000009 7fff7970",
+          "2ac26400 2ab804dc 00000000 00000000 00000000 00000000 00000000 00000000",
+          "2ac26400 00000000 00000000 00000000 00000000 ffffffff ffffffff 00000000",
+          "00000020 00000063 00000000 00000000 00000000 00000000 00000000 00000000"
+        ]
+      },
+      "cycle": 10386382549,
+      "cp0": {
+        "EntryHi": "00400110",
+        "Status": "10010c01",
+        "Cause": "00000400",
+        "EPC": "800185f0"
+      },
+      "screenshot_sha256": "95843424d6df0995e32ef8ae3da5caf053c48be6b042e974f1c996aff7ea5021",
+      "archive_bytes": 3153252
+    }
+  ],
+  "version": "[    0.1491] PCSX2 v2.9.92-226-g099f64d47",
+  "compile_groups": [
+    {
+      "line": 48726,
+      "text": "[   18.1874] EE-JIT-COMPILE epoch=2 group=1 compilePC=7fff76a0 blockVirtual=7fff76a0 dispatcherEntry=7fff76a0 opcode=00000005 slot=0 ASID=07 EntryHi=2ab58107 Status=00010c11 EPC=2ab59280 Cause=00000008"
+    },
+    {
+      "line": 48727,
+      "text": "[   18.1875] EE-JIT-COMPILE mapping JITPhysical=001db6a0 JITReadable=1 JITWord=00000005 managed=1 archMapped=1 scratch=0 archPhysical=001db6a0 archReadable=1 archWord=00000005 vmapDirect=1 vmapWord=00000005"
+    },
+    {
+      "line": 48728,
+      "text": "[   18.1875] EE-JIT-COMPILE entry-register-sample ra=7fff76a0 sp=7fff7630 gp=2aab81a0 t9=2ab5926c; partial control-flow history, cycles before scheduler charge"
+    },
+    {
+      "line": 48729,
+      "text": "[   18.1876] EE-JIT-COMPILE rawTLB slot=9 Mask=00000000 Hi=7fff6107 Lo0=0000f51a Lo1=000076da"
+    },
+    {
+      "line": 48730,
+      "text": "[   18.1876] EE-JIT-COMPILE rawTLBMatches=1 (at most two shown)"
+    },
+    {
+      "line": 48750,
+      "text": "[   18.1887] EE-JIT-COMPILE epoch=2 group=2 compilePC=7fff7748 blockVirtual=7fff7748 dispatcherEntry=7fff7748 opcode=7665642f slot=0 ASID=07 EntryHi=2ab58107 Status=00010c11 EPC=7fff76a8 Cause=00000020"
+    },
+    {
+      "line": 48751,
+      "text": "[   18.1887] EE-JIT-COMPILE mapping JITPhysical=001db748 JITReadable=1 JITWord=7665642f managed=1 archMapped=1 scratch=0 archPhysical=001db748 archReadable=1 archWord=7665642f vmapDirect=1 vmapWord=7665642f"
+    },
+    {
+      "line": 48752,
+      "text": "[   18.1887] EE-JIT-COMPILE entry-register-sample ra=7fff76a0 sp=7fff7630 gp=2aab81a0 t9=2ab5926c; partial control-flow history, cycles before scheduler charge"
+    },
+    {
+      "line": 48753,
+      "text": "[   18.1888] EE-JIT-COMPILE rawTLB slot=9 Mask=00000000 Hi=7fff6107 Lo0=0000f51a Lo1=000076da"
+    },
+    {
+      "line": 48754,
+      "text": "[   18.1888] EE-JIT-COMPILE rawTLBMatches=1 (at most two shown)"
+    },
+    {
+      "line": 48772,
+      "text": "[   18.1897] EE-JIT-COMPILE epoch=2 group=3 compilePC=7fff77f8 blockVirtual=7fff7748 dispatcherEntry=7fff7748 opcode=000732c5 slot=0 ASID=07 EntryHi=2ab58107 Status=00010c11 EPC=7fff76a8 Cause=00000020"
+    },
+    {
+      "line": 48773,
+      "text": "[   18.1898] EE-JIT-COMPILE mapping JITPhysical=001db7f8 JITReadable=1 JITWord=000732c5 managed=1 archMapped=1 scratch=0 archPhysical=001db7f8 archReadable=1 archWord=000732c5 vmapDirect=1 vmapWord=000732c5"
+    },
+    {
+      "line": 48774,
+      "text": "[   18.1898] EE-JIT-COMPILE entry-register-sample ra=7fff76a0 sp=7fff7630 gp=2aab81a0 t9=2ab5926c; partial control-flow history, cycles before scheduler charge"
+    },
+    {
+      "line": 48775,
+      "text": "[   18.1899] EE-JIT-COMPILE rawTLB slot=9 Mask=00000000 Hi=7fff6107 Lo0=0000f51a Lo1=000076da"
+    },
+    {
+      "line": 48776,
+      "text": "[   18.1899] EE-JIT-COMPILE rawTLBMatches=1 (at most two shown)"
+    },
+    {
+      "line": 48797,
+      "text": "[   18.1919] EE-JIT-COMPILE epoch=2 group=4 compilePC=7fff77f8 blockVirtual=7fff774c dispatcherEntry=7fff774c opcode=000732c5 slot=0 ASID=07 EntryHi=00006107 Status=00010c11 EPC=7fff774c Cause=00000008"
+    },
+    {
+      "line": 48798,
+      "text": "[   18.1920] EE-JIT-COMPILE mapping JITPhysical=001db7f8 JITReadable=1 JITWord=000732c5 managed=1 archMapped=1 scratch=0 archPhysical=001db7f8 archReadable=1 archWord=000732c5 vmapDirect=1 vmapWord=000732c5"
+    },
+    {
+      "line": 48799,
+      "text": "[   18.1920] EE-JIT-COMPILE entry-register-sample ra=7fff76a0 sp=7fff7630 gp=2aab81a0 t9=2ab5926c; partial control-flow history, cycles before scheduler charge"
+    },
+    {
+      "line": 48800,
+      "text": "[   18.1921] EE-JIT-COMPILE rawTLB slot=9 Mask=00000000 Hi=7fff6107 Lo0=0000f51a Lo1=000076da"
+    },
+    {
+      "line": 48801,
+      "text": "[   18.1921] EE-JIT-COMPILE rawTLBMatches=1 (at most two shown)"
+    }
+  ],
+  "unique_flow_records": [
+    {
+      "line": 48731,
+      "text": "[   18.1877] EE-JIT-FLOW seq=29125 cycleBeforeCharge=3145426304 kind=0 compiledSource=0fb75d88 target=0fb6d25c compiledPhysical=01ed0d88 currentSourcePhysical=01ed0d88 targetPhysical=01ed825c targetJITReadable=1 EntryHi=2aabe005 Status=00010c11 ra=0fb6d25c sp=7fff74d0 gp=0fb913b0 t9=00000008"
+    },
+    {
+      "line": 48732,
+      "text": "[   18.1877] EE-JIT-FLOW seq=29126 cycleBeforeCharge=3145426378 kind=1 compiledSource=80000058 target=0fb6d0c8 compiledPhysical=00000058 currentSourcePhysical=00000058 targetPhysical=01ed80c8 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb6d25c sp=7fff74d0 gp=0fb913b0 t9=00000008"
+    },
+    {
+      "line": 48733,
+      "text": "[   18.1878] EE-JIT-FLOW seq=29127 cycleBeforeCharge=3145426434 kind=0 compiledSource=0fb6d330 target=0fb75b80 compiledPhysical=01ed8330 currentSourcePhysical=01ed8330 targetPhysical=01ed0b80 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb6d338 sp=7fff74d0 gp=0fb913b0 t9=0fb75b80"
+    },
+    {
+      "line": 48734,
+      "text": "[   18.1878] EE-JIT-FLOW seq=29128 cycleBeforeCharge=3145426458 kind=0 compiledSource=0fb75d88 target=0fb6d338 compiledPhysical=01ed0d88 currentSourcePhysical=01ed0d88 targetPhysical=01ed8338 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb6d338 sp=7fff74d0 gp=0fb913b0 t9=00000005"
+    },
+    {
+      "line": 48735,
+      "text": "[   18.1879] EE-JIT-FLOW seq=29129 cycleBeforeCharge=3145426469 kind=0 compiledSource=0fb6d35c target=0fb75b80 compiledPhysical=01ed835c currentSourcePhysical=01ed835c targetPhysical=01ed0b80 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb6d364 sp=7fff74d0 gp=0fb913b0 t9=0fb75b80"
+    },
+    {
+      "line": 48736,
+      "text": "[   18.1879] EE-JIT-FLOW seq=29130 cycleBeforeCharge=3145426493 kind=0 compiledSource=0fb75d88 target=0fb6d364 compiledPhysical=01ed0d88 currentSourcePhysical=01ed0d88 targetPhysical=01ed8364 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb6d364 sp=7fff74d0 gp=0fb913b0 t9=00000005"
+    },
+    {
+      "line": 48737,
+      "text": "[   18.1880] EE-JIT-FLOW seq=29131 cycleBeforeCharge=3145426503 kind=0 compiledSource=0fb6d35c target=0fb75b80 compiledPhysical=01ed835c currentSourcePhysical=01ed835c targetPhysical=01ed0b80 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb6d364 sp=7fff74d0 gp=0fb913b0 t9=0fb75b80"
+    },
+    {
+      "line": 48738,
+      "text": "[   18.1880] EE-JIT-FLOW seq=29132 cycleBeforeCharge=3145426537 kind=0 compiledSource=0fb75d88 target=0fb6d364 compiledPhysical=01ed0d88 currentSourcePhysical=01ed0d88 targetPhysical=01ed8364 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb6d364 sp=7fff74d0 gp=0fb913b0 t9=00000005"
+    },
+    {
+      "line": 48739,
+      "text": "[   18.1881] EE-JIT-FLOW seq=29133 cycleBeforeCharge=3145426601 kind=0 compiledSource=0fb6dc18 target=0fb71118 compiledPhysical=01ed8c18 currentSourcePhysical=01ed8c18 targetPhysical=01ed4118 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb71118 sp=7fff75e0 gp=0fb913b0 t9=00000005"
+    },
+    {
+      "line": 48740,
+      "text": "[   18.1881] EE-JIT-FLOW seq=29134 cycleBeforeCharge=3145426632 kind=0 compiledSource=0fb711a8 target=0fb71204 compiledPhysical=01ed41a8 currentSourcePhysical=01ed41a8 targetPhysical=01ed4204 targetJITReadable=1 EntryHi=0fb60005 Status=00010c11 ra=0fb71204 sp=7fff7640 gp=0fb913b0 t9=00000005"
+    },
+    {
+      "line": 48741,
+      "text": "[   18.1882] EE-JIT-FLOW seq=29135 cycleBeforeCharge=3145426652 kind=0 compiledSource=0fb71224 target=2abb84c8 compiledPhysical=01ed4224 currentSourcePhysical=01ed4224 targetPhysical=2abb84c8 targetJITReadable=0 EntryHi=0fb60005 Status=00010c11 ra=00408300 sp=7fff7670 gp=0fb913b0 t9=2abb84c8"
+    },
+    {
+      "line": 48742,
+      "text": "[   18.1882] EE-JIT-FLOW seq=29136 cycleBeforeCharge=3145426691 kind=1 compiledSource=80000058 target=2abb84c8 compiledPhysical=00000058 currentSourcePhysical=00000058 targetPhysical=2abb84c8 targetJITReadable=0 EntryHi=2abb8005 Status=00010c11 ra=00408300 sp=7fff7670 gp=0fb913b0 t9=2abb84c8"
+    },
+    {
+      "line": 48743,
+      "text": "[   18.1883] EE-JIT-FLOW seq=29137 cycleBeforeCharge=3145472892 kind=1 compiledSource=8001f428 target=2ab59280 compiledPhysical=0001f428 currentSourcePhysical=0001f428 targetPhysical=2ab59280 targetJITReadable=0 EntryHi=7fff6107 Status=00010c11 ra=2ab591fc sp=7fff7600 gp=2ac26400 t9=2ab5926c"
+    },
+    {
+      "line": 48744,
+      "text": "[   18.1884] EE-JIT-FLOW seq=29138 cycleBeforeCharge=3145472940 kind=1 compiledSource=80000058 target=2ab59280 compiledPhysical=00000058 currentSourcePhysical=00000058 targetPhysical=01e4e280 targetJITReadable=1 EntryHi=2ab58107 Status=00010c11 ra=2ab591fc sp=7fff7600 gp=2ac26400 t9=2ab5926c"
+    },
+    {
+      "line": 48745,
+      "text": "[   18.1884] EE-JIT-FLOW seq=29139 cycleBeforeCharge=3145472945 kind=0 compiledSource=2ab59288 target=2ab591fc compiledPhysical=01e4e288 currentSourcePhysical=01e4e288 targetPhysical=01e4e1fc targetJITReadable=1 EntryHi=2ab58107 Status=00010c11 ra=2ab591fc sp=7fff7600 gp=2ac26400 t9=2ab5926c"
+    },
+    {
+      "line": 48746,
+      "text": "[   18.1885] EE-JIT-FLOW seq=29140 cycleBeforeCharge=3145472947 kind=0 compiledSource=2ab59204 target=7fff76a0 compiledPhysical=01e4e204 currentSourcePhysical=01e4e204 targetPhysical=001db6a0 targetJITReadable=1 EntryHi=2ab58107 Status=00010c11 ra=7fff76a0 sp=7fff7630 gp=2aab81a0 t9=2ab5926c"
+    },
+    {
+      "line": 48770,
+      "text": "[   18.1896] EE-JIT-FLOW seq=29141 cycleBeforeCharge=3145473064 kind=1 compiledSource=8001b6bc target=7fff76a8 compiledPhysical=0001b6bc currentSourcePhysical=0001b6bc targetPhysical=001db6a8 targetJITReadable=1 EntryHi=2ab58107 Status=00010c11 ra=7fff76a0 sp=7fff7630 gp=2aab81a0 t9=2ab5926c"
+    },
+    {
+      "line": 48817,
+      "text": "[   18.1933] EE-JIT-FLOW seq=29142 cycleBeforeCharge=3145473200 kind=1 compiledSource=80000058 target=7fff774c compiledPhysical=00000058 currentSourcePhysical=00000058 targetPhysical=001db74c targetJITReadable=1 EntryHi=00006107 Status=00010c11 ra=7fff76a0 sp=7fff7630 gp=2aab81a0 t9=2ab5926c"
+    }
+  ],
+  "counts": {
+    "unarmed_vtlb": 0,
+    "old_403fc0": 0,
+    "unknown_compile": 4,
+    "journal_samples": 4,
+    "boundary_fallback": 7
+  },
+  "focused_faults": [
+    {
+      "line": 48722,
+      "text": "[   18.1868] cpuTlbMiss pc:80030f84, cycl:bb7c1914, addr: 7fff7a04, status=10010c01, code=c"
+    },
+    {
+      "line": 48723,
+      "text": "[   18.1871] cpuTlbMiss pc:2ab59284, cycl:bb7c1b94, addr: 2ab59280, status=10c11, code=8"
+    },
+    {
+      "line": 48725,
+      "text": "[   18.1873] EE: Unrecognized op 5"
+    },
+    {
+      "line": 48749,
+      "text": "[   18.1886] EE: Unrecognized op 7665642f"
+    },
+    {
+      "line": 48771,
+      "text": "[   18.1897] EE: Unrecognized op 732c5"
+    },
+    {
+      "line": 48793,
+      "text": "[   18.1909] Branch fb89960 in delay slot!"
+    },
+    {
+      "line": 48794,
+      "text": "[   18.1918] cpuTlbMiss pc:7fff7750, cycl:bb7c1c98, addr: 6e88, status=10c11, code=8"
+    },
+    {
+      "line": 48796,
+      "text": "[   18.1919] EE: Unrecognized op 732c5"
+    },
+    {
+      "line": 48818,
+      "text": "[   18.1934] Branch fb89960 in delay slot!"
+    },
+    {
+      "line": 48819,
+      "text": "[   18.1934] cpuTlbMiss pc:7fff7750, cycl:bb7c1cb3, addr: 6e88, status=10c11, code=8"
+    },
+    {
+      "line": 48820,
+      "text": "[   18.1938] cpuTlbMiss pc:40287c, cycl:bb7c24d0, addr: 402878, status=10c11, code=8"
+    },
+    {
+      "line": 48821,
+      "text": "[   18.1942] cpuTlbMiss pc:40289c, cycl:bb7c24eb, addr: 10000324, status=10c11, code=8"
+    },
+    {
+      "line": 48822,
+      "text": "[   18.1943] cpuTlbMiss pc:fb711b4, cycl:bb7c250f, addr: fb711b0, status=10c11, code=8"
+    },
+    {
+      "line": 48823,
+      "text": "[   18.1944] cpuTlbMiss pc:fb711f8, cycl:bb7c252a, addr: fb893d0, status=10c11, code=8"
+    },
+    {
+      "line": 48824,
+      "text": "[   18.1946] cpuTlbMiss pc:fb710e8, cycl:bb7c25c5, addr: 2aaa858c, status=10c11, code=8"
+    },
+    {
+      "line": 48825,
+      "text": "[   18.1947] cpuTlbMiss pc:fb76e64, cycl:bb7c26cd, addr: fb76e60, status=10c11, code=8"
+    }
+  ],
+  "late_snapshot_epilogue_words": [
+    {
+      "virtual_address": "2ab591d0",
+      "physical_address": "01e4e1d0",
+      "word": "3c1c000d"
+    },
+    {
+      "virtual_address": "2ab591d4",
+      "physical_address": "01e4e1d4",
+      "word": "279cd230"
+    },
+    {
+      "virtual_address": "2ab591d8",
+      "physical_address": "01e4e1d8",
+      "word": "0399e021"
+    },
+    {
+      "virtual_address": "2ab591dc",
+      "physical_address": "01e4e1dc",
+      "word": "27bdffd0"
+    },
+    {
+      "virtual_address": "2ab591e0",
+      "physical_address": "01e4e1e0",
+      "word": "afbc0010"
+    },
+    {
+      "virtual_address": "2ab591e4",
+      "physical_address": "01e4e1e4",
+      "word": "00003821"
+    },
+    {
+      "virtual_address": "2ab591e8",
+      "physical_address": "01e4e1e8",
+      "word": "afbf0024"
+    },
+    {
+      "virtual_address": "2ab591ec",
+      "physical_address": "01e4e1ec",
+      "word": "afbc0020"
+    },
+    {
+      "virtual_address": "2ab591f0",
+      "physical_address": "01e4e1f0",
+      "word": "8f99812c"
+    },
+    {
+      "virtual_address": "2ab591f4",
+      "physical_address": "01e4e1f4",
+      "word": "0320f809"
+    },
+    {
+      "virtual_address": "2ab591f8",
+      "physical_address": "01e4e1f8",
+      "word": "00000000"
+    },
+    {
+      "virtual_address": "2ab591fc",
+      "physical_address": "01e4e1fc",
+      "word": "8fbc0010"
+    },
+    {
+      "virtual_address": "2ab59200",
+      "physical_address": "01e4e200",
+      "word": "8fbf0024"
+    },
+    {
+      "virtual_address": "2ab59204",
+      "physical_address": "01e4e204",
+      "word": "03e00008"
+    },
+    {
+      "virtual_address": "2ab59208",
+      "physical_address": "01e4e208",
+      "word": "27bd0030"
+    },
+    {
+      "virtual_address": "2ab5920c",
+      "physical_address": "01e4e20c",
+      "word": "00000000"
+    },
+    {
+      "virtual_address": "2ab59210",
+      "physical_address": "01e4e210",
+      "word": "3c1c000d"
+    },
+    {
+      "virtual_address": "2ab59214",
+      "physical_address": "01e4e214",
+      "word": "279cd1f0"
+    },
+    {
+      "virtual_address": "2ab59218",
+      "physical_address": "01e4e218",
+      "word": "0399e021"
+    },
+    {
+      "virtual_address": "2ab5921c",
+      "physical_address": "01e4e21c",
+      "word": "27bdffd0"
+    },
+    {
+      "virtual_address": "2ab59220",
+      "physical_address": "01e4e220",
+      "word": "afbc0010"
+    },
+    {
+      "virtual_address": "2ab59224",
+      "physical_address": "01e4e224",
+      "word": "00801021"
+    },
+    {
+      "virtual_address": "2ab59228",
+      "physical_address": "01e4e228",
+      "word": "00a01821"
+    },
+    {
+      "virtual_address": "2ab5922c",
+      "physical_address": "01e4e22c",
+      "word": "00c03821"
+    },
+    {
+      "virtual_address": "2ab59230",
+      "physical_address": "01e4e230",
+      "word": "2404ffff"
+    },
+    {
+      "virtual_address": "2ab59234",
+      "physical_address": "01e4e234",
+      "word": "00402821"
+    },
+    {
+      "virtual_address": "2ab59238",
+      "physical_address": "01e4e238",
+      "word": "00603021"
+    },
+    {
+      "virtual_address": "2ab5923c",
+      "physical_address": "01e4e23c",
+      "word": "afbf0024"
+    },
+    {
+      "virtual_address": "2ab59240",
+      "physical_address": "01e4e240",
+      "word": "afbc0020"
+    },
+    {
+      "virtual_address": "2ab59244",
+      "physical_address": "01e4e244",
+      "word": "8f99812c"
+    },
+    {
+      "virtual_address": "2ab59248",
+      "physical_address": "01e4e248",
+      "word": "0320f809"
+    },
+    {
+      "virtual_address": "2ab5924c",
+      "physical_address": "01e4e24c",
+      "word": "00000000"
+    },
+    {
+      "virtual_address": "2ab59250",
+      "physical_address": "01e4e250",
+      "word": "8fbc0010"
+    },
+    {
+      "virtual_address": "2ab59254",
+      "physical_address": "01e4e254",
+      "word": "8fbf0024"
+    },
+    {
+      "virtual_address": "2ab59258",
+      "physical_address": "01e4e258",
+      "word": "03e00008"
+    },
+    {
+      "virtual_address": "2ab5925c",
+      "physical_address": "01e4e25c",
+      "word": "27bd0030"
+    },
+    {
+      "virtual_address": "2ab59260",
+      "physical_address": "01e4e260",
+      "word": "8f9984f4"
+    },
+    {
+      "virtual_address": "2ab59264",
+      "physical_address": "01e4e264",
+      "word": "03200008"
+    },
+    {
+      "virtual_address": "2ab59268",
+      "physical_address": "01e4e268",
+      "word": "00000000"
+    },
+    {
+      "virtual_address": "2ab5926c",
+      "physical_address": "01e4e26c",
+      "word": "3c1c000d"
+    },
+    {
+      "virtual_address": "2ab59270",
+      "physical_address": "01e4e270",
+      "word": "279cd194"
+    },
+    {
+      "virtual_address": "2ab59274",
+      "physical_address": "01e4e274",
+      "word": "0399e021"
+    },
+    {
+      "virtual_address": "2ab59278",
+      "physical_address": "01e4e278",
+      "word": "24021012"
+    },
+    {
+      "virtual_address": "2ab5927c",
+      "physical_address": "01e4e27c",
+      "word": "0000000c"
+    },
+    {
+      "virtual_address": "2ab59280",
+      "physical_address": "01e4e280",
+      "word": "14e0fff7"
+    },
+    {
+      "virtual_address": "2ab59284",
+      "physical_address": "01e4e284",
+      "word": "00000000"
+    },
+    {
+      "virtual_address": "2ab59288",
+      "physical_address": "01e4e288",
+      "word": "03e00008"
+    },
+    {
+      "virtual_address": "2ab5928c",
+      "physical_address": "01e4e28c",
+      "word": "00000000"
+    }
+  ],
+  "late_snapshot_slot_word": "00409540",
+  "late_snapshot_target_word": "2ac26400",
+  "kernel_log": {
+    "path": "G:\\Users\\Johnny\\Documents\\PCSX2\\logs\\psbbn-kernel-log.txt",
+    "bytes": 12905,
+    "sha256": "e8a2d46e2487076004ba47235efdffaaa569881bebc3866bfe571be778e5df86",
+    "root_mount": true
+  },
+  "proven": [
+    "Actual recorded JR 2AB59204 -> 7FFF76A0, not merely an unknown compile.",
+    "JIT/architectural/vmap words and physical addresses agree for all four compile groups.",
+    "Raw first-group stack EntryLo1=000076DA is V=1,D=0.",
+    "Pre-correction generated stores bypass interpreter-only Dirty permission checks."
+  ],
+  "unproven": [
+    "Exact earlier writer/value read at runtime return slot 7FFF7624.",
+    "COW bypass is the cause of this specific bad return.",
+    "Later archive RAM contents equal the contents at first unknown compilation.",
+    "New correction compiles, executes correctly or completes PSBBN boot."
+  ],
+  "snapshot_layout": {
+    "cpu_start": 333,
+    "cpu_pc_offset": 680,
+    "cpu_cp0_offset": 544,
+    "cpu_cycle_offset": 1088,
+    "state_version": "0x9a590000",
+    "observation": "Read-only ZIP decoding; no emulator state load."
+  },
+  "physical_window_encoding": "Each row contains up to eight consecutive 32-bit little-endian words, written as hexadecimal numeric values; window keys are physical starting addresses."
+}

@@ -231,6 +231,7 @@ void recLW()
 		xFastCall((void*)PSBBNTraceJournalWordAccess, 0x800B1580u, 2u);
 	}
 	recLoad(32, true);
+	recEmitStackMemoryTrace();
 	if (pc == 0x800B1584)
 	{
 		iFlushCall(FLUSH_EVERYTHING);
@@ -246,6 +247,7 @@ void recLWU()
 void recLD()
 {
 	recLoad(64, false);
+	recEmitStackMemoryTrace();
 	EE::Profiler.EmitOp(eeOpcode::LD);
 }
 void recLQ()
@@ -273,6 +275,7 @@ void recSW()
 		xFastCall((void*)PSBBNTraceJournalWordAccess, 0x800B1578u, 0u);
 	}
 	recStore(32);
+	recEmitStackMemoryTrace();
 	if (pc == 0x800B157Cu)
 	{
 		iFlushCall(FLUSH_EVERYTHING);
@@ -283,6 +286,7 @@ void recSW()
 void recSD()
 {
 	recStore(64);
+	recEmitStackMemoryTrace();
 	EE::Profiler.EmitOp(eeOpcode::SD);
 }
 void recSQ()
