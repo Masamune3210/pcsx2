@@ -474,6 +474,9 @@ void VMManager::Internal::CPUThreadShutdown()
 
 	ShutdownCPUProviders();
 
+	// Defensive teardown for a CPU thread ending without a fully initialized
+	// VM. Normal VMManager::Shutdown already clears this latch.
+	EEExecutionProfile::ResetAtShutdown();
 	SysMemory::Release();
 
 #ifdef _WIN32
