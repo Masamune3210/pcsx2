@@ -52,6 +52,16 @@ constexpr bool EERecNeedsRuntimeBoundarySlot(bool fineDispatch, u32 branchPC, bo
 	return (branchPC & 0xfffu) == 0xffcu && (fineDispatch || !slotReadable);
 }
 
+// KUSEG and KSEG2/3 constant-address loads/stores can embed a vTLB
+// translation selected *at compile time*. Their host pointer or handler can
+// become stale after a data-only remap even when instruction bytes are stable.
+// This classification is for diagnostic dependency accounting; it does NOT
+// currently authorize code reuse or alter emitted load/store instructions.
+constexpr bool EERecConstantAddressUsesGuestTLB(u32 address)
+{
+	return address < 0x80000000u || address >= 0xc0000000u;
+}
+
 // DI intentionally postpones changing EIE until the following instruction
 // (a longstanding PCSX2 compatibility behavior). Do not compile that next
 // instruction into a fine-mode block at the last word of a guest page:
