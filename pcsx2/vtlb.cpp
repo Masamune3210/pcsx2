@@ -42,6 +42,13 @@
 using namespace R5900;
 using namespace vtlb_private;
 
+#if defined(_M_X64) || defined(__x86_64__)
+// The x64 EE recompiler arms this context only after committing the entire
+// guest register file and the precise memory-instruction PC to cpuRegs.
+extern u32 g_recPreciseMemoryFaultArmed;
+void recHandlePreciseTlbMiss(u32 addr, u32 mode);
+#endif
+
 #define verify pxAssert
 
 namespace vtlb_private
@@ -552,6 +559,18 @@ static __ri void vtlb_Miss(u32 addr, u32 mode)
 		Cpu->CancelInstruction();
 		return;
 	}
+
+#if defined(_M_X64) || defined(__x86_64__)
+	if (g_recPreciseMemoryFaultArmed)
+	{
+		// The JIT cannot complete this access without guest refill. The
+		// synchronized translated memory instruction has established the
+		// correct PC/BD state, so inject TLBL/TLBS and immediately abandon
+		// its host block rather than returning zero or dropping the write.
+		recHandlePreciseTlbMiss(addr, mode);
+		return;
+	}
+#endif
 
 	const std::string message(fmt::format("TLB Miss, pc=0x{:x} addr=0x{:x} [{}]", cpuRegs.pc, addr, mode ? "store" : "load"));
 	if (EmuConfig.Cpu.Recompiler.PauseOnTLBMiss)
