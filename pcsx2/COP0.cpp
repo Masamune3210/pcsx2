@@ -950,7 +950,23 @@ EEActiveTLBPageMap s_active_tlb_pages;
 // 4 KiB guest virtual->physical aliases as vTLB data accesses.
 void recMapTLBPage(u32 virtualPage, u32 physicalPage);
 void recUnmapTLBPage(u32 virtualPage);
+void recClearPhysical(u32 addr, u32 size);
 #endif
+
+static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping)
+{
+#if defined(_M_X64) || defined(__x86_64__)
+	if (!mapping.scratchpad)
+	{
+		// Use the projection's explicit PFN, regardless of which dispatch
+		// mode is selected or whether the virtual alias is installed yet.
+		recClearPhysical(mapping.physicalAddress, 0x400);
+		return;
+	}
+#endif
+	if (Cpu)
+		Cpu->Clear(page << 12, 0x400);
+}
 
 void SyncActiveTLBMappings()
 {
@@ -967,7 +983,7 @@ void SyncActiveTLBMappings()
 			match->second.writable != old.writable)
 		{
 			memClearPageAddr(page << 12);
-			Cpu->Clear(page << 12, 0x400);
+			ClearActiveTLBCodePage(page, old);
 #if defined(_M_X64) || defined(__x86_64__)
 			recUnmapTLBPage(page << 12);
 #endif
@@ -989,7 +1005,7 @@ void SyncActiveTLBMappings()
 			continue;
 		}
 		memSetPageAddr(page << 12, now.physicalAddress);
-		Cpu->Clear(page << 12, 0x400);
+		ClearActiveTLBCodePage(page, now);
 #if defined(_M_X64) || defined(__x86_64__)
 		recMapTLBPage(page << 12, now.physicalAddress);
 #endif
@@ -1049,8 +1065,7 @@ void ResetActiveTLBMappings()
 	for (const auto& [page, mapping] : s_active_tlb_pages)
 	{
 		memClearPageAddr(page << 12);
-		if (Cpu)
-			Cpu->Clear(page << 12, 0x400);
+		ClearActiveTLBCodePage(page, mapping);
 #if defined(_M_X64) || defined(__x86_64__)
 		recUnmapTLBPage(page << 12);
 #endif
