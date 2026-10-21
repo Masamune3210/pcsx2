@@ -117,7 +117,8 @@ public:
 // Shared with the standalone cache regressions. This is the recompiler's
 // existing overlap/link invalidation, using physical dispatch entries only.
 inline void EERecClearPhysicalBlocks(BaseBlocks& blocks, const uptr* physicalLUT,
-	BASEBLOCK* compilingBlock, uptr recompile, u32 address, u32 size, BaseBlocks::Metrics* metrics = nullptr)
+	BASEBLOCK* compilingBlock, uptr recompile, u32 address, u32 size, BaseBlocks::Metrics* metrics = nullptr,
+	BaseBlocks::RemovalObserver observer = nullptr, void* observerContext = nullptr)
 {
 	if (size == 0)
 		return;
@@ -143,7 +144,7 @@ inline void EERecClearPhysicalBlocks(BaseBlocks& blocks, const uptr* physicalLUT
 		if (dispatch == compilingBlock)
 		{
 			if (toRemoveLast != blockidx)
-				blocks.Remove(blockidx + 1, toRemoveLast, metrics);
+				blocks.Remove(blockidx + 1, toRemoveLast, metrics, observer, observerContext);
 			toRemoveLast = --blockidx;
 			continue;
 		}
@@ -167,7 +168,7 @@ inline void EERecClearPhysicalBlocks(BaseBlocks& blocks, const uptr* physicalLUT
 		blockidx--;
 	}
 	if (toRemoveLast != blockidx)
-		blocks.Remove(blockidx + 1, toRemoveLast, metrics);
+		blocks.Remove(blockidx + 1, toRemoveLast, metrics, observer, observerContext);
 	upperextent = std::min(upperextent, ceiling);
 
 	for (int i = 0; (block = blocks[i]); i++)
