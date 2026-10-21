@@ -675,6 +675,13 @@ void EEInterpretDINextInstructionFromJIT(u32 nextPC)
 	if (stepResult == 0)
 	{
 		execI();
+		// The eager JIT implementation compiles the *whole* following branch,
+		// including its delay slot. An ordinary untaken branch leaves the slot
+		// for the next interpreter iteration; execute it before disabling EIE
+		// so this bridge has the same boundary as the original recDI.
+		if (EERecNeedsFallthroughDelaySlot(nextPC, cpuRegs.pc, branch2 != 0) &&
+			(R5900::GetInstruction(cpuRegs.code).flags & IS_BRANCH))
+			doBranch(nextPC + 8u);
 		// This is the same interpreter operation normally inlined by recDI,
 		// deliberately ordered *after* the deferred instruction.
 		R5900::Interpreter::OpcodeImpl::COP0::DI();
