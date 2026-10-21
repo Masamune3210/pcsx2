@@ -262,3 +262,41 @@ TEST(EEActiveTLB, ReadModifyWriteStorePermissionKeepsOriginalFaultAddress)
 	for (const u32 opcode : {0xabbf0025u, 0xbbbf0025u, 0xb3bf0025u, 0xb7bf0025u})
 		EXPECT_EQ(EEActiveTLBStoreAddress(0x7fff7600, opcode), 0x7fff7625u);
 }
+
+
+TEST(EEActiveTLB, TLBRemapClearsEachPhysicalCodePageOncePerSync)
+{
+	EEPhysicalCodeInvalidationSet sync;
+	const EEActiveTLBPage first{0x00123000, false, true};
+	const EEActiveTLBPage secondAlias{0x00123000, false, false};
+	constexpr u32 ram = 0x02000000;
+	EXPECT_TRUE(sync.ShouldInvalidate(first, ram));
+	EXPECT_FALSE(sync.ShouldInvalidate(secondAlias, ram));
+	EXPECT_TRUE(sync.ShouldInvalidate(EEActiveTLBPage{0x00124000, false, true}, ram));
+	// The next architectural synchronization must be able to invalidate it.
+	EEPhysicalCodeInvalidationSet nextSync;
+	EXPECT_TRUE(nextSync.ShouldInvalidate(first, ram));
+}
+
+TEST(EEActiveTLB, CodeInvalidationDedupRetainsScratchpadAndNonRAMBehavior)
+{
+	EEPhysicalCodeInvalidationSet sync;
+	constexpr u32 ram = 0x02000000;
+	const EEActiveTLBPage scratch{0x00000000, true, true};
+	const EEActiveTLBPage outOfRAM{0x1fc00000, false, true};
+	EXPECT_TRUE(sync.ShouldInvalidate(scratch, ram));
+	EXPECT_TRUE(sync.ShouldInvalidate(scratch, ram)); // virtual scratch clears are distinct
+	EXPECT_TRUE(sync.ShouldInvalidate(outOfRAM, ram));
+	EXPECT_TRUE(sync.ShouldInvalidate(outOfRAM, ram)); // preserve non-RAM treatment
+}
+
+TEST(EEActiveTLB, CodeInvalidationDedupTracksPhysicalNotVirtualAliases)
+{
+	EEPhysicalCodeInvalidationSet sync;
+	constexpr u32 ram = 0x02000000;
+	// Same PFN from distinct ASIDs/VPNs needs one physical invalidation per
+	// synchronous remap even when the second entry's write permission differs.
+	EXPECT_TRUE(sync.ShouldInvalidate(EEActiveTLBPage{0x01e81000, false, true}, ram));
+	EXPECT_FALSE(sync.ShouldInvalidate(EEActiveTLBPage{0x01e81000, false, false}, ram));
+	EXPECT_TRUE(sync.ShouldInvalidate(EEActiveTLBPage{0x01e82000, false, false}, ram));
+}
