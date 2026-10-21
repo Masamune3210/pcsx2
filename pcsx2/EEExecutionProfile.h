@@ -55,10 +55,16 @@ constexpr EEExecutionProfileMode ResolveEEExecutionProfile(
 namespace EEExecutionProfile
 {
 	inline std::atomic<EEExecutionProfileMode> s_active{EEExecutionProfileMode::Standard};
+	inline std::atomic<bool> s_bootSelectionLatched{false};
 
-	inline void SelectAtBoot(EEExecutionProfileMode mode)
+	// Return false for a second attempt, including after disc/ELF changes.
+	// A future runtime switch must own JIT unwind/reset, not use this setter.
+	inline bool SelectAtBoot(EEExecutionProfileMode mode)
 	{
+		if (s_bootSelectionLatched.exchange(true, std::memory_order_acq_rel))
+			return false;
 		s_active.store(mode, std::memory_order_release);
+		return true;
 	}
 
 	inline bool IsExtendedMMU()
@@ -68,6 +74,7 @@ namespace EEExecutionProfile
 
 	inline void ResetAtShutdown()
 	{
-		SelectAtBoot(EEExecutionProfileMode::Standard);
+		s_active.store(EEExecutionProfileMode::Standard, std::memory_order_release);
+		s_bootSelectionLatched.store(false, std::memory_order_release);
 	}
 }
