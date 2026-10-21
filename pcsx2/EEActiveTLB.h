@@ -47,18 +47,21 @@ enum class EEActiveTLBMappingAction
 // removals precede installations. The callback must not mutate either map.
 template <typename Emit>
 inline void PlanEEActiveTLBMappingChanges(
-	const EEActiveTLBPageMap& active, const EEActiveTLBPageMap& desired, Emit&& emit)
+	const EEActiveTLBPageMap& active, const EEActiveTLBPageMap& desired, Emit&& emit,
+	bool allowPermissionOnlyShortcut = true)
 {
 	for (const auto& [page, old] : active)
 	{
 		const auto now = desired.find(page);
-		if (now == desired.end() || !old.HasSameBacking(now->second))
+		if (now == desired.end() || !old.HasSameBacking(now->second) ||
+			(!allowPermissionOnlyShortcut && old.writable != now->second.writable))
 			emit(EEActiveTLBMappingAction::Remove, page, old);
 	}
 	for (const auto& [page, now] : desired)
 	{
 		const auto old = active.find(page);
-		if (old == active.end() || !old->second.HasSameBacking(now))
+		if (old == active.end() || !old->second.HasSameBacking(now) ||
+			(!allowPermissionOnlyShortcut && old->second.writable != now.writable))
 			emit(EEActiveTLBMappingAction::Install, page, now);
 		else
 			emit(old->second.writable == now.writable ? EEActiveTLBMappingAction::Unchanged :
