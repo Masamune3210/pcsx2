@@ -45,6 +45,8 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ee_active_tlb_asid_tests_20261018.cpp" />
+    <ClCompile Include="ee_rec_code_cache_tests_20261020.cpp" />
+    <ClCompile Include="..\..\..\pcsx2\x86\BaseblockEx.cpp" />
     <ClCompile Include="EEActiveTLBNativeGlobals.cpp" />
     <ClCompile Include="..\..\..\3rdparty\googletest\googletest\src\gtest-all.cc" />
     <ClCompile Include="..\..\..\3rdparty\googletest\googletest\src\gtest_main.cc" />

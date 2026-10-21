@@ -6,6 +6,10 @@ add_pcsx2_test(core_test
 	StubHost.cpp
 )
 
+if(ARCH_X86)
+	target_sources(core_test PRIVATE ee_rec_code_cache_tests_20261020.cpp)
+endif()
+
 set(multi_isa_sources
 	GS/swizzle_test_main.cpp
 )

@@ -15,6 +15,7 @@
 #include "VMManager.h"
 #include "vtlb.h"
 #include "x86/BaseblockEx.h"
+#include "x86/EERecCodeCache.h"
 #include "x86/iR5900.h"
 #include "x86/iR5900Analysis.h"
 
@@ -958,76 +959,22 @@ void R5900::Dynarec::OpcodeImpl::recBREAK()
 	g_branch = 2; // Indirect branch with event check.
 }
 
-// Size is in dwords (4 bytes)
+// Physical write-protection/manual-integrity callbacks must not translate
+// their RAM address through the guest's current KUSEG instruction mapping.
+// Size is in dwords (4 bytes).
+void recClearPhysical(u32 addr, u32 size)
+{
+	if (!recRAM || addr >= maxrecmem || size == 0)
+		return;
+	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
+		reinterpret_cast<uptr>(JITCompile), addr, size);
+}
+
+// CPU provider callback: fastmem-backpatch callers supply a guest virtual PC.
+// Translate before applying the physical cache's high-water mark.
 void recClear(u32 addr, u32 size)
 {
-	if ((addr) >= maxrecmem || !(recLUTPages[(addr) >> 12] + (addr & ~0xFFFUL)))
-		return;
-	addr = HWADDR(addr);
-
-	int blockidx = recBlocks.LastIndex(addr + size * 4 - 4);
-
-	if (blockidx == -1)
-		return;
-
-	u32 lowerextent = static_cast<u32>(-1), upperextent = 0, ceiling = static_cast<u32>(-1);
-
-	BASEBLOCKEX* pexblock = recBlocks[blockidx + 1];
-	if (pexblock)
-		ceiling = pexblock->startpc;
-
-	int toRemoveLast = blockidx;
-
-	while ((pexblock = recBlocks[blockidx]))
-	{
-		u32 blockstart = pexblock->startpc;
-		u32 blockend = pexblock->startpc + pexblock->size * 4;
-		BASEBLOCK* pblock = PC_GETBLOCK(blockstart);
-
-		if (pblock == s_pCurBlock)
-		{
-			if (toRemoveLast != blockidx)
-			{
-				recBlocks.Remove((blockidx + 1), toRemoveLast);
-			}
-			toRemoveLast = --blockidx;
-			continue;
-		}
-
-		if (blockend <= addr)
-		{
-			lowerextent = std::max(lowerextent, blockend);
-			break;
-		}
-
-		lowerextent = std::min(lowerextent, blockstart);
-		upperextent = std::max(upperextent, blockend);
-		pblock->SetFnptr((uptr)JITCompile);
-
-		blockidx--;
-	}
-
-	if (toRemoveLast != blockidx)
-	{
-		recBlocks.Remove((blockidx + 1), toRemoveLast);
-	}
-
-	upperextent = std::min(upperextent, ceiling);
-
-	for (int i = 0; (pexblock = recBlocks[i]); i++)
-	{
-		if (s_pCurBlock == PC_GETBLOCK(pexblock->startpc))
-			continue;
-		u32 blockend = pexblock->startpc + pexblock->size * 4;
-		if ((pexblock->startpc >= addr && pexblock->startpc < addr + size * 4) || (pexblock->startpc < addr && blockend > addr)) [[unlikely]]
-		{
-			Console.Error("[EE] Impossible block clearing failure");
-			pxFail("[EE] Impossible block clearing failure");
-		}
-	}
-
-	if (upperextent > lowerextent)
-		ClearRecLUT(PC_GETBLOCK(lowerextent), upperextent - lowerextent);
+	recClearPhysical(HWADDR(addr), size);
 }
 
 
@@ -2206,7 +2153,7 @@ static void PreBlockCheck(u32 blockpc)
 void dyna_block_discard(u32 start, u32 sz)
 {
 	eeRecPerfLog.Write(Color_StrongGray, "Clearing Manual Block @ 0x%08X  [size=%d]", start, sz * 4);
-	recClear(start, sz);
+	recClearPhysical(start, sz);
 }
 
 // called when a page under manual protection has been run enough times to be a candidate
@@ -2214,7 +2161,7 @@ void dyna_block_discard(u32 start, u32 sz)
 // and the block is re-assigned for write protection.
 void dyna_page_reset(u32 start, u32 sz)
 {
-	recClear(start & ~0xfffUL, 0x400);
+	recClearPhysical(start & ~0xfffUL, 0x400);
 	manual_counter[start >> 12]++;
 	mmap_MarkCountedRamPage(start);
 }
@@ -3002,8 +2949,8 @@ StartRecomp:
 
 	s_pCurBlock->SetFnptr((uptr)recPtr);
 
-	if (!(pc & 0x10000000))
-		maxrecmem = std::max((pc & ~0xa0000000), maxrecmem);
+	if (HWADDR(startpc) < Ps2MemSize::ExposedRam)
+		maxrecmem = std::max(HWADDR(startpc) + (pc - startpc), maxrecmem);
 
 	if (g_branch == 2)
 	{
