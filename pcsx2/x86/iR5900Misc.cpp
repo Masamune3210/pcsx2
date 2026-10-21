@@ -171,6 +171,7 @@ void recUnknown()
 {
 	// TODO : Unknown ops should throw an exception.
 	Console.Error("EE: Unrecognized op %x", cpuRegs.code);
+	recTraceUnknownCompile();
 }
 
 void recMMI_Unknown()
