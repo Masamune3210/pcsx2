@@ -7,6 +7,7 @@
 #include "CDVD/IsoReader.h"
 #include "Counters.h"
 #include "COP0.h"
+#include "EEExecutionProfile.h"
 #include "DEV9/DEV9.h"
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/SymbolImporter.h"
@@ -1176,6 +1177,21 @@ void VMManager::UpdateDiscDetails(bool booting)
 	UpdateGameSettingsLayer();
 	ApplySettings();
 
+	if (booting)
+	{
+		// Resolve only at VM boot, before executing guest code. Disc/ELF swaps
+		// and settings reloads must not silently change the running JIT policy.
+		// No-disc HDD boots need the explicit per-game/global Extended setting
+		// until a content-verified HDD identity is available.
+		const std::string selected = Host::GetStringSettingValue("EmuCore", "EEExecutionProfile", "Auto");
+		const EEExecutionProfilePreference preference = ParseEEExecutionProfilePreference(selected);
+		const EEExecutionProfileMode profile = ResolveEEExecutionProfile(preference, s_disc_serial);
+		EEExecutionProfile::SelectAtBoot(profile);
+		Console.WriteLn("EE execution profile: %s (setting=%s, boot disc serial=%s)",
+			profile == EEExecutionProfileMode::ExtendedMMU ? "ExtendedMMU" : "Standard",
+			selected.c_str(), s_disc_serial.c_str());
+	}
+
 	// Patches are game-dependent, thus should get applied after game settings ia loaded.
 	Patch::ReloadPatches(s_disc_serial, HasBootedELF() ? s_current_crc : 0, true, true, false, false);
 
@@ -1397,6 +1413,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 		s_game_settings_override = {};
 		ClearELFInfo();
 		ClearDiscDetails();
+		EEExecutionProfile::ResetAtShutdown();
 
 		Achievements::GameChanged(0, 0);
 		FullscreenUI::GameChanged(s_title, std::string(), s_disc_serial, 0, 0);
