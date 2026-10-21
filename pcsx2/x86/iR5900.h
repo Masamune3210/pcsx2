@@ -82,6 +82,10 @@ void recEmitControlFlowTrace(u32 sourcePC, u32 kind);
 // Completed LW/SW/LD/SD of RA/GP through SP only; uses the same trace opt-in.
 void recEmitStackMemoryTrace();
 void recTraceUnknownCompile();
+// Compile-time guard for DI at the last word of a guest 4 KiB page.
+bool recNeedsDIBoundaryContinuation();
+// Runtime interpreter executes DI's deferred next opcode without eagerly fetching it.
+void EEInterpretDINextInstructionFromJIT(u32 nextPC);
 void recResetControlFlowTrace();
 
 void iFlushCall(int flushtype);
