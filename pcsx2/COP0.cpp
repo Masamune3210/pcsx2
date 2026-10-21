@@ -1161,6 +1161,11 @@ namespace COP0 {
 // accounting is block-based. The range and read-only behavior are preserved.
 static void UpdateTLBRandom()
 {
+	// The EE interpreter already decrements Random once per guest instruction
+	// in Interpreter.cpp::COP0_AdvanceRandom(). Do not replace that more
+	// accurate register state with the JIT's cycle-derived approximation.
+	if (Cpu == &intCpu)
+		return;
 	const u32 wired = std::min(cpuRegs.CP0.n.Wired & 0x3fu, 47u);
 	const u32 available = 48u - wired;
 	cpuRegs.CP0.n.Random = 47u - static_cast<u32>(cpuRegs.cycle % available);
