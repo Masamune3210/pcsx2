@@ -3,6 +3,7 @@
 
 #include "Common.h"
 #include "R5900OpcodeTables.h"
+#include "COP0.h"
 #include "x86/iR5900.h"
 
 using namespace x86Emitter;
@@ -222,7 +223,19 @@ void recLHU()
 }
 void recLW()
 {
+	// The guest load at 0x800B1580 reads back the bitmap pointer written
+	// immediately beforehand. Capture both sides without modifying the data.
+	if (pc == 0x800B1580)
+	{
+		iFlushCall(FLUSH_FULLVTLB);
+		xFastCall((void*)PSBBNTraceJournalWordAccess, pc, 2u);
+	}
 	recLoad(32, true);
+	if (pc == 0x800B1580)
+	{
+		iFlushCall(FLUSH_FULLVTLB);
+		xFastCall((void*)PSBBNTraceJournalWordAccess, pc, 3u);
+	}
 	EE::Profiler.EmitOp(eeOpcode::LW);
 }
 void recLWU()
@@ -253,7 +266,18 @@ void recSH()
 }
 void recSW()
 {
+	// Target the observed journal slot-pointer store, not every Linux write.
+	if (pc == 0x800B1578)
+	{
+		iFlushCall(FLUSH_FULLVTLB);
+		xFastCall((void*)PSBBNTraceJournalWordAccess, pc, 0u);
+	}
 	recStore(32);
+	if (pc == 0x800B1578)
+	{
+		iFlushCall(FLUSH_FULLVTLB);
+		xFastCall((void*)PSBBNTraceJournalWordAccess, pc, 1u);
+	}
 	EE::Profiler.EmitOp(eeOpcode::SW);
 }
 void recSD()
