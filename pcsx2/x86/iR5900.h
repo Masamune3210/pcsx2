@@ -79,6 +79,8 @@ void SetBranchImm(u32 imm);
 // Host-only, bounded COP0-trace witnesses. kind: 0=JR/JALR, 1=ERET,
 // 2=interpreter boundary result. Emission requires the existing trace opt-in.
 void recEmitControlFlowTrace(u32 sourcePC, u32 kind);
+// Completed LW/SW/LD/SD of RA/GP through SP only; uses the same trace opt-in.
+void recEmitStackMemoryTrace();
 void recTraceUnknownCompile();
 void recResetControlFlowTrace();
 

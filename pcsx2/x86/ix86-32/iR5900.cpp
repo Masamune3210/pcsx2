@@ -162,15 +162,24 @@ namespace
 {
 struct ControlFlowRecord
 {
-	u64 sequence = 0, cycle = 0;
+	u64 sequence = 0, cycle = 0, order = 0;
 	u32 kind = 0, source = 0, target = 0, compiledPhysical = 0, currentPhysical = 0;
 	u32 targetPhysical = 0, targetJITReadable = 0, entryHi = 0, status = 0;
 	u32 ra = 0, sp = 0, gp = 0, t9 = 0;
 };
+struct StackMemoryRecord
+{
+	u64 order = 0, cycle = 0, value = 0, vmapValue = 0, fastmemValue = 0;
+	u32 source = 0, opcode = 0, currentOpcode = 0, sourceReadable = 0, address = 0;
+	u32 sp = 0, gp = 0, entryHi = 0, status = 0;
+	u32 vmapRAM = 0, vmapPhysical = 0xffffffffu, fastmemRAM = 0, fastmemPhysical = 0xffffffffu;
+	u32 tlbMatches = 0, tlbSlot = 0xffffffffu, mask = 0, hi = 0, lo0 = 0, lo1 = 0;
+};
 struct ControlFlowTrace
 {
 	std::array<ControlFlowRecord, 64> records{};
-	u64 sequence = 0, epoch = 0;
+	std::array<StackMemoryRecord, 64> memory{};
+	u64 sequence = 0, memorySequence = 0, order = 0, epoch = 0;
 	u32 groups = 0;
 };
 ControlFlowTrace s_controlFlowTrace;
@@ -187,11 +196,74 @@ void RecordControlFlow(u32 sourceAndKind, u32 compiledPhysical)
 	auto& trace = s_controlFlowTrace;
 	const u64 sequence = ++trace.sequence;
 	auto& entry = trace.records[(sequence - 1) % trace.records.size()];
-	entry = {sequence, cpuRegs.cycle, kind, sourceAndKind & ~3u, cpuRegs.pc,
+	entry = {sequence, cpuRegs.cycle, ++trace.order, kind, sourceAndKind & ~3u, cpuRegs.pc,
 		compiledPhysical, HWADDR(sourceAndKind & ~3u), HWADDR(cpuRegs.pc),
 		recGetInstructionPtr(cpuRegs.pc) ? 1u : 0u, cpuRegs.CP0.n.EntryHi,
 		cpuRegs.CP0.n.Status.val, cpuRegs.GPR.n.ra.UL[0], cpuRegs.GPR.n.sp.UL[0],
 		cpuRegs.GPR.r[28].UL[0], cpuRegs.GPR.r[25].UL[0]};
+}
+
+// Shadow reads only from canonical main RAM. A mapping-table observation does
+// not prove the corresponding host fastmem alias was installed successfully.
+bool ReadStackRAM(uptr pointer, u32 bytes, u64& value, u32& physical)
+{
+	const uptr base = reinterpret_cast<uptr>(eeMem->Main);
+	if (pointer < base || pointer - base > Ps2MemSize::MainRam - bytes)
+		return false;
+	physical = static_cast<u32>(pointer - base);
+	std::memcpy(&value, reinterpret_cast<const void*>(pointer), bytes);
+	return true;
+}
+
+void RecordStackMemory(u32 sourcePC, u32 opcode)
+{
+	if (!PSBBNTlbTraceEnabled() || !g_recUseGuestTLBDispatch ||
+		(cpuRegs.CP0.n.Status.val & 0x1eu) != 0x10u)
+		return;
+	auto& trace = s_controlFlowTrace;
+	auto& e = trace.memory[trace.memorySequence++ % trace.memory.size()];
+	e = {};
+	e.order = ++trace.order;
+	e.cycle = cpuRegs.cycle;
+	e.source = sourcePC;
+	e.opcode = opcode;
+	const u32* code = recGetInstructionPtr(sourcePC);
+	e.sourceReadable = code ? 1u : 0u;
+	e.currentOpcode = code ? *code : 0u;
+	e.sp = cpuRegs.GPR.n.sp.UL[0];
+	e.gp = cpuRegs.GPR.r[28].UL[0];
+	e.address = e.sp + static_cast<s32>(static_cast<s16>(opcode & 0xffffu));
+	e.value = cpuRegs.GPR.r[(opcode >> 16) & 31u].UD[0];
+	e.entryHi = cpuRegs.CP0.n.EntryHi;
+	e.status = cpuRegs.CP0.n.Status.val;
+	const u32 op = opcode >> 26;
+	const u32 bytes = (op == 0x37 || op == 0x3f) ? 8u : 4u;
+	// Skip unaligned/cross-page shadow reads rather than touching another
+	// mapping or invoking a handler. SP itself is unchanged by these opcodes.
+	if ((e.address & (bytes - 1)) == 0 && vtlb_private::vtlbdata.vmap)
+	{
+		const auto& vmap = vtlb_private::vtlbdata.vmap[e.address >> 12];
+		if (!vmap.isHandler(e.address))
+			e.vmapRAM = ReadStackRAM(vmap.assumePtr(e.address), bytes, e.vmapValue, e.vmapPhysical) ? 1u : 0u;
+		uptr fastPointer = vtlb_private::vtlbdata.fastmem_base + static_cast<uptr>(e.address);
+		if (CHECK_FASTMEM && vtlb_private::vtlbdata.fastmem_base && vtlb_ResolveFastmemMapping(&fastPointer))
+			e.fastmemRAM = ReadStackRAM(fastPointer, bytes, e.fastmemValue, e.fastmemPhysical) ? 1u : 0u;
+	}
+	for (u32 i = 0; i < std::size(tlb); i++)
+	{
+		const auto& t = tlb[i];
+		if ((e.address & ~((t.Mask() << 13) | 0x1fffu)) != t.VPN2() ||
+			(!t.isGlobal() && t.EntryHi.ASID != (e.entryHi & 0xffu)))
+			continue;
+		if (e.tlbMatches++ == 0)
+		{
+			e.tlbSlot = i;
+			e.mask = t.PageMask.UL;
+			e.hi = t.EntryHi.UL;
+			e.lo0 = t.EntryLo0.UL;
+			e.lo1 = t.EntryLo1.UL;
+		}
+	}
 }
 } // namespace
 
@@ -210,6 +282,21 @@ void recEmitControlFlowTrace(u32 sourcePC, u32 kind)
 		// instruction addresses are aligned; their low bits carry the kind.
 		xFastCall((const void*)RecordControlFlow, sourcePC | kind, HWADDR(sourcePC));
 	}
+}
+
+void recEmitStackMemoryTrace()
+{
+	const u32 opcode = cpuRegs.code;
+	const u32 op = opcode >> 26;
+	const u32 rt = (opcode >> 16) & 31u;
+	if (!PSBBNTlbTraceEnabled() || ((opcode >> 21) & 31u) != 29u ||
+		(rt != 31u && rt != 28u) || (op != 0x23 && op != 0x2b && op != 0x37 && op != 0x3f))
+		return;
+	const u32 instructionPC = g_recompilingDelaySlot ? pc : pc - 4;
+	// Observe only after the real operation. The flush can change allocation
+	// and timing when tracing is enabled; no observer code is emitted otherwise.
+	iFlushCall(FLUSH_EVERYTHING);
+	xFastCall((const void*)RecordStackMemory, instructionPC, opcode);
 }
 
 void recTraceUnknownCompile()
@@ -264,10 +351,23 @@ void recTraceUnknownCompile()
 	for (u64 sequence = trace.sequence - count + 1; sequence <= trace.sequence; sequence++)
 	{
 		const auto& e = trace.records[(sequence - 1) % trace.records.size()];
-		Console.WriteLn("EE-JIT-FLOW seq=%llu cycleBeforeCharge=%llu kind=%u compiledSource=%08x target=%08x compiledPhysical=%08x currentSourcePhysical=%08x targetPhysical=%08x targetJITReadable=%u EntryHi=%08x Status=%08x ra=%08x sp=%08x gp=%08x t9=%08x",
+		Console.WriteLn("EE-JIT-FLOW seq=%llu cycleBeforeCharge=%llu kind=%u compiledSource=%08x target=%08x compiledPhysical=%08x currentSourcePhysical=%08x targetPhysical=%08x targetJITReadable=%u EntryHi=%08x Status=%08x ra=%08x sp=%08x gp=%08x t9=%08x order=%llu",
 			static_cast<unsigned long long>(e.sequence), static_cast<unsigned long long>(e.cycle),
 			e.kind, e.source, e.target, e.compiledPhysical, e.currentPhysical, e.targetPhysical,
-			e.targetJITReadable, e.entryHi, e.status, e.ra, e.sp, e.gp, e.t9);
+			e.targetJITReadable, e.entryHi, e.status, e.ra, e.sp, e.gp, e.t9,
+			static_cast<unsigned long long>(e.order));
+	}
+	const u64 memoryCount = std::min<u64>(trace.memorySequence, 32);
+	for (u64 sequence = trace.memorySequence - memoryCount; sequence < trace.memorySequence; sequence++)
+	{
+		const auto& e = trace.memory[sequence % trace.memory.size()];
+		Console.WriteLn("EE-JIT-STACK order=%llu cycleBeforeCharge=%llu source=%08x opcode=%08x sourceReadable=%u currentOpcode=%08x ea=%08x value64=%016llx sp=%08x gp=%08x EntryHi=%08x Status=%08x vmapRAM=%u vmapPhysical=%08x vmapValue=%016llx fastmemTableRAM=%u fastmemPhysical=%08x fastmemValue=%016llx tlbMatches=%u firstSlot=%u Mask=%08x Hi=%08x Lo0=%08x Lo1=%08x",
+			static_cast<unsigned long long>(e.order), static_cast<unsigned long long>(e.cycle),
+			e.source, e.opcode, e.sourceReadable, e.currentOpcode, e.address,
+			static_cast<unsigned long long>(e.value), e.sp, e.gp, e.entryHi, e.status,
+			e.vmapRAM, e.vmapPhysical, static_cast<unsigned long long>(e.vmapValue),
+			e.fastmemRAM, e.fastmemPhysical, static_cast<unsigned long long>(e.fastmemValue),
+			e.tlbMatches, e.tlbSlot, e.mask, e.hi, e.lo0, e.lo1);
 	}
 }
 
@@ -996,6 +1096,20 @@ void recHandlePreciseTlbMiss(u32 addr, u32 mode)
 	else
 		cpuTlbMissR(addr, branch_delay);
 	recExitExecution();
+}
+
+// Called before any fine-mode store side effect, after the existing precise
+// memory-fault flush/PC/BD setup. Native blocks emit no permission helper.
+static void recCheckTLBStore(u32 opcode)
+{
+	const u32 base = cpuRegs.GPR.r[(opcode >> 21) & 31u].UL[0];
+	const u32 address = EEActiveTLBStoreAddress(base, opcode);
+	if (!EETLBStoreNeedsModification(address))
+		return;
+	const u32 branchDelay = cpuRegs.IsDelaySlot;
+	g_recPreciseMemoryFaultArmed = 0;
+	cpuTlbModification(address, branchDelay);
+	recExitExecution(); // never resume the denied host store or its RMW read
 }
 
 static void recSafeExitExecution()
@@ -2109,6 +2223,10 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 				xMOV(ptr32[&cpuRegs.pc], pc + 4);
 			xMOV(ptr32[&cpuRegs.IsDelaySlot], g_recompilingDelaySlot ? 1u : 0u);
 			xMOV(ptr32[&g_recPreciseMemoryFaultArmed], 1u);
+			// Both fastmem and constant-pointer stores bypass vtlb_memWrite.
+			// Check D before opcode emission, including merged/RMW stores.
+			if (g_recUseGuestTLBDispatch && (opcode.flags & IS_STORE))
+				xFastCall((const void*)recCheckTLBStore, cpuRegs.code);
 		}
 
 		opcode.recompile();
