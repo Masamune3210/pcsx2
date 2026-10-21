@@ -17,6 +17,7 @@ namespace
 struct PSBBNTraceState
 {
 	u64 ihin_seen = 0;
+	u32 journal_word_emitted = 0;
 	bool armed = false;
 	bool target_window = false;
 	bool zero_window = false;
@@ -113,10 +114,9 @@ void PSBBNTraceJournalWordAccess(u32 guestPc, u32 phase)
 	if (!((guestPc == 0x800B1578 && phase <= 1) ||
 		(guestPc == 0x800B1580 && phase >= 2 && phase <= 3)))
 		return;
-	static u32 emitted = 0;
-	if (emitted >= 32)
+	if (s_psbbn_trace.journal_word_emitted >= 32)
 		return;
-	++emitted;
+	const u32 emitted = ++s_psbbn_trace.journal_word_emitted;
 
 	const u32 v0 = cpuRegs.GPR.r[2].UL[0];
 	const u32 v1 = cpuRegs.GPR.r[3].UL[0];
@@ -131,17 +131,25 @@ void PSBBNTraceJournalWordAccess(u32 guestPc, u32 phase)
 	const bool writable = archMapped && entry->second.writable;
 	bool directlyMapped = false;
 	u32 virtualWord = 0xffffffffu;
+	u32 vmapHandler = 0xffffffffu;
 	if (vtlb_private::vtlbdata.vmap)
-		virtualWord = vtlb_ramRead<mem32_t>(address, &directlyMapped);
+	{
+		const auto& mapping = vtlb_private::vtlbdata.vmap[address >> vtlb_private::VTLB_PAGE_BITS];
+		if (mapping.isHandler(address))
+			vmapHandler = mapping.assumeHandlerGetID();
+		else
+			virtualWord = vtlb_ramRead<mem32_t>(address, &directlyMapped);
+	}
 
-	bool physicalReadable = eeMem && physical <= Ps2MemSize::MainRam - sizeof(u32);
+	const bool physicalReadable = eeMem && archMapped && !entry->second.scratchpad &&
+		physical <= Ps2MemSize::MainRam - sizeof(u32);
 	u32 physicalWord = 0xffffffffu;
 	if (physicalReadable)
 		std::memcpy(&physicalWord, eeMem->Main + physical, sizeof(physicalWord));
 
-	Console.WriteLn("PSBBN-JOURNAL-WORD n=%u phase=%u guestPC=%08x ea=%08x v0=%08x v1=%08x vmapDirect=%u vmapValue=%08x archMapped=%u archPhysical=%08x archWritable=%u physicalReadable=%u physValue=%08x ASID=%02x Status=%08x Cause=%08x EPC=%08x EntryHi=%08x",
+	Console.WriteLn("PSBBN-JOURNAL-WORD n=%u phase=%u guestPC=%08x ea=%08x v0=%08x v1=%08x vmapDirect=%u vmapHandler=%08x vmapValue=%08x archMapped=%u archPhysical=%08x archWritable=%u physicalReadable=%u physValue=%08x ASID=%02x Status=%08x Cause=%08x EPC=%08x EntryHi=%08x",
 		emitted, phase, guestPc, address, v0, v1, directlyMapped ? 1u : 0u,
-		virtualWord, archMapped ? 1u : 0u, physical, writable ? 1u : 0u,
+		vmapHandler, virtualWord, archMapped ? 1u : 0u, physical, writable ? 1u : 0u,
 		physicalReadable ? 1u : 0u, physicalWord, asid, cp0.Status.val,
 		cp0.Cause, cp0.EPC, cp0.EntryHi);
 }
