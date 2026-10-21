@@ -474,7 +474,7 @@ static const void* _DynGen_JITCompile()
 	xMOV(edx, eax);
 	// Unmodified 64 KiB recLUT remains the native PS2 hot path.
 	xCMP(ptr32[&g_recUseGuestTLBDispatch], 0);
-	xForwardJNE32 useGuestTLBPages;
+	xForwardJNZ32 useGuestTLBPages;
 	xSHR(eax, 16);
 	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUT, rax * wordsize)]);
 	xJMP(ptrNative[rdx * (wordsize / 4) + rcx]);
@@ -500,7 +500,7 @@ static const void* _DynGen_DispatcherReg()
 	xMOV(edx, eax);
 	// Unmodified 64 KiB recLUT remains the native PS2 hot path.
 	xCMP(ptr32[&g_recUseGuestTLBDispatch], 0);
-	xForwardJNE32 useGuestTLBPages;
+	xForwardJNZ32 useGuestTLBPages;
 	xSHR(eax, 16);
 	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUT, rax * wordsize)]);
 	xJMP(ptrNative[rdx * (wordsize / 4) + rcx]);
