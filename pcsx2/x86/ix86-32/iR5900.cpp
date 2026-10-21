@@ -63,6 +63,10 @@ alignas(16) GPR_reg64 g_cpuConstRegs[32] = {};
 u32 g_cpuHasConstReg = 0, g_cpuFlushedConstReg = 0;
 bool g_cpuFlushedPC, g_cpuFlushedCode, g_recompilingDelaySlot, g_maySignalException;
 
+// Set by generated guest load/store prologues. Only a synchronized JIT
+// memory instruction may take a precise exception from the slow vTLB handler.
+u32 g_recPreciseMemoryFaultArmed = 0;
+
 eeProfiler EE::Profiler;
 
 ////////////////////////////////////////////////////////////////
@@ -707,6 +711,21 @@ static void recExitExecution()
 	fastjmp_jmp(&m_SetJmp_StateCheck, 1);
 }
 
+// Called only when a translated guest memory instruction has synchronized all
+// guest registers, the faulting PC, and the branch-delay state to cpuRegs.
+// Do not return to the host memory helper: the failed guest instruction must
+// be retried by the guest TLB refill handler, not completed with zero data.
+void recHandlePreciseTlbMiss(u32 addr, u32 mode)
+{
+	const u32 branch_delay = cpuRegs.IsDelaySlot;
+	g_recPreciseMemoryFaultArmed = 0;
+	if (mode)
+		cpuTlbMissW(addr, branch_delay);
+	else
+		cpuTlbMissR(addr, branch_delay);
+	recExitExecution();
+}
+
 static void recSafeExitExecution()
 {
 	// If we're currently processing events, we can't safely jump out of the recompiler here, because we'll
@@ -751,6 +770,7 @@ static void recCancelInstruction()
 
 static void recExecute()
 {
+	g_recPreciseMemoryFaultArmed = 0;
 	// Reset before we try to execute any code, if there's one pending.
 	// We need to do this here, because if we reset while we're executing, it sets the "needs reset"
 	// flag, which triggers a JIT exit (the fastjmp_set below), and eventually loops back here.
@@ -1845,7 +1865,31 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 	{
 		//If the COP0 DIE bit is disabled, cycles should be doubled.
 		s_nBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
+
+		// Precise EE JIT TLB faults require architecturally live guest state.
+		// Historically the slow vTLB miss handler simply returned zero/discarded
+		// writes, because the translated instruction had not committed its GPRs
+		// or exact PC. Synchronize all memory-class instructions before they can
+		// call a virtual handler (including fastmem backpatches).
+		// This is a correctness-first path; optimize the common mapped case later.
+		const u32 primary_opcode = static_cast<u32>(cpuRegs.code) >> 26;
+		const bool may_fault_memory = (primary_opcode >= 0x20u) ||
+			primary_opcode == 0x1au || primary_opcode == 0x1bu ||
+			primary_opcode == 0x1eu || primary_opcode == 0x1fu;
+		if (may_fault_memory)
+		{
+			iFlushCall(FLUSH_INTERPRETER);
+			// cpuTlbMiss() subtracts four before establishing EPC/BD. In an
+			// emitted delay slot, pc still points *at* the instruction.
+			if (g_recompilingDelaySlot)
+				xMOV(ptr32[&cpuRegs.pc], pc + 4);
+			xMOV(ptr32[&cpuRegs.IsDelaySlot], g_recompilingDelaySlot ? 1u : 0u);
+			xMOV(ptr32[&g_recPreciseMemoryFaultArmed], 1u);
+		}
+
 		opcode.recompile();
+		if (may_fault_memory)
+			xMOV(ptr32[&g_recPreciseMemoryFaultArmed], 0u);
 	}
 
 	if (!swapped_delay_slot)
