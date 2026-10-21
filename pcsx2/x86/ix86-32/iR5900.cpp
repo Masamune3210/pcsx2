@@ -28,6 +28,7 @@
 #include "common/HeapArray.h"
 #include "common/Perf.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -1199,8 +1200,8 @@ alignas(16) static u8 manual_counter[Ps2MemSize::TotalRam >> 12];
 ////////////////////////////////////////////////////
 static void recResetRaw()
 {
-	// The flag and cap are read at the JIT reset boundary, not for every
-	// host memory write or TLB projection. The event cap persists across all
+	// The flag and cap are latched on the first JIT reset, not re-read
+	// for every host memory write, TLB projection, or later arena reset. The event cap persists across all
 	// internal arena resets in the same VM session.
 	if (!s_recEvictionTraceConfigured)
 	{
