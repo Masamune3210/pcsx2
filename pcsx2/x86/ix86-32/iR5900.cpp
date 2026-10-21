@@ -204,6 +204,75 @@ static __fi const u32* recGetInstructionPtr(u32 virtualPC)
 
 static BaseBlocks recBlocks;
 
+// Deliberately expensive, opt-in block-by-block source evidence.
+// The limit is PER VM SESSION, not per arena: otherwise a reset loop would
+// produce unbounded multi-million-line logs even with a nominal cap.
+static bool s_recEvictionTraceEnabled = false;
+static u32 s_recEvictionTraceLimit = 20000;
+static u64 s_recEvictionTraceSeen = 0;
+static u64 s_recEvictionTracePrinted = 0;
+static u32 s_recEvictionTraceGeneration = 0;
+
+struct EERecEvictionTraceContext
+{
+	const char* cause;
+	u32 physicalAddress;
+	u32 dwords;
+	u32 triggeringVirtualPage = 0xffffffffu;
+};
+
+static void recTraceRemovedBlock(const BASEBLOCKEX& block, void* rawContext)
+{
+	const auto& context = *static_cast<const EERecEvictionTraceContext*>(rawContext);
+	++s_recEvictionTraceSeen;
+	if (s_recEvictionTraceLimit != 0 && s_recEvictionTracePrinted >= s_recEvictionTraceLimit)
+	{
+		if (s_recEvictionTraceSeen == static_cast<u64>(s_recEvictionTraceLimit) + 1u)
+			Console.WriteLn("EE-JIT-EVICT-LIMIT maxEvents=%u; subsequent events are counted, not printed",
+				s_recEvictionTraceLimit);
+		return;
+	}
+	++s_recEvictionTracePrinted;
+
+	const u64 blockEnd = static_cast<u64>(block.startpc) + static_cast<u64>(block.size) * 4u;
+	const u64 requestEnd = static_cast<u64>(context.physicalAddress) + static_cast<u64>(context.dwords) * 4u;
+	const bool overlapsRequest = context.dwords != 0 && block.size != 0 &&
+		static_cast<u64>(block.startpc) < requestEnd && blockEnd > context.physicalAddress;
+	// cpuPC and EntryHi are a diagnostic snapshot at invalidation time. They
+	// are NOT proof of the original guest writer or the block's compiling ASID.
+	Console.WriteLn("EE-JIT-EVICT gen=%u cause=%s blockPA=%08x blockEnd=%08llx guestWords=%u hostPtr=%p hostBytes=%u requestPA=%08x requestEnd=%08llx aliasVA=%08x overlap=%u cpuPC=%08x entryHi=%08x asid=%02x cycle=%llu mode=%u resetReasons=%08x",
+		s_recEvictionTraceGeneration, context.cause, block.startpc,
+		static_cast<unsigned long long>(blockEnd), block.size,
+		reinterpret_cast<void*>(block.fnptr), block.x86size,
+		context.physicalAddress, static_cast<unsigned long long>(requestEnd),
+		context.triggeringVirtualPage, overlapsRequest ? 1u : 0u, cpuRegs.pc,
+		static_cast<u32>(cpuRegs.CP0.n.EntryHi),
+		static_cast<u32>(cpuRegs.CP0.n.EntryHi) & 0xffu,
+		static_cast<unsigned long long>(cpuRegs.cycle),
+		g_recUseGuestTLBDispatch, s_recResetReasons);
+}
+
+static void recTraceRemainingBlocks(const char* reason)
+{
+	if (!s_recEvictionTraceEnabled)
+		return;
+	// This is the other actual retirement path: a complete arena reset clears
+	// live metadata without going through BaseBlocks::Remove.
+	const EERecEvictionTraceContext context{reason, 0u, 0u};
+	const u32 liveCount = static_cast<u32>(recBlocks.GetLiveMetrics().blocks);
+	for (u32 i = 0; i < liveCount; ++i)
+	{
+		if (const BASEBLOCKEX* block = recBlocks[static_cast<int>(i)])
+			recTraceRemovedBlock(*block, const_cast<EERecEvictionTraceContext*>(&context));
+	}
+	Console.WriteLn("EE-JIT-EVICT-SUMMARY reason=%s gen=%u seen=%llu printed=%llu suppressed=%llu liveRetired=%u limit=%u",
+		reason, s_recEvictionTraceGeneration,
+		static_cast<unsigned long long>(s_recEvictionTraceSeen),
+		static_cast<unsigned long long>(s_recEvictionTracePrinted),
+		static_cast<unsigned long long>(s_recEvictionTraceSeen - s_recEvictionTracePrinted),
+		liveCount, s_recEvictionTraceLimit);
+}
+
 static void recReportCoherence(const char* reason)
 {
 	const auto live = recBlocks.GetLiveMetrics();
