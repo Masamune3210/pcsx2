@@ -44,3 +44,14 @@ TEST(EERecCoherencePolicy, TakenRegisterJumpToSlotDoesNotRunSlotTwice)
 	EXPECT_FALSE(EERecNeedsFallthroughDelaySlot(0x10ffcu, 0x11000u, true));
 	EXPECT_FALSE(EERecNeedsFallthroughDelaySlot(0x10ffcu, 0x11004u, false));
 }
+
+TEST(EERecCoherencePolicy, DelayedDIFetchCrossingGuestPageUsesRuntimeInterpreter)
+{
+	// `pc` has already advanced past the DI opcode during recompilation.
+	EXPECT_TRUE(EERecNeedsRuntimeDINextInstruction(true, 0x01001000u, false));
+	EXPECT_TRUE(EERecNeedsRuntimeDINextInstruction(true, 0x01002000u, false));
+	EXPECT_FALSE(EERecNeedsRuntimeDINextInstruction(true, 0x01000ffcu, false));
+	EXPECT_FALSE(EERecNeedsRuntimeDINextInstruction(false, 0x01001000u, false));
+	// Branch code owns its delay slot, so no nested interpreter bridge.
+	EXPECT_FALSE(EERecNeedsRuntimeDINextInstruction(true, 0x01001000u, true));
+}
