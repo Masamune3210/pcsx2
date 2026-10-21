@@ -32,6 +32,14 @@ constexpr EEExecutionProfilePreference ParseEEExecutionProfilePreference(std::st
 		EEExecutionProfilePreference::Auto;
 }
 
+// A negative code-page presence filter is an optimization, never the source
+// of coherence truth. Standard must always invoke the real invalidator;
+// Extended may skip only when absence of compiled code is established.
+constexpr bool EECanSkipPhysicalCodeClear(EEExecutionProfileMode profile, bool mayContainCompiledCode)
+{
+	return profile == EEExecutionProfileMode::ExtendedMMU && !mayContainCompiledCode;
+}
+
 // Disc serial is evidence of the boot DISC, not proof about arbitrary HDD
 // contents. The known BB Navigator serial can enable the profile for an ISO
 // boot; a direct no-disc HDD boot must use the explicit Extended override
