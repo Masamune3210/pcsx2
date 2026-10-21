@@ -3213,6 +3213,16 @@ StartRecomp:
 
 	pxAssert((pc - startpc) >> 2 <= 0xffff);
 	s_pCurBlockEx->size = (pc - startpc) >> 2;
+	// A compiled span can cross 4 KiB virtual pages backed by different PFNs.
+	// Record every source page, not just the physical start address.
+	for (u32 virtualPC = startpc; virtualPC < pc;)
+	{
+		s_recCompiledPhysicalPages.Mark(HWADDR(virtualPC));
+		const u32 nextPage = (virtualPC & ~0xfffu) + 0x1000u;
+		if (nextPage <= virtualPC)
+			break;
+		virtualPC = nextPage;
+	}
 
 	if (HWADDR(pc) <= Ps2MemSize::ExposedRam)
 	{
