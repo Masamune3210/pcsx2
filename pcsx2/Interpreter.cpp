@@ -38,6 +38,11 @@ static bool intExitExecution = false;
 static fastjmp_buf intJmpBuf;
 static u32 intLastBranchTo;
 
+// When a JIT branch's delay slot crosses into a currently unmapped guest
+// page, execute that single branch through the existing interpreter. A TLB
+// exception must escape the step instead of restarting at the handler PC.
+static bool s_jitBoundaryBranchStep = false;
+
 void intEventTest();
 
 void intUpdateCPUCycles()
@@ -637,8 +642,30 @@ static void intSafeExitExecution()
 
 static void intCancelInstruction()
 {
-	// See execute function.
-	fastjmp_jmp(&intJmpBuf, 0);
+	// Normal interpreter execution retries its loop after a canceled opcode.
+	// The JIT one-branch fallback must return to the recompiler dispatcher
+	// instead; repeating execI() here would execute the guest exception vector.
+	fastjmp_jmp(&intJmpBuf, s_jitBoundaryBranchStep ? 2 : 0);
+}
+
+// This is deliberately outside the interpreter hot path. It runs only if
+// the EE JIT cannot safely compile a cross-page branch delay slot. Executing
+// the branch and delay slot together preserves branch-likely annulment, link
+// register effects, and BD/EPC handling on an instruction-fetch TLB miss.
+void EEInterpretCrossPageBranchFromJIT(u32 branchPC)
+{
+	R5900cpu* const savedCPU = Cpu;
+	Cpu = &intCpu;
+	s_jitBoundaryBranchStep = true;
+	cpuBlockCycles = 0;
+	cpuRegs.pc = branchPC;
+	if (fastjmp_set(&intJmpBuf) == 0)
+		execI();
+	// intCancelInstruction() returns 2 for a guest TLB fault, while normal
+	// branch completion returns directly. Both must restore the JIT context.
+	s_jitBoundaryBranchStep = false;
+	cpuBlockCycles = 0;
+	Cpu = savedCPU;
 }
 
 static void intExecute()
