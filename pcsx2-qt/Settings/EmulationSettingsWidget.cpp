@@ -38,6 +38,19 @@ EmulationSettingsWidget::EmulationSettingsWidget(SettingsWindow* settings_dialog
 		   "Extended enables experimental MMU/TLB cache optimizations. "
 		   "<b>The selection is latched at PS2 startup. Fully shut down and boot the PS2 again to apply a change.</b>"));
 
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeJitEvictionTrace, "EmuCore", "EEJitEvictionTrace", false);
+	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.eeJitEvictionTraceLimit, "EmuCore", "EEJitEvictionTraceLimit", 20000);
+	dialog()->registerWidgetHelp(m_ui.eeJitEvictionTrace, tr("Log Each EE JIT Block Eviction"), tr("Unchecked"),
+		tr("Writes a diagnostic entry for each recompiler block actually removed by a physical invalidation "
+		   "and each live block retired by a whole-cache reset, including the caller cause, physical ranges, "
+		   "guest virtual alias and current CPU snapshot. Extremely slow when Linux changes address spaces frequently. "
+		   "Use Maximum Eviction Log Entries to cap log size; zero means unlimited. "
+		   "<b>Fully shut down and boot the emulated PS2 to begin a new trace session.</b>"));
+	dialog()->registerWidgetHelp(m_ui.eeJitEvictionTraceLimit, tr("Maximum Eviction Log Entries"), tr("20000"),
+		tr("Maximum number of detailed EE-JIT-EVICT records written during the complete VM session, "
+		   "including across JIT arena resets. A limit of zero disables the cap and may produce huge logs. "
+		   "Events beyond the limit are still counted and summarized."));
+
 	initializeSpeedCombo(m_ui.normalSpeed, "Framerate", "NominalScalar", 1.0f);
 	initializeSpeedCombo(m_ui.fastForwardSpeed, "Framerate", "TurboScalar", 2.0f);
 	initializeSpeedCombo(m_ui.slowMotionSpeed, "Framerate", "SlomoScalar", 0.5f);
