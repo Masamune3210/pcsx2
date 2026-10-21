@@ -55,3 +55,14 @@ TEST(EERecCoherencePolicy, DelayedDIFetchCrossingGuestPageUsesRuntimeInterpreter
 	// Branch code owns its delay slot, so no nested interpreter bridge.
 	EXPECT_FALSE(EERecNeedsRuntimeDINextInstruction(true, 0x01001000u, true));
 }
+
+TEST(EERecCoherencePolicy, GuestTLBManagedConstantDataAddressesNeedDependenciesBeforeReuse)
+{
+	EXPECT_TRUE(EERecConstantAddressUsesGuestTLB(0x00000000u));
+	EXPECT_TRUE(EERecConstantAddressUsesGuestTLB(0x7fffffffu));
+	EXPECT_TRUE(EERecConstantAddressUsesGuestTLB(0xc0000000u));
+	EXPECT_TRUE(EERecConstantAddressUsesGuestTLB(0xffffffffu));
+	EXPECT_FALSE(EERecConstantAddressUsesGuestTLB(0x80000000u));
+	EXPECT_FALSE(EERecConstantAddressUsesGuestTLB(0xa0000000u));
+	EXPECT_FALSE(EERecConstantAddressUsesGuestTLB(0xbfffffffu));
+}
