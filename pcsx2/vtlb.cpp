@@ -47,6 +47,7 @@ using namespace vtlb_private;
 // guest register file and the precise memory-instruction PC to cpuRegs.
 extern u32 g_recPreciseMemoryFaultArmed;
 void recHandlePreciseTlbMiss(u32 addr, u32 mode);
+void recClearPhysical(u32 addr, u32 size);
 #endif
 
 #define verify pxAssert
@@ -1541,7 +1542,11 @@ static __fi void mmap_ClearCpuBlock(uint offset)
 	HostSys::MemProtect(&eeMem->Main[rampage << __pageshift], __pagesize, PageAccess_ReadWrite());
 	vtlb_UpdateFastmemProtection(rampage << __pageshift, __pagesize, PageAccess_ReadWrite());
 	m_PageProtectInfo[rampage].Mode = ProtMode_Manual;
-	Cpu->Clear(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize);
+#if defined(_M_X64) || defined(__x86_64__)
+	// ReverseRamMap is physical, unlike the guest PC supplied by fastmem
+	// backpatching. Clear takes words, while host page size is in bytes.
+	recClearPhysical(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize / 4);
+#endif
 }
 
 PageFaultHandler::HandlerResult PageFaultHandler::HandlePageFault(void* exception_pc, void* fault_address, bool is_write)
