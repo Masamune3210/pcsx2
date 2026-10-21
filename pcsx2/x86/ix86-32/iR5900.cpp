@@ -82,6 +82,9 @@ static BaseBlocks::Metrics s_recLinkMetrics;
 static EEJitSourceHistory<> s_recSourceHistory;
 static u64 s_recCompileNanoseconds = 0, s_recRepeatSources = 0;
 static u64 s_recThunkBytes = 0, s_recBackpatches = 0, s_recBackpatchBytes = 0;
+// 0..3: other modes/fixed data; 4..7: fine-mode guest-TLB-managed data;
+// each group indexes (store ? 2 : 0) | (direct ? 1 : 0).
+static std::array<u64, 8> s_recConstantDataLookups{};
 // Bitmask: startup=1, provider=2, arena=4, dispatch mode=8, thunk=16, gamefix=32.
 static u32 s_recResetReasons = 1;
 
@@ -103,6 +106,14 @@ static u32 g_recUseGuestTLBDispatch = 0;
 // Compiler state: a helper in this block can replace even its own code mapping.
 // Its outgoing links must resolve through current virtual dispatch afterward.
 static bool s_recBlockChangesTranslation = false;
+
+void recRecordConstantDataLookup(u32 guestAddress, bool store, bool direct)
+{
+	if (!PSBBNTlbTraceEnabled())
+		return;
+	const bool managed = g_recUseGuestTLBDispatch && EERecConstantAddressUsesGuestTLB(guestAddress);
+	++s_recConstantDataLookups[(managed ? 4u : 0u) | (store ? 2u : 0u) | (direct ? 1u : 0u)];
+}
 
 // The original 64 KiB LUT cannot represent MIPS 4 KiB guest TLB mappings.
 #define PC_GETBLOCK(x) ((BASEBLOCK*)(((g_recUseGuestTLBDispatch ? recLUTPages[static_cast<u32>(x) >> 12] : recLUT[static_cast<u32>(x) >> 16])) + (static_cast<uptr>(static_cast<u32>(x)) * (sizeof(BASEBLOCK) / 4))))
@@ -204,6 +215,16 @@ static void recReportCoherence(const char* reason)
 		static_cast<unsigned long long>(s_recLinkMetrics.linkPatchAttempts),
 		static_cast<unsigned long long>(s_recLinkMetrics.linkPatchWrites),
 		static_cast<unsigned long long>(s_recLinkMetrics.linkPatchSkips));
+	Console.WriteLn("EE-JIT-CONSTDATA reason=%s otherReadHandler=%llu otherReadDirect=%llu otherWriteHandler=%llu otherWriteDirect=%llu fineManagedReadHandler=%llu fineManagedReadDirect=%llu fineManagedWriteHandler=%llu fineManagedWriteDirect=%llu",
+		reason,
+		static_cast<unsigned long long>(s_recConstantDataLookups[0]),
+		static_cast<unsigned long long>(s_recConstantDataLookups[1]),
+		static_cast<unsigned long long>(s_recConstantDataLookups[2]),
+		static_cast<unsigned long long>(s_recConstantDataLookups[3]),
+		static_cast<unsigned long long>(s_recConstantDataLookups[4]),
+		static_cast<unsigned long long>(s_recConstantDataLookups[5]),
+		static_cast<unsigned long long>(s_recConstantDataLookups[6]),
+		static_cast<unsigned long long>(s_recConstantDataLookups[7]));
 	for (size_t i = 0; i < s_recInvalidations.size(); ++i)
 	{
 		const auto& s = s_recInvalidations[i];
@@ -1130,6 +1151,7 @@ static void recResetRaw()
 	s_recPhysicalClearCalls = 0;
 	s_recSkippedUncompiledPageClears = 0;
 	s_recInvalidations = {};
+	s_recConstantDataLookups = {};
 	s_recLinkMetrics.Reset();
 	s_recCompileNanoseconds = s_recRepeatSources = 0;
 	s_recThunkBytes = s_recBackpatches = s_recBackpatchBytes = 0;
