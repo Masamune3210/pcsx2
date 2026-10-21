@@ -655,6 +655,40 @@ static void intCancelInstruction()
 	fastjmp_jmp(&intJmpBuf, s_jitBoundaryBranchStep ? 2 : 0);
 }
 
+// The recompiler preserves PCSX2's DI compatibility behavior by delaying EIE
+// modification until one subsequent opcode has executed. If DI is the last
+// instruction of a guest page, compiling that opcode into the same BaseBlocks
+// entry would hide a second, potentially unrelated physical code dependency.
+// Fetch/execute exactly that next opcode at runtime, including its own branch
+// delay slot and interpreter TLB exceptions, *then* apply the DI status change.
+// A fault in the deferred opcode must leave DI unapplied, just as it would
+// with the existing eager JIT ordering.
+void EEInterpretDINextInstructionFromJIT(u32 nextPC)
+{
+	R5900cpu* const savedCPU = Cpu;
+	Cpu = &intCpu;
+	s_jitBoundaryBranchStep = true;
+	cpuBlockCycles = 0;
+	branch2 = cpuRegs.branch = 0;
+	cpuRegs.pc = nextPC;
+	const int stepResult = fastjmp_set(&intJmpBuf);
+	if (stepResult == 0)
+	{
+		execI();
+		// This is the same interpreter operation normally inlined by recDI,
+		// deliberately ordered *after* the deferred instruction.
+		R5900::Interpreter::OpcodeImpl::COP0::DI();
+	}
+	// Taken branches charge in the interpreter's branch helper; ordinary
+	// instructions, annulled likely branches and faulted fetches have not.
+	if (stepResult != 0 || !branch2)
+		intUpdateCPUCycles();
+	s_jitBoundaryBranchStep = false;
+	cpuBlockCycles = 0;
+	branch2 = 0;
+	Cpu = savedCPU;
+}
+
 // This is deliberately outside the interpreter hot path. It runs only if
 // the EE JIT cannot safely compile a cross-page branch delay slot. Executing
 // the branch and delay slot together preserves branch-likely annulment, link
