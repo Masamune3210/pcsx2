@@ -300,3 +300,16 @@ TEST(EEActiveTLB, CodeInvalidationDedupTracksPhysicalNotVirtualAliases)
 	EXPECT_FALSE(sync.ShouldInvalidate(EEActiveTLBPage{0x01e81000, false, false}, ram));
 	EXPECT_TRUE(sync.ShouldInvalidate(EEActiveTLBPage{0x01e82000, false, false}, ram));
 }
+
+
+TEST(EEActiveTLB, CodeInvalidationDedupHandlesMoreThanInlineCapacity)
+{
+	EEPhysicalCodeInvalidationSet sync;
+	constexpr u32 ram = 0x02000000;
+	// Larger guest TLB masks span many physical pages. Do not miss repeats
+	// when the common allocation-free inline dedup capacity is exceeded.
+	for (u32 page = 0; page < 40; ++page)
+		EXPECT_TRUE(sync.ShouldInvalidate(EEActiveTLBPage{0x00100000 + (page << 12), false, true}, ram));
+	for (u32 page = 0; page < 40; ++page)
+		EXPECT_FALSE(sync.ShouldInvalidate(EEActiveTLBPage{0x00100000 + (page << 12), false, true}, ram));
+}
