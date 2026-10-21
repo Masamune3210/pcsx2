@@ -57,6 +57,12 @@ static bool eeCpuExecuting = false;
 static bool eeRecExitRequested = false;
 static bool g_resetEeScalingStats = false;
 
+// Compiler-only counters. The existing EE COP0 trace enables reporting, so
+// native retail titles gain no extra emitted JIT code or per-opcode observers.
+static u64 s_recCompiledBlocks = 0;
+static u64 s_recCompiledBytes = 0;
+static u64 s_recPhysicalClearCalls = 0;
+
 // Preserve the original 64 KiB JIT dispatch for standard PS2 execution.
 // Only transition to per-4 KiB dispatch when a real guest instruction fetch
 // needs a mapped TLB page outside those fixed boot aliases.
@@ -1015,6 +1021,22 @@ static void recResetRaw()
 	// must retain the selected mode. The CPU-provider Reset callback retains
 	// its existing native policy (also used for settings/savestate cache clears).
 	// A guest-dispatch transition purges links compiled in native mode.
+	if (PSBBNTlbTraceEnabled())
+	{
+		EEReportTLBChurn("jit-reset");
+		const u64 cachedBytes = recPtr && SysMemory::GetEERec() ?
+			static_cast<u64>(recPtr - SysMemory::GetEERec()) : 0u;
+		Console.WriteLn("EE-JIT-CHURN reset mode=%u blockCompiles=%llu compiledBytes=%llu physicalClearCalls=%llu cacheUsed=%llu cacheCapacity=%llu",
+			g_recUseGuestTLBDispatch,
+			static_cast<unsigned long long>(s_recCompiledBlocks),
+			static_cast<unsigned long long>(s_recCompiledBytes),
+			static_cast<unsigned long long>(s_recPhysicalClearCalls),
+			static_cast<unsigned long long>(cachedBytes),
+			static_cast<unsigned long long>(SysMemory::GetEERecEnd() - SysMemory::GetEERec()));
+	}
+	s_recCompiledBlocks = 0;
+	s_recCompiledBytes = 0;
+	s_recPhysicalClearCalls = 0;
 	EERecResetDispatchMode(g_recUseGuestTLBDispatch, eeRecResetToNative);
 	eeRecResetToNative = false;
 	Console.WriteLn(Color_StrongBlack, "EE/iR5900 Recompiler Reset");
@@ -1219,6 +1241,8 @@ void recClearPhysical(u32 addr, u32 size)
 {
 	if (!recRAM || addr >= maxrecmem || size == 0)
 		return;
+	if (PSBBNTlbTraceEnabled())
+		++s_recPhysicalClearCalls;
 	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
 		reinterpret_cast<uptr>(JITCompile), addr, size);
 }
@@ -3268,6 +3292,11 @@ StartRecomp:
 	Perf::ee.RegisterPC((void*)s_pCurBlockEx->fnptr, s_pCurBlockEx->x86size, s_pCurBlockEx->startpc);
 
 	recPtr = xGetPtr();
+	if (PSBBNTlbTraceEnabled())
+	{
+		++s_recCompiledBlocks;
+		s_recCompiledBytes += s_pCurBlockEx->x86size;
+	}
 
 	pxAssert((g_cpuHasConstReg & g_cpuFlushedConstReg) == g_cpuHasConstReg);
 
