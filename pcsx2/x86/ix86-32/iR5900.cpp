@@ -48,6 +48,7 @@ using namespace R5900;
 extern void EEInterpretCrossPageBranchFromJIT(u32 branchPC);
 
 static bool eeRecNeedsReset = false;
+static bool eeRecResetToNative = false;
 static bool eeCpuExecuting = false;
 static bool eeRecExitRequested = false;
 static bool g_resetEeScalingStats = false;
@@ -136,6 +137,13 @@ void recUnmapTLBPage(u32 virtualPage)
 	}
 }
 
+static __fi const u32* recGetInstructionPtr(u32 virtualPC)
+{
+	return EERecGetInstructionPtr(g_recUseGuestTLBDispatch != 0, virtualPC,
+		recLUTPages[virtualPC >> 12], recLutUnmapped.data(),
+		static_cast<const u32*>(PSM(HWADDR(virtualPC))));
+}
+
 static BaseBlocks recBlocks;
 static u8* recPtr = nullptr;
 static u8* recPtrEnd = nullptr;
@@ -144,6 +152,7 @@ static u32 s_nInstCacheSize = 0;
 
 static BASEBLOCK* s_pCurBlock = nullptr;
 static BASEBLOCKEX* s_pCurBlockEx = nullptr;
+static u32 s_nStartBlock = 0; // virtual start; metadata startpc is physical
 u32 s_nEndBlock = 0; // what pc the current block ends
 u32 s_branchTo;
 static bool s_nBlockFF;
@@ -159,6 +168,8 @@ static void iBranchTest(u32 newpc = 0xffffffff);
 static void ClearRecLUT(BASEBLOCK* base, int count);
 static u32 scaleblockcycles();
 static void recExitExecution();
+
+static void recLinkStaticBlock(u32 target, s32* jump);
 
 #ifdef TRACE_BLOCKS
 static void pauseAAA()
@@ -444,6 +455,12 @@ static void recError(u32 error);
 
 static const void* DispatcherEvent = nullptr;
 static const void* DispatcherReg = nullptr;
+
+static void recLinkStaticBlock(u32 target, s32* jump)
+{
+	EERecLinkStaticBlock(recBlocks, g_recUseGuestTLBDispatch != 0, s_nStartBlock,
+		target, HWADDR(target), jump, reinterpret_cast<uptr>(DispatcherReg));
+}
 static const void* JITCompile = nullptr;
 static const void* EnterRecompiledCode = nullptr;
 static const void* DispatchBlockDiscard = nullptr;
@@ -624,7 +641,7 @@ static void recError(u32 error)
 			(fetch_pc < 0x80000000u || fetch_pc >= 0xc0000000u) &&
 			recLUTPages[fetch_pc >> 12] != recLUT[fetch_pc >> 16])
 		{
-			g_recUseGuestTLBDispatch = 1;
+			EERecEnterGuestTLBDispatch(g_recUseGuestTLBDispatch, eeRecNeedsReset);
 			Console.WriteLn("EE JIT enabled 4KiB guest TLB instruction dispatch at %08x", fetch_pc);
 			recExitExecution();
 			return;
@@ -776,10 +793,12 @@ alignas(16) static u8 manual_counter[Ps2MemSize::TotalRam >> 12];
 ////////////////////////////////////////////////////
 static void recResetRaw()
 {
-	// Any dynamically installed guest-code aliases will be rebuilt by the
-	// guest TLB projection. Keep the native fast path until code actually needs
-	// per-page virtual dispatch again.
-	g_recUseGuestTLBDispatch = 0;
+	// Internal code-cache exhaustion and the first guest-dispatch transition
+	// must retain the selected mode. The CPU-provider Reset callback retains
+	// its existing native policy (also used for settings/savestate cache clears).
+	// A guest-dispatch transition purges links compiled in native mode.
+	EERecResetDispatchMode(g_recUseGuestTLBDispatch, eeRecResetToNative);
+	eeRecResetToNative = false;
 	Console.WriteLn(Color_StrongBlack, "EE/iR5900 Recompiler Reset");
 
 	if (CHECK_EXTRAMEM != extraRam)
@@ -887,6 +906,7 @@ static void recSafeExitExecution()
 
 static void recResetEE()
 {
+	eeRecResetToNative = true;
 	if (eeCpuExecuting)
 	{
 		// get outta here as soon as we can
@@ -978,7 +998,7 @@ void recClear(u32 addr, u32 size)
 }
 
 
-static int* s_pCode;
+static const u32* s_pCode;
 
 
 // Branch to a runtime variable target
@@ -1042,7 +1062,10 @@ bool TrySwapDelaySlot(u32 rs, u32 rt, u32 rd, bool allow_loadstore)
 	if (g_recompilingDelaySlot)
 		return false;
 
-	const u32 opcode_encoded = *(u32*)PSM(HWADDR(pc));
+	const u32* const instruction = recGetInstructionPtr(pc);
+	if (!instruction)
+		return false;
+	const u32 opcode_encoded = *instruction;
 	if (opcode_encoded == 0)
 	{
 		recompileNextInstruction(true, true);
@@ -1509,7 +1532,7 @@ static void iBranchTest(u32 newpc)
 		if (newpc == 0xffffffff)
 			xJS(DispatcherReg);
 		else
-			recBlocks.Link(HWADDR(newpc), xJcc32(Jcc_Signed));
+			recLinkStaticBlock(newpc, xJcc32(Jcc_Signed));
 
 		xJMP((void*)DispatcherEvent);
 	}
@@ -1796,7 +1819,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 	{
 #ifdef DUMP_BLOCKS
 		std::string disasm;
-		disR5900Fasm(disasm, *(u32*)PSM(HWADDR(pc)), pc, false);
+		disR5900Fasm(disasm, *recGetInstructionPtr(pc), pc, false);
 		fprintf(stderr, "Compiling delay slot %08X %s\n", pc, disasm.c_str());
 #endif
 
@@ -1804,7 +1827,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 		_clearNeededXMMregs();
 	}
 
-	s_pCode = (int*)PSM(HWADDR(pc));
+	s_pCode = recGetInstructionPtr(pc);
 	pxAssert(s_pCode);
 
 #if 0
@@ -1818,7 +1841,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 	const int old_code = cpuRegs.code;
 	EEINST* old_inst_info = g_pCurInstInfo;
 
-	cpuRegs.code = *(int*)s_pCode;
+	cpuRegs.code = *s_pCode;
 
 	if (!delayslot)
 	{
@@ -2311,7 +2334,7 @@ static bool recSkipTimeoutLoop(s32 reg, bool is_timeout_loop)
 	xMOV(ptr32[&cpuRegs.GPR.r[reg].UL[0]], edx); // write back new value of v0
 	xJNZ((void*)DispatcherEvent); // jump to dispatcher if new v0 is not zero (i.e. an event)
 	xMOV(ptr32[&cpuRegs.pc], s_nEndBlock); // otherwise end of loop
-	recBlocks.Link(HWADDR(s_nEndBlock), xJcc32());
+	recLinkStaticBlock(s_nEndBlock, xJcc32());
 
 	g_branch = 1;
 	pc = s_nEndBlock;
@@ -2347,7 +2370,7 @@ static void recHandleUnavailableCodePage(u32 guestPC)
 	{
 		const bool wasFineDispatch = g_recUseGuestTLBDispatch != 0;
 		recMapTLBPage(pageAddress, found->second.physicalAddress);
-		g_recUseGuestTLBDispatch = 1;
+		EERecEnterGuestTLBDispatch(g_recUseGuestTLBDispatch, eeRecNeedsReset);
 		static u32 repaired = 0;
 		if (repaired++ < 32)
 			Console.Warning("EE JIT repaired instruction alias: PC=%08x JITPhysical=%08x TLBPhysical=%08x fineDispatch=%u ASID=%02x",
@@ -2390,7 +2413,7 @@ static void recRecompile(const u32 startpc)
 	// The JIT dispatch table and the guest's active TLB are distinct caches.
 	// A recLUT entry pointing to JITCompile does not prove its physical memory
 	// is readable. Check before mutating the block cache or scanning opcodes.
-	if (!PSM(HWADDR(startpc)))
+	if (!recGetInstructionPtr(startpc))
 	{
 		recHandleUnavailableCodePage(startpc);
 		return;
@@ -2413,6 +2436,7 @@ static void recRecompile(const u32 startpc)
 	xSetPtr(recPtr);
 	recPtr = xGetAlignedCallTarget();
 
+	s_nStartBlock = startpc;
 	s_pCurBlock = PC_GETBLOCK(startpc);
 
 	pxAssert(s_pCurBlock->GetFnptr() == (uptr)JITCompile);
@@ -2526,13 +2550,6 @@ static void recRecompile(const u32 startpc)
 	{
 		BASEBLOCK* pblock = PC_GETBLOCK(i);
 
-		// stop before breakpoints
-		if (isBreakpointNeeded(i) != 0 || isMemcheckNeeded(i) != 0)
-		{
-			s_nEndBlock = i;
-			break;
-		}
-
 		if (i != startpc) // Block size truncation checks.
 		{
 			if ((i & 0xffc) == 0x0) // breaks blocks at 4k page boundaries
@@ -2555,7 +2572,7 @@ static void recRecompile(const u32 startpc)
 		// Fetch from the selected guest-physical code page. A block can
 		// terminate before a newly unmapped next page, but must never try
 		// to dereference a null host pointer while compiling.
-		const u32* instruction = static_cast<const u32*>(PSM(HWADDR(i)));
+		const u32* instruction = recGetInstructionPtr(i);
 		if (!instruction)
 		{
 			if (i == startpc)
@@ -2564,6 +2581,13 @@ static void recRecompile(const u32 startpc)
 				return;
 			}
 			willbranch3 = 1;
+			s_nEndBlock = i;
+			break;
+		}
+		// These helpers inspect opcodes using virtual reads. Do not call
+		// them for an unmapped page during compile-time block analysis.
+		if (isBreakpointNeeded(i) != 0 || isMemcheckNeeded(i) != 0)
+		{
 			s_nEndBlock = i;
 			break;
 		}
@@ -2582,7 +2606,9 @@ static void recRecompile(const u32 startpc)
 			else if ((cpuRegs.code >> 26) == 5)
 			{
 				// bne
-				if (timeout_reg != static_cast<s32>(_Rs_) || _Rt_ != 0 || memRead32(i + 4) != 0)
+				const u32* const delayInstruction = recGetInstructionPtr(i + 4);
+				if (timeout_reg != static_cast<s32>(_Rs_) || _Rt_ != 0 ||
+					!delayInstruction || *delayInstruction != 0)
 					is_timeout_loop = false;
 			}
 			else if (cpuRegs.code != 0)
@@ -2688,9 +2714,9 @@ StartRecomp:
 	{
 		const u32 branchPC = s_nEndBlock - 8u;
 		const u32 delayPC = s_nEndBlock - 4u;
-		if ((branchPC & 0xfffu) == 0xffcu && !PSM(HWADDR(delayPC)))
+		if ((branchPC & 0xfffu) == 0xffcu && !recGetInstructionPtr(delayPC))
 		{
-			const u32* const branchOpcode = static_cast<const u32*>(PSM(HWADDR(branchPC)));
+			const u32* const branchOpcode = recGetInstructionPtr(branchPC);
 			if (branchOpcode && (GetInstruction(*branchOpcode).flags & IS_BRANCH))
 			{
 				interpretUnmappedBoundaryBranch = true;
@@ -2719,7 +2745,7 @@ StartRecomp:
 		{
 			if (i == s_nEndBlock - 8)
 				continue;
-			cpuRegs.code = *(u32*)PSM(HWADDR(i));
+			cpuRegs.code = *recGetInstructionPtr(i);
 			// nop
 			if (cpuRegs.code == 0)
 				continue;
@@ -2808,7 +2834,7 @@ StartRecomp:
 
 		for (i = s_nEndBlock; i > startpc; i -= 4)
 		{
-			cpuRegs.code = *(int*)PSM(HWADDR(i - 4));
+			cpuRegs.code = *recGetInstructionPtr(i - 4);
 			pcur[-1] = pcur[0];
 			recBackpropBSC(cpuRegs.code, pcur - 1, pcur);
 			pcur--;
@@ -2859,11 +2885,21 @@ StartRecomp:
 		g_pCurInstInfo = s_pInstCache;
 		while (!g_branch && pc < s_nEndBlock)
 		{
+			if (interpretUnmappedBoundaryBranch && pc == interpreterBranchPC)
+			{
+				// The branch and its potentially faulting slot execute together
+				// at runtime, including in instruction-dump builds.
+				iFlushCall(FLUSH_INTERPRETER);
+				xFastCall((const void*)EEInterpretCrossPageBranchFromJIT, interpreterBranchPC);
+				pc += 4;
+				g_branch = 2;
+				continue;
+			}
 #ifdef DUMP_BLOCKS
 			if (dump_block)
 			{
 				std::string disasm;
-				disR5900Fasm(disasm, *(u32*)PSM(HWADDR(pc)), pc, false);
+				disR5900Fasm(disasm, *recGetInstructionPtr(pc), pc, false);
 				fprintf(stderr, "Compiling %08X %s\n", pc, disasm.c_str());
 
 				const u8* inst_start = x86Ptr;
@@ -2900,18 +2936,7 @@ StartRecomp:
 				recompileNextInstruction(false, false);
 			}
 #else
-			if (interpretUnmappedBoundaryBranch && pc == interpreterBranchPC)
-			{
-				// All preceding instructions remain JIT compiled. Only execute
-				// this branch and its potentially faulting delay slot through
-				// the interpreter, preserving branch-likely annulment and BD/EPC.
-				iFlushCall(FLUSH_INTERPRETER);
-				xFastCall((const void*)EEInterpretCrossPageBranchFromJIT, interpreterBranchPC);
-				pc += 4;
-				g_branch = 2; // branch already set cpuRegs.pc; do regular event check
-			}
-			else
-				recompileNextInstruction(false, false);
+			recompileNextInstruction(false, false);
 #endif
 		}
 	}
@@ -2986,7 +3011,7 @@ StartRecomp:
 			{
 				xMOV(ptr32[&cpuRegs.pc], pc);
 				xADD(ptr64[&cpuRegs.cycle], scaleblockcycles());
-				recBlocks.Link(HWADDR(pc), xJcc32());
+				recLinkStaticBlock(pc, xJcc32());
 			}
 		}
 	}
