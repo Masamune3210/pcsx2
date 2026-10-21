@@ -1,0 +1,298 @@
+{
+  "inputs": [
+    {
+      "path": "G:\\Users\\Johnny\\Documents\\PCSX2\\logs\\emulog.txt",
+      "bytes": 15883195,
+      "sha256": "e704f456d5400acfa9c85e667ec23fcb704c402369d564d5fed5f163dce23666"
+    },
+    {
+      "path": "G:\\Users\\Johnny\\Documents\\PCSX2\\logs\\psbbn-kernel-log.txt",
+      "bytes": 4318,
+      "sha256": "a9ed7e6fb35bea4e33e901394811b092ba0577d4e60730d5611edb549c6976b2"
+    },
+    {
+      "path": "H:\\Emulation Files\\pcsx2\\sstates\\PSBBN-auto-1792558186919420-002.p2s",
+      "bytes": 3075629,
+      "sha256": "88ba2c1c5f3092b0de4dd54f3470f04a3899aa4fa5dfa5bc382eb072ac472262"
+    }
+  ],
+  "version": "PCSX2 v2.9.92-224-g97c6571a2",
+  "log_lines": 180471,
+  "observed_patterns": {
+    "final_misses": 132053,
+    "final_miss_first_line": 48293,
+    "final_miss_last_line": 180458,
+    "unrecognized": 0,
+    "old_6f60_faults": 0,
+    "unarmed_vtlb_diagnostics": 50,
+    "cross_page_fallbacks": 3,
+    "journal_word_samples": 4,
+    "kernel_root_mount": true
+  },
+  "first_transition_excerpt": [
+    {
+      "line": 48242,
+      "text": "[   19.1188] cpuTlbMiss pc:801a472c, cycl:bb70f5bd, addr: 2aaa9000, status=10010c01, code=c"
+    },
+    {
+      "line": 48243,
+      "text": "[   19.1189] cpuTlbMiss pc:801a472c, cycl:bb70fd5e, addr: 2aaa9000, status=10010c01, code=c"
+    },
+    {
+      "line": 48244,
+      "text": "[   19.1193] cpuTlbMiss pc:2ab2e024, cycl:bb7101da, addr: 2ab2e020, status=10c11, code=8"
+    },
+    {
+      "line": 48245,
+      "text": "[   19.1197] cpuTlbMiss pc:2ab2e068, cycl:bb7101fa, addr: 7fff73d1, status=10c11, code=c"
+    },
+    {
+      "line": 48246,
+      "text": "[   19.1197] branch delay!!"
+    },
+    {
+      "line": 48247,
+      "text": "[   19.1201] TLB Miss, pc=0x404040 addr=0x404040 [load]"
+    },
+    {
+      "line": 48292,
+      "text": "[   19.1215] TLB Miss, pc=0x40406c addr=0x40406c [load]"
+    },
+    {
+      "line": 48293,
+      "text": "[   19.1243] cpuTlbMiss pc:403fc0, cycl:bb710a52, addr: 7fff8220, status=10c11, code=8"
+    },
+    {
+      "line": 48294,
+      "text": "[   19.1243] cpuTlbMiss pc:403fc0, cycl:bb710a6d, addr: 403fbc, status=10c11, code=8"
+    },
+    {
+      "line": 48295,
+      "text": "[   19.1246] cpuTlbMiss pc:403fc0, cycl:bb710a88, addr: 7fff8220, status=10c11, code=8"
+    }
+  ],
+  "top_fault_groups": [
+    {
+      "pc_addr_status_code": [
+        "403fc0",
+        "7fff8220",
+        "10c11",
+        "8"
+      ],
+      "count": 132053
+    },
+    {
+      "pc_addr_status_code": [
+        "fb75cd4",
+        "fb622e8",
+        "10c11",
+        "8"
+      ],
+      "count": 7
+    },
+    {
+      "pc_addr_status_code": [
+        "fb76e64",
+        "fb76e60",
+        "10c11",
+        "8"
+      ],
+      "count": 6
+    },
+    {
+      "pc_addr_status_code": [
+        "fb6d0cc",
+        "fb6013c",
+        "10c11",
+        "8"
+      ],
+      "count": 6
+    },
+    {
+      "pc_addr_status_code": [
+        "fb6cedc",
+        "fb6ced8",
+        "10c11",
+        "8"
+      ],
+      "count": 5
+    },
+    {
+      "pc_addr_status_code": [
+        "2ab06da4",
+        "2ab06da0",
+        "10c11",
+        "8"
+      ],
+      "count": 5
+    },
+    {
+      "pc_addr_status_code": [
+        "fb6ef14",
+        "fb6ef10",
+        "10c11",
+        "8"
+      ],
+      "count": 4
+    },
+    {
+      "pc_addr_status_code": [
+        "fb75b84",
+        "fb75b80",
+        "10c11",
+        "8"
+      ],
+      "count": 4
+    }
+  ],
+  "snapshot": {
+    "cpu_registers_offset": 333,
+    "cycles_tag_offset": 4455,
+    "tlb_offset": 2709,
+    "tlb_entry_bytes": 16,
+    "cached_tlb_bytes": 976,
+    "pc": "80019ee0",
+    "epc": "00403fbc",
+    "cause": "00000008",
+    "status": "10010c01",
+    "bad_vaddr": "7fff8220",
+    "entry_hi": "7fff8104",
+    "asid": 4,
+    "lookups": [
+      {
+        "virtual": "00403fbc",
+        "matches": [
+          {
+            "slot": 0,
+            "page_mask": "00000000",
+            "entry_hi": "00402004",
+            "selected_lo": "0007ab1a",
+            "valid": true,
+            "dirty": false,
+            "physical": "01eacfbc",
+            "word": "8fbc0020"
+          }
+        ]
+      },
+      {
+        "virtual": "00403fc0",
+        "matches": [
+          {
+            "slot": 0,
+            "page_mask": "00000000",
+            "entry_hi": "00402004",
+            "selected_lo": "0007ab1a",
+            "valid": true,
+            "dirty": false,
+            "physical": "01eacfc0",
+            "word": "1440001f"
+          }
+        ]
+      },
+      {
+        "virtual": "00404040",
+        "matches": [
+          {
+            "slot": 32,
+            "page_mask": "00000000",
+            "entry_hi": "00404004",
+            "selected_lo": "00000010",
+            "valid": false,
+            "dirty": false
+          }
+        ]
+      },
+      {
+        "virtual": "7fff8220",
+        "matches": [
+          {
+            "slot": 27,
+            "page_mask": "00000000",
+            "entry_hi": "7fff8004",
+            "selected_lo": "00000010",
+            "valid": false,
+            "dirty": false
+          }
+        ]
+      },
+      {
+        "virtual": "7fff73d1",
+        "matches": [
+          {
+            "slot": 3,
+            "page_mask": "00000000",
+            "entry_hi": "7fff6004",
+            "selected_lo": "000076de",
+            "valid": true,
+            "dirty": true,
+            "physical": "001db3d1",
+            "word": "f000000a"
+          }
+        ]
+      },
+      {
+        "virtual": "2ab2e060",
+        "matches": [
+          {
+            "slot": 35,
+            "page_mask": "00000000",
+            "entry_hi": "2ab2e004",
+            "selected_lo": "0007a0da",
+            "valid": true,
+            "dirty": false,
+            "physical": "01e83060",
+            "word": "10c00019"
+          }
+        ]
+      },
+      {
+        "virtual": "2ab2e064",
+        "matches": [
+          {
+            "slot": 35,
+            "page_mask": "00000000",
+            "entry_hi": "2ab2e004",
+            "selected_lo": "0007a0da",
+            "valid": true,
+            "dirty": false,
+            "physical": "01e83064",
+            "word": "a0880000"
+          }
+        ]
+      }
+    ],
+    "inference": {
+      "lw_at_epc": "8fbc0020 = lw gp,0x20(sp)",
+      "base_inferred_from_fault_ea": "7fff8200",
+      "bne_at_00403fc0_target": "00404040"
+    },
+    "physical_identity_words": {
+      "00403fbc": "00000000",
+      "00404040": "00000000"
+    },
+    "cached_descriptor_cross_check": {
+      "stored_count": 45,
+      "architectural_cached_entry_count": 47,
+      "extra_tuples": 0,
+      "missing_tuples": [
+        {
+          "pfn0": "01ea6000",
+          "pfn1": "01ea5000",
+          "count": 1
+        },
+        {
+          "pfn0": "01eb6000",
+          "pfn1": "01eb5000",
+          "count": 1
+        }
+      ],
+      "classification": "45 stored tuples match architectural entries; two descriptors missing. Separate observation; not an asserted cause."
+    }
+  },
+  "limits": [
+    "Snapshot is after divergence, not a first-transition register trace.",
+    "No guest state was loaded or modified.",
+    "No C++ compilation/test or emulator launch by agent.",
+    "No PSBBN recovery claim for the new uncompiled correction."
+  ]
+}

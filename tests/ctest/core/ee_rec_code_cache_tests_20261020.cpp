@@ -19,6 +19,7 @@ protected:
 	std::array<uptr, 0x10000> physicalLUT{};
 	BaseBlocks blocks;
 	std::array<u8, 16> compilerCode{}, firstCode{}, secondCode{};
+	std::array<u8, 16> dispatcherCode{};
 	uptr compiler = reinterpret_cast<uptr>(compilerCode.data());
 
 	void SetUp() override
@@ -121,5 +122,119 @@ TEST_F(EERecCodeCache, ZeroLengthClearPreservesBlock)
 	Clear(0x3000, 0);
 	EXPECT_EQ(ram[0x3000 / 4].GetFnptr(), first);
 	EXPECT_NE(blocks.Get(0x3000), nullptr);
+}
+
+TEST_F(EERecCodeCache, CrossPageUserTargetCannotBypassVirtualDispatch)
+{
+	const uptr code = reinterpret_cast<uptr>(firstCode.data());
+	const uptr dispatcher = reinterpret_cast<uptr>(dispatcherCode.data());
+	AddBlock(0x6000, 4, code);
+	s32 jump = 0;
+	EERecLinkStaticBlock(blocks, true, 0x00403fbc, 0x00404040, 0x6000, &jump, dispatcher);
+	EXPECT_EQ(jump, static_cast<s32>(dispatcher - reinterpret_cast<uptr>(&jump + 1)));
+}
+
+TEST_F(EERecCodeCache, PendingCrossPageTargetCannotAcquireStalePhysicalLink)
+{
+	const uptr dispatcher = reinterpret_cast<uptr>(dispatcherCode.data());
+	s32 jump = 0;
+	EERecLinkStaticBlock(blocks, true, 0x00403000, 0x00404040, 0x6000, &jump, dispatcher);
+	// Another alias later compiles the old PFN. It must not patch this branch,
+	// whose target VPN may now belong to a different ASID/PFN or be invalid.
+	AddBlock(0x6000, 4, reinterpret_cast<uptr>(firstCode.data()));
+	EXPECT_EQ(jump, static_cast<s32>(dispatcher - reinterpret_cast<uptr>(&jump + 1)));
+}
+
+TEST_F(EERecCodeCache, SamePageUserTargetKeepsPhysicalLink)
+{
+	const uptr code = reinterpret_cast<uptr>(firstCode.data());
+	AddBlock(0x6080, 4, code);
+	s32 jump = 0;
+	EERecLinkStaticBlock(blocks, true, 0x00403000, 0x00403080, 0x6080, &jump,
+		reinterpret_cast<uptr>(dispatcherCode.data()));
+	EXPECT_EQ(jump, static_cast<s32>(code - reinterpret_cast<uptr>(&jump + 1)));
+}
+
+TEST_F(EERecCodeCache, FixedKernelTargetKeepsPhysicalLink)
+{
+	const uptr code = reinterpret_cast<uptr>(firstCode.data());
+	AddBlock(0x6000, 4, code);
+	s32 jump = 0;
+	EERecLinkStaticBlock(blocks, true, 0x00403000, 0x80006000, 0x6000, &jump,
+		reinterpret_cast<uptr>(dispatcherCode.data()));
+	EXPECT_EQ(jump, static_cast<s32>(code - reinterpret_cast<uptr>(&jump + 1)));
+}
+
+TEST_F(EERecCodeCache, NativeCrossPageTargetKeepsPhysicalLink)
+{
+	const uptr code = reinterpret_cast<uptr>(firstCode.data());
+	AddBlock(0x6000, 4, code);
+	s32 jump = 0;
+	EERecLinkStaticBlock(blocks, false, 0x00403000, 0x00404040, 0x6000, &jump,
+		reinterpret_cast<uptr>(dispatcherCode.data()));
+	EXPECT_EQ(jump, static_cast<s32>(code - reinterpret_cast<uptr>(&jump + 1)));
+}
+
+TEST_F(EERecCodeCache, NextPageDelaySlotCannotMakeCrossPageTargetLocal)
+{
+	const uptr dispatcher = reinterpret_cast<uptr>(dispatcherCode.data());
+	s32 jump = 0;
+	// The source is the saved virtual block start, even if the compiler's
+	// current PC has advanced through a slot at 00404000 to 00404004.
+	EERecLinkStaticBlock(blocks, true, 0x00403ff0, 0x00404008, 0x6008, &jump, dispatcher);
+	EXPECT_EQ(jump, static_cast<s32>(dispatcher - reinterpret_cast<uptr>(&jump + 1)));
+}
+
+TEST_F(EERecCodeCache, UnmappedGuestPageRejectsReadablePhysicalOpcodes)
+{
+	const std::array<u32, 2> physicalCode{0, 0};
+	const uptr unmappedPage = reinterpret_cast<uptr>(ram.get()) - 0x00400000u * 2;
+	EXPECT_EQ(EERecGetInstructionPtr(true, 0x00404040, unmappedPage, ram.get(), physicalCode.data()), nullptr);
+}
+
+TEST_F(EERecCodeCache, MappedGuestPageKeepsPhysicalOpcodes)
+{
+	const std::array<u32, 2> physicalCode{0x8fbc0020, 0x1440001f};
+	const uptr mappedPage = reinterpret_cast<uptr>(ram.get()) - 0x00400000u * 2 + 0x10000;
+	EXPECT_EQ(EERecGetInstructionPtr(true, 0x00403fbc, mappedPage, ram.get(), physicalCode.data()), physicalCode.data());
+}
+
+TEST_F(EERecCodeCache, NativeBootAliasDoesNotRequireGuestMapping)
+{
+	const std::array<u32, 2> physicalCode{0x03e00008, 0};
+	const uptr unmappedPage = reinterpret_cast<uptr>(ram.get()) - 0x00400000u * 2;
+	EXPECT_EQ(EERecGetInstructionPtr(false, 0x00404040, unmappedPage, ram.get(), physicalCode.data()), physicalCode.data());
+}
+
+TEST(EERecDispatchMode, FirstGuestTransitionRequiresDiscardingNativeLinks)
+{
+	u32 mode = 0;
+	bool reset = false;
+	EERecEnterGuestTLBDispatch(mode, reset);
+	EXPECT_EQ(mode, 1U);
+	EXPECT_TRUE(reset);
+}
+
+TEST(EERecDispatchMode, ExistingGuestDispatchDoesNotRequestAnotherReset)
+{
+	u32 mode = 1;
+	bool reset = false;
+	EERecEnterGuestTLBDispatch(mode, reset);
+	EXPECT_EQ(mode, 1U);
+	EXPECT_FALSE(reset);
+}
+
+TEST(EERecDispatchMode, InternalCacheResetPreservesGuestDispatch)
+{
+	u32 mode = 1;
+	EERecResetDispatchMode(mode, false);
+	EXPECT_EQ(mode, 1U);
+}
+
+TEST(EERecDispatchMode, ExternalProviderCacheResetRestoresNativePolicy)
+{
+	u32 mode = 1;
+	EERecResetDispatchMode(mode, true);
+	EXPECT_EQ(mode, 0U);
 }
 } // namespace
