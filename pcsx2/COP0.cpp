@@ -4,6 +4,7 @@
 #include "Common.h"
 #include "COP0.h"
 #include "EEActiveTLB.h"
+#include "EEExecutionProfile.h"
 #include "vtlb.h"
 
 #include <algorithm>
@@ -1039,7 +1040,8 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			EEReportTLBChurn("4096-syncs");
 	};
 	const u8 asid = static_cast<u8>(cpuRegs.CP0.n.EntryHi);
-	if (s_active_tlb_projection.Matches(tlb, std::size(tlb), asid))
+	if (EEExecutionProfile::IsExtendedMMU() &&
+		s_active_tlb_projection.Matches(tlb, std::size(tlb), asid))
 	{
 		// Read at most 48 compact inputs instead of expanding large PageMasks,
 		// allocating a new unordered_map, and looking up every projected page.
