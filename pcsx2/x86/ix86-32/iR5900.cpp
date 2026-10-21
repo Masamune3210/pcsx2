@@ -2365,6 +2365,65 @@ static bool recSkipTimeoutLoop(s32 reg, bool is_timeout_loop)
 	return true;
 }
 
+// Called only when the JIT requests compilation for an instruction whose
+// current HWADDR alias has no physically readable backing. Never fabricate
+// an instruction word or invoke a guest exception when a TLB entry is valid.
+static void recHandleUnavailableCodePage(u32 guestPC)
+{
+	const u32 jitPhysical = HWADDR(guestPC);
+	const u32 pageAddress = guestPC & ~0xfffu;
+	const u32 pageOffset = guestPC & 0xfffu;
+	const bool tlbManaged = guestPC < 0x80000000u || guestPC >= 0xc0000000u;
+	const auto active = tlbManaged ?
+		BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi)) :
+		EEActiveTLBPageMap{};
+	const auto found = active.find(guestPC >> 12);
+	const bool architecturallyMapped = found != active.end();
+	const u32 expectedPhysical = architecturallyMapped ? (found->second.physicalAddress + pageOffset) : 0;
+	const bool vmapped = vtlb_private::vtlbdata.vmap != nullptr;
+	const auto* mapping = vmapped ? &vtlb_private::vtlbdata.vmap[guestPC >> vtlb_private::VTLB_PAGE_BITS] : nullptr;
+	const bool unmappedVirt = mapping && mapping->isHandler(guestPC) &&
+		mapping->assumeHandlerGetID() == 0;
+
+	// A valid guest code TLB entry can outlive a stale JIT dispatch alias.
+	// Reestablish precisely that 4 KiB physical-RAM alias and retry dispatch.
+	if (architecturallyMapped && !found->second.scratchpad &&
+		found->second.physicalAddress < Ps2MemSize::ExposedRam &&
+		PSM(expectedPhysical))
+	{
+		const bool wasFineDispatch = g_recUseGuestTLBDispatch != 0;
+		recMapTLBPage(pageAddress, found->second.physicalAddress);
+		g_recUseGuestTLBDispatch = 1;
+		static u32 repaired = 0;
+		if (repaired++ < 32)
+			Console.Warning("EE JIT repaired instruction alias: PC=%08x JITPhysical=%08x TLBPhysical=%08x fineDispatch=%u ASID=%02x",
+				guestPC, jitPhysical, expectedPhysical, static_cast<u32>(wasFineDispatch),
+				cpuRegs.CP0.n.EntryHi & 0xffu);
+		recExitExecution();
+		return;
+	}
+
+	// Only an actual absent guest translation is an instruction-fetch TLBL.
+	// An installed but MMIO/invalid physical backing is an emulator mapping
+	// inconsistency, not grounds for inventing a guest TLB refill.
+	if (tlbManaged && !architecturallyMapped && unmappedVirt)
+	{
+		cpuRegs.pc = guestPC + 4; // cpuTlbMissR internally subtracts four
+		cpuRegs.IsDelaySlot = 0;
+		g_recPreciseMemoryFaultArmed = 0;
+		cpuTlbMissR(guestPC, 0);
+		recExitExecution();
+		return;
+	}
+
+	Host::ReportErrorAsync("R5900 Recompiler",
+		fmt::format("Instruction fetch has no physical backing: PC=0x{:08x}, JIT physical=0x{:08x}, TLB mapped={}, TLB physical=0x{:08x}, vTLB unmapped={}, ASID=0x{:02x}, 4KiB dispatch={}",
+			guestPC, jitPhysical, architecturallyMapped, expectedPhysical,
+			unmappedVirt, cpuRegs.CP0.n.EntryHi & 0xffu, g_recUseGuestTLBDispatch));
+	VMManager::SetPaused(true);
+	recExitExecution();
+}
+
 static void recRecompile(const u32 startpc)
 {
 	u32 i = 0;
@@ -2373,6 +2432,15 @@ static void recRecompile(const u32 startpc)
 	u32 interpreterBranchPC = 0;
 
 	pxAssert(startpc);
+
+	// The JIT dispatch table and the guest's active TLB are distinct caches.
+	// A recLUT entry pointing to JITCompile does not prove its physical memory
+	// is readable. Check before mutating the block cache or scanning opcodes.
+	if (!PSM(HWADDR(startpc)))
+	{
+		recHandleUnavailableCodePage(startpc);
+		return;
+	}
 
 	// if recPtr reached the mem limit reset whole mem
 	if (recPtr >= recPtrEnd)
@@ -2530,8 +2598,22 @@ static void recRecompile(const u32 startpc)
 			}
 		}
 
-		//HUH ? PSM ? whut ? THIS IS VIRTUAL ACCESS GOD DAMMIT
-		cpuRegs.code = *(int*)PSM(HWADDR(i));
+		// Fetch from the selected guest-physical code page. A block can
+		// terminate before a newly unmapped next page, but must never try
+		// to dereference a null host pointer while compiling.
+		const u32* instruction = static_cast<const u32*>(PSM(HWADDR(i)));
+		if (!instruction)
+		{
+			if (i == startpc)
+			{
+				recHandleUnavailableCodePage(i);
+				return;
+			}
+			willbranch3 = 1;
+			s_nEndBlock = i;
+			break;
+		}
+		cpuRegs.code = *instruction;
 
 		if (is_timeout_loop)
 		{
