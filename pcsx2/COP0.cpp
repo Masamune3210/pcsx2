@@ -1005,7 +1005,7 @@ static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping,
 		// mode is selected or whether the virtual alias is installed yet.
 		if (PSBBNTlbTraceEnabled())
 			++s_ee_tlb_churn.physicalClearRequests;
-		recClearPhysical(mapping.physicalAddress, 0x400, cause);
+		recClearPhysical(mapping.physicalAddress, 0x400, cause, page << 12);
 		return;
 	}
 #endif
