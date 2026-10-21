@@ -46,6 +46,54 @@ protected:
 	}
 };
 
+TEST_F(EERecCodeCache, EvictionObserverReportsOnlyBlocksActuallyRemoved)
+{
+	AddBlock(0x3000, 8, reinterpret_cast<uptr>(firstCode.data()), 11);
+	AddBlock(0x3010, 4, reinterpret_cast<uptr>(secondCode.data()), 17);
+	BASEBLOCKEX* compiling = blocks.New(0x3018, reinterpret_cast<uptr>(dispatcherCode.data()));
+	compiling->size = 2;
+	AddBlock(0x6000, 4, reinterpret_cast<uptr>(secondCode.data()), 23);
+	struct Observed
+	{
+		std::array<u32, 4> starts{};
+		std::array<u32, 4> sizes{};
+		u32 count = 0;
+	} observed;
+	const auto observer = +[](const BASEBLOCKEX& block, void* pointer) {
+		auto* out = static_cast<Observed*>(pointer);
+		ASSERT_LT(out->count, out->starts.size());
+		out->starts[out->count] = block.startpc;
+		out->sizes[out->count] = block.x86size;
+		++out->count;
+	};
+	BaseBlocks::Metrics metrics;
+	EERecClearPhysicalBlocks(blocks, physicalLUT.data(), &ram[0x3018 / 4],
+		compiler, 0x301c, 1, &metrics, observer, &observed);
+	EXPECT_EQ(observed.count, 2u);
+	EXPECT_EQ(metrics.removedBlocks, 2u);
+	EXPECT_EQ(metrics.retiredHostBytes, 28u);
+	EXPECT_NE(blocks.Get(0x3018), nullptr); // compiling block never reported
+	EXPECT_NE(blocks.Get(0x6000), nullptr); // unrelated block never reported
+	std::array<u32, 2> found{observed.starts[0], observed.starts[1]};
+	std::sort(found.begin(), found.end());
+	EXPECT_EQ(found[0], 0x3000u);
+	EXPECT_EQ(found[1], 0x3010u);
+	const u32 oldCount = observed.count;
+	EERecClearPhysicalBlocks(blocks, physicalLUT.data(), &ram[0x3018 / 4],
+		compiler, 0x301c, 1, &metrics, observer, &observed);
+	EXPECT_EQ(observed.count, oldCount); // no repeat event for already-removed blocks
+}
+
+TEST_F(EERecCodeCache, EvictionObserverOptionalAndDoesNotChangeRemovalResults)
+{
+	AddBlock(0x8000, 4, reinterpret_cast<uptr>(firstCode.data()), 24);
+	BaseBlocks::Metrics metrics;
+	EERecClearPhysicalBlocks(blocks, physicalLUT.data(), nullptr, compiler, 0x8004, 1, &metrics);
+	EXPECT_EQ(metrics.removedBlocks, 1u);
+	EXPECT_EQ(metrics.retiredHostBytes, 24u);
+	EXPECT_EQ(blocks.Get(0x8000), nullptr);
+}
+
 TEST_F(EERecCodeCache, MutationMetricsCountRemovedOverlapsButPreserveCompilingAndLiveBytes)
 {
 	AddBlock(0x3000, 8, reinterpret_cast<uptr>(firstCode.data()), 11);
