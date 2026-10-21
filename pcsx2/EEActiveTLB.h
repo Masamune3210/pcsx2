@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <unordered_map>
+#include <unordered_set>
 
 struct EEActiveTLBPage
 {
@@ -23,6 +24,25 @@ struct EEActiveTLBPage
 };
 
 using EEActiveTLBPageMap = std::unordered_map<u32, EEActiveTLBPage>;
+
+// This tracker belongs to one synchronous architectural-TLB projection.
+// A physical compiled-code page needs clearing at most once per projection:
+// replacing multiple virtual aliases cannot execute guest instructions between
+// those clears. Unmapped/scratchpad and non-RAM pages retain their original
+// invalidation behavior. Create a NEW tracker for each projection.
+class EEPhysicalCodeInvalidationSet
+{
+public:
+	bool ShouldInvalidate(const EEActiveTLBPage& page, u32 exposedRAMSize)
+	{
+		if (page.scratchpad || page.physicalAddress >= exposedRAMSize)
+			return true;
+		return m_invalidated.insert(page.physicalAddress >> 12).second;
+	}
+
+private:
+	std::unordered_set<u32> m_invalidated;
+};
 
 // A matched, valid and non-writable mapping must raise TLB Modification on a
 // guest store. An absent entry is NOT Mod; normal TLB miss handling applies.
