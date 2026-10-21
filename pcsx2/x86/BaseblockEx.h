@@ -149,6 +149,29 @@ protected:
 	BaseBlockArray blocks;
 
 public:
+	// Caller-owned bounded aggregates; passing nullptr keeps other recompilers
+	// free of accounting work. Retirement is logical, never arena reclamation.
+	struct Metrics
+	{
+		u64 removedBlocks = 0;
+		u64 retiredHostBytes = 0;
+		u64 dispatchWriteAttempts = 0;
+		u64 dispatchWrites = 0;
+		u64 dispatchWriteSkips = 0;
+		u64 linkPatchAttempts = 0;
+		u64 linkPatchWrites = 0;
+		u64 linkPatchSkips = 0;
+
+		void Reset() { *this = {}; }
+	};
+
+	struct LiveMetrics
+	{
+		u64 blocks = 0;
+		u64 hostBytes = 0;
+		u64 linkRecords = 0;
+	};
+
 	BaseBlocks()
 		: recompiler(0)
 		, blocks(0x4000)
@@ -160,16 +183,50 @@ public:
 		recompiler = reinterpret_cast<uptr>(recompiler_);
 	}
 
-	BASEBLOCKEX* New(u32 startpc, uptr fnptr);
+	BASEBLOCKEX* New(u32 startpc, uptr fnptr, Metrics* metrics = nullptr);
 	int LastIndex(u32 startpc) const;
 	//BASEBLOCKEX* GetByX86(uptr ip);
+
+	// Compare the same low 32 displacement bits used by the original patch.
+	// memcpy also supports unaligned x86 branch immediates without typed loads.
+	static __fi void PatchLink(s32* jump, uptr target, Metrics* metrics = nullptr)
+	{
+		const u32 displacement = static_cast<u32>(target - (reinterpret_cast<uptr>(jump) + sizeof(s32)));
+		u32 previous;
+		memcpy(&previous, jump, sizeof(previous));
+		if (metrics)
+			metrics->linkPatchAttempts++;
+		if (previous == displacement)
+		{
+			if (metrics)
+				metrics->linkPatchSkips++;
+			return;
+		}
+		memcpy(jump, &displacement, sizeof(displacement));
+		if (metrics)
+			metrics->linkPatchWrites++;
+	}
+
+	// Snapshot only: x86size describes current metadata (zero until finalized),
+	// not arena high-water or safely reclaimable storage. Link records may
+	// outlive removed sources.
+	LiveMetrics GetLiveMetrics() const
+	{
+		LiveMetrics result;
+		result.blocks = blocks.size();
+		result.linkRecords = links.size();
+		for (u32 i = 0; i < blocks.size(); i++)
+			result.hostBytes += blocks[i].x86size;
+		return result;
+	}
 
 	__fi int Index(u32 startpc) const
 	{
 		int idx = LastIndex(startpc);
 
 		if ((idx == -1) || (startpc < blocks[idx].startpc) ||
-			((blocks[idx].size) && (startpc >= blocks[idx].startpc + blocks[idx].size * 4)))
+			((blocks[idx].size) && (static_cast<u64>(startpc) >=
+				static_cast<u64>(blocks[idx].startpc) + static_cast<u64>(blocks[idx].size) * 4)))
 			return -1;
 		else
 			return idx;
@@ -188,7 +245,7 @@ public:
 		return (*this)[Index(startpc)];
 	}
 
-	__fi void Remove(int first, int last)
+	__fi void Remove(int first, int last, Metrics* metrics = nullptr)
 	{
 		pxAssert(first <= last);
 		int idx = first;
@@ -199,7 +256,12 @@ public:
 			//u32 startpc = blocks[idx].startpc;
 			std::pair<linkiter_t, linkiter_t> range = links.equal_range(blocks[idx].startpc);
 			for (linkiter_t i = range.first; i != range.second; ++i)
-				*(u32*)i->second = recompiler - (i->second + 4);
+				PatchLink(reinterpret_cast<s32*>(i->second), recompiler, metrics);
+			if (metrics)
+			{
+				metrics->removedBlocks++;
+				metrics->retiredHostBytes += blocks[idx].x86size;
+			}
 
 			if (IsDevBuild)
 			{
@@ -213,11 +275,12 @@ public:
 			}
 		} while (idx++ < last);
 
-		// TODO: remove links from this block?
+		// Source removal does not prove that callers have unwound. Keep patch
+		// records until Reset discards the entire code arena's link lifetime.
 		blocks.erase(first, last + 1);
 	}
 
-	void Link(u32 pc, s32* jumpptr);
+	void Link(u32 pc, s32* jumpptr, Metrics* metrics = nullptr);
 
 	__fi void Reset()
 	{

@@ -3,11 +3,11 @@
 
 #include "BaseblockEx.h"
 
-BASEBLOCKEX* BaseBlocks::New(u32 startpc, uptr fnptr)
+BASEBLOCKEX* BaseBlocks::New(u32 startpc, uptr fnptr, Metrics* metrics)
 {
 	std::pair<linkiter_t, linkiter_t> range = links.equal_range(startpc);
 	for (linkiter_t i = range.first; i != range.second; ++i)
-		*(u32*)i->second = fnptr - (i->second + 4);
+		PatchLink(reinterpret_cast<s32*>(i->second), fnptr, metrics);
 
 	return blocks.insert(startpc, fnptr);
 }
@@ -57,12 +57,12 @@ BASEBLOCKEX* BaseBlocks::GetByX86(uptr ip)
 }
 #endif
 
-void BaseBlocks::Link(u32 pc, s32* jumpptr)
+void BaseBlocks::Link(u32 pc, s32* jumpptr, Metrics* metrics)
 {
 	BASEBLOCKEX* targetblock = Get(pc);
 	if (targetblock && targetblock->startpc == pc)
-		*jumpptr = (s32)(targetblock->fnptr - (sptr)(jumpptr + 1));
+		PatchLink(jumpptr, targetblock->fnptr, metrics);
 	else
-		*jumpptr = (s32)(recompiler - (sptr)(jumpptr + 1));
+		PatchLink(jumpptr, recompiler, metrics);
 	links.insert(std::pair<u32, uptr>(pc, (uptr)jumpptr));
 }
