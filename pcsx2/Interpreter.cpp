@@ -39,10 +39,11 @@ static bool intExitExecution = false;
 static fastjmp_buf intJmpBuf;
 static u32 intLastBranchTo;
 
-// When a JIT branch's delay slot crosses a guest page boundary, execute
-// that single branch through the existing interpreter. A TLB
-// exception must escape the step instead of restarting at the handler PC.
-static bool s_jitBoundaryBranchStep = false;
+// The JIT can execute a rare page-boundary continuation through the
+// interpreter (branch delay slot or DI's deferred next instruction).
+// A guest TLB exception must escape that step instead of restarting the
+// interpreter loop at the exception handler PC.
+static bool s_jitBoundaryInterpreterStep = false;
 
 void intEventTest();
 
@@ -286,7 +287,7 @@ static __fi void _doBranch_shared(u32 tar)
 
 	if( cpuRegs.branch != 0 )
 	{
-		if (Cpu == &intCpu && !s_jitBoundaryBranchStep)
+		if (Cpu == &intCpu && !s_jitBoundaryInterpreterStep)
 		{
 			if (intLastBranchTo == tar && EmuConfig.Speedhacks.WaitLoop)
 			{
@@ -618,7 +619,7 @@ void intEventTest()
 	// The JIT bridge must restore its provider and unwind its private jump
 	// target before the scheduler can request a JIT exit. Its generated
 	// epilogue tests events immediately after this single branch and slot.
-	if (s_jitBoundaryBranchStep)
+	if (s_jitBoundaryInterpreterStep)
 		return;
 
 	// Perform counters, ints, and IOP updates:
@@ -652,7 +653,7 @@ static void intCancelInstruction()
 	// Normal interpreter execution retries its loop after a canceled opcode.
 	// The JIT one-branch fallback must return to the recompiler dispatcher
 	// instead; repeating execI() here would execute the guest exception vector.
-	fastjmp_jmp(&intJmpBuf, s_jitBoundaryBranchStep ? 2 : 0);
+	fastjmp_jmp(&intJmpBuf, s_jitBoundaryInterpreterStep ? 2 : 0);
 }
 
 // The recompiler preserves PCSX2's DI compatibility behavior by delaying EIE
@@ -667,7 +668,7 @@ void EEInterpretDINextInstructionFromJIT(u32 nextPC)
 {
 	R5900cpu* const savedCPU = Cpu;
 	Cpu = &intCpu;
-	s_jitBoundaryBranchStep = true;
+	s_jitBoundaryInterpreterStep = true;
 	cpuBlockCycles = 0;
 	branch2 = cpuRegs.branch = 0;
 	cpuRegs.pc = nextPC;
@@ -690,7 +691,7 @@ void EEInterpretDINextInstructionFromJIT(u32 nextPC)
 	// instructions, annulled likely branches and faulted fetches have not.
 	if (stepResult != 0 || !branch2)
 		intUpdateCPUCycles();
-	s_jitBoundaryBranchStep = false;
+	s_jitBoundaryInterpreterStep = false;
 	cpuBlockCycles = 0;
 	branch2 = 0;
 	Cpu = savedCPU;
@@ -704,7 +705,7 @@ void EEInterpretCrossPageBranchFromJIT(u32 branchPC)
 {
 	R5900cpu* const savedCPU = Cpu;
 	Cpu = &intCpu;
-	s_jitBoundaryBranchStep = true;
+	s_jitBoundaryInterpreterStep = true;
 	cpuBlockCycles = 0;
 	branch2 = cpuRegs.branch = 0;
 	cpuRegs.pc = branchPC;
@@ -727,7 +728,7 @@ void EEInterpretCrossPageBranchFromJIT(u32 branchPC)
 		intUpdateCPUCycles();
 	// intCancelInstruction() returns 2 for a guest TLB fault, while normal
 	// branch completion returns directly. Both must restore the JIT context.
-	s_jitBoundaryBranchStep = false;
+	s_jitBoundaryInterpreterStep = false;
 	cpuBlockCycles = 0;
 	branch2 = 0;
 	Cpu = savedCPU;
