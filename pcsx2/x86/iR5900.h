@@ -76,6 +76,12 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot);
 void SetBranchReg();
 void SetBranchImm(u32 imm);
 
+// Host-only, bounded COP0-trace witnesses. kind: 0=JR/JALR, 1=ERET,
+// 2=interpreter boundary result. Emission requires the existing trace opt-in.
+void recEmitControlFlowTrace(u32 sourcePC, u32 kind);
+void recTraceUnknownCompile();
+void recResetControlFlowTrace();
+
 void iFlushCall(int flushtype);
 void recBranchCall(void (*func)());
 void recCall(void (*func)());

@@ -3,6 +3,7 @@
 
 #include "Common.h"
 #include "CDVD/CDVD.h"
+#include "COP0.h"
 #include "DebugTools/Breakpoints.h"
 #include "Elfheader.h"
 #include "GS.h"
@@ -23,6 +24,9 @@
 #include "common/FastJmp.h"
 #include "common/HeapArray.h"
 #include "common/Perf.h"
+
+#include <array>
+#include <cstring>
 
 // Only for MOVQ workaround.
 #include "common/emitter/internal.h"
@@ -153,6 +157,120 @@ static u32 s_nInstCacheSize = 0;
 static BASEBLOCK* s_pCurBlock = nullptr;
 static BASEBLOCKEX* s_pCurBlockEx = nullptr;
 static u32 s_nStartBlock = 0; // virtual start; metadata startpc is physical
+
+namespace
+{
+struct ControlFlowRecord
+{
+	u64 sequence = 0, cycle = 0;
+	u32 kind = 0, source = 0, target = 0, compiledPhysical = 0, currentPhysical = 0;
+	u32 targetPhysical = 0, targetJITReadable = 0, entryHi = 0, status = 0;
+	u32 ra = 0, sp = 0, gp = 0, t9 = 0;
+};
+struct ControlFlowTrace
+{
+	std::array<ControlFlowRecord, 64> records{};
+	u64 sequence = 0, epoch = 0;
+	u32 groups = 0;
+};
+ControlFlowTrace s_controlFlowTrace;
+
+// Called only by generated diagnostic code after the existing full GPR flush.
+// The cycle is sampled before this block's scheduler charge. No guest reads
+// through virtual handlers, mapping changes or guest-state writes occur here.
+void RecordControlFlow(u32 sourceAndKind, u32 compiledPhysical)
+{
+	const u32 kind = sourceAndKind & 3u;
+	if (!PSBBNTlbTraceEnabled() || !g_recUseGuestTLBDispatch ||
+		(kind != 2 && (cpuRegs.CP0.n.Status.val & 0x1eu) != 0x10u))
+		return;
+	auto& trace = s_controlFlowTrace;
+	const u64 sequence = ++trace.sequence;
+	auto& entry = trace.records[(sequence - 1) % trace.records.size()];
+	entry = {sequence, cpuRegs.cycle, kind, sourceAndKind & ~3u, cpuRegs.pc,
+		compiledPhysical, HWADDR(sourceAndKind & ~3u), HWADDR(cpuRegs.pc),
+		recGetInstructionPtr(cpuRegs.pc) ? 1u : 0u, cpuRegs.CP0.n.EntryHi,
+		cpuRegs.CP0.n.Status.val, cpuRegs.GPR.n.ra.UL[0], cpuRegs.GPR.n.sp.UL[0],
+		cpuRegs.GPR.r[28].UL[0], cpuRegs.GPR.r[25].UL[0]};
+}
+} // namespace
+
+void recResetControlFlowTrace()
+{
+	const u64 epoch = s_controlFlowTrace.epoch + 1;
+	s_controlFlowTrace = {};
+	s_controlFlowTrace.epoch = epoch;
+}
+
+void recEmitControlFlowTrace(u32 sourcePC, u32 kind)
+{
+	if (PSBBNTlbTraceEnabled())
+	{
+		// Two immediate arguments preserve the emitter's ABI contract. Source
+		// instruction addresses are aligned; their low bits carry the kind.
+		xFastCall((const void*)RecordControlFlow, sourcePC | kind, HWADDR(sourcePC));
+	}
+}
+
+void recTraceUnknownCompile()
+{
+	auto& trace = s_controlFlowTrace;
+	if (!PSBBNTlbTraceEnabled() || !g_recUseGuestTLBDispatch || trace.groups >= 4)
+		return;
+	const u32 guestPC = g_recompilingDelaySlot ? pc : pc - 4;
+	const u32 jitPhysical = HWADDR(guestPC);
+	const bool managed = guestPC < 0x80000000u || guestPC >= 0xc0000000u;
+	const auto active = managed ?
+		BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi)) : EEActiveTLBPageMap{};
+	const auto found = active.find(guestPC >> 12);
+	const bool archMapped = !managed || found != active.end();
+	const bool scratch = managed && found != active.end() && found->second.scratchpad;
+	const u32 archPhysical = !managed ? (guestPC & 0x1fffffffu) :
+		(found != active.end() ? found->second.physicalAddress + (guestPC & 0xfffu) : 0xffffffffu);
+	const u32* archCode = archMapped ? (scratch ?
+		reinterpret_cast<const u32*>(eeMem->Scratch + archPhysical) :
+		static_cast<const u32*>(PSM(archPhysical))) : nullptr;
+	const u32* jitCode = recGetInstructionPtr(guestPC);
+	const auto* vmap = vtlb_private::vtlbdata.vmap ?
+		&vtlb_private::vtlbdata.vmap[guestPC >> 12] : nullptr;
+	const bool vmapDirect = vmap && !vmap->isHandler(guestPC);
+	u32 vmapWord = 0;
+	if (vmapDirect)
+		std::memcpy(&vmapWord, reinterpret_cast<const void*>(vmap->assumePtr(guestPC)), sizeof(vmapWord));
+	++trace.groups;
+	Console.WriteLn("EE-JIT-COMPILE epoch=%llu group=%u compilePC=%08x blockVirtual=%08x dispatcherEntry=%08x opcode=%08x slot=%u ASID=%02x EntryHi=%08x Status=%08x EPC=%08x Cause=%08x",
+		static_cast<unsigned long long>(trace.epoch), trace.groups, guestPC, s_nStartBlock,
+		cpuRegs.pc, cpuRegs.code, static_cast<u32>(g_recompilingDelaySlot),
+		cpuRegs.CP0.n.EntryHi & 0xffu, cpuRegs.CP0.n.EntryHi, cpuRegs.CP0.n.Status.val, cpuRegs.CP0.n.EPC, cpuRegs.CP0.n.Cause);
+	Console.WriteLn("EE-JIT-COMPILE mapping JITPhysical=%08x JITReadable=%u JITWord=%08x managed=%u archMapped=%u scratch=%u archPhysical=%08x archReadable=%u archWord=%08x vmapDirect=%u vmapWord=%08x",
+		jitPhysical, jitCode ? 1u : 0u, jitCode ? *jitCode : 0u, static_cast<u32>(managed),
+		static_cast<u32>(archMapped), static_cast<u32>(scratch), archPhysical,
+		archCode ? 1u : 0u, archCode ? *archCode : 0u, static_cast<u32>(vmapDirect), vmapWord);
+	Console.WriteLn("EE-JIT-COMPILE entry-register-sample ra=%08x sp=%08x gp=%08x t9=%08x; partial control-flow history, cycles before scheduler charge",
+		cpuRegs.GPR.n.ra.UL[0], cpuRegs.GPR.n.sp.UL[0], cpuRegs.GPR.r[28].UL[0], cpuRegs.GPR.r[25].UL[0]);
+	u32 rawMatches = 0;
+	for (u32 i = 0; managed && i < std::size(tlb); i++)
+	{
+		const auto& t = tlb[i];
+		if ((guestPC & ~((t.Mask() << 13) | 0x1fffu)) != t.VPN2() ||
+			(!t.isGlobal() && t.EntryHi.ASID != (cpuRegs.CP0.n.EntryHi & 0xffu)))
+			continue;
+		if (rawMatches++ < 2)
+			Console.WriteLn("EE-JIT-COMPILE rawTLB slot=%u Mask=%08x Hi=%08x Lo0=%08x Lo1=%08x",
+				i, t.PageMask.UL, t.EntryHi.UL, t.EntryLo0.UL, t.EntryLo1.UL);
+	}
+	Console.WriteLn("EE-JIT-COMPILE rawTLBMatches=%u (at most two shown)", rawMatches);
+	const u64 count = std::min<u64>(trace.sequence, 16);
+	for (u64 sequence = trace.sequence - count + 1; sequence <= trace.sequence; sequence++)
+	{
+		const auto& e = trace.records[(sequence - 1) % trace.records.size()];
+		Console.WriteLn("EE-JIT-FLOW seq=%llu cycleBeforeCharge=%llu kind=%u compiledSource=%08x target=%08x compiledPhysical=%08x currentSourcePhysical=%08x targetPhysical=%08x targetJITReadable=%u EntryHi=%08x Status=%08x ra=%08x sp=%08x gp=%08x t9=%08x",
+			static_cast<unsigned long long>(e.sequence), static_cast<unsigned long long>(e.cycle),
+			e.kind, e.source, e.target, e.compiledPhysical, e.currentPhysical, e.targetPhysical,
+			e.targetJITReadable, e.entryHi, e.status, e.ra, e.sp, e.gp, e.t9);
+	}
+}
+
 u32 s_nEndBlock = 0; // what pc the current block ends
 u32 s_branchTo;
 static bool s_nBlockFF;
@@ -906,6 +1024,7 @@ static void recSafeExitExecution()
 
 static void recResetEE()
 {
+	recResetControlFlowTrace();
 	eeRecResetToNative = true;
 	if (eeCpuExecuting)
 	{
@@ -1015,6 +1134,7 @@ void SetBranchReg()
 	xForwardJNZ32 unaligned;
 
 	iFlushCall(FLUSH_EVERYTHING);
+	recEmitControlFlowTrace(pc - 8, 0);
 	iBranchTest();
 
 	unaligned.SetTarget();
@@ -2891,6 +3011,7 @@ StartRecomp:
 				// at runtime, including in instruction-dump builds.
 				iFlushCall(FLUSH_INTERPRETER);
 				xFastCall((const void*)EEInterpretCrossPageBranchFromJIT, interpreterBranchPC);
+				recEmitControlFlowTrace(interpreterBranchPC, 2);
 				pc += 4;
 				g_branch = 2;
 				continue;

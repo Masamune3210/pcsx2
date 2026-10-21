@@ -1,0 +1,226 @@
+{
+  "version": "PCSX2 v2.9.92-225-gb8a917d02",
+  "log": {
+    "path": "G:\\Users\\Johnny\\Documents\\PCSX2\\logs\\emulog.txt",
+    "bytes": 4490964,
+    "lines": 49711,
+    "sha256": "578be68369789613627bcd8fe074fee28645d415abb90ac164ac5882654edbb5"
+  },
+  "kernel_log": {
+    "path": "G:\\Users\\Johnny\\Documents\\PCSX2\\logs\\psbbn-kernel-log.txt",
+    "bytes": 8636,
+    "sha256": "c5a251d07762e4a3127ab887dbbe97314e12ba5f911dc63b134f882d556ed3e9",
+    "root_mount": true
+  },
+  "counts": {
+    "unarmed_vtlb_diagnostics": 0,
+    "old_403fc0_faults": 0,
+    "unknown_compile_messages": 4,
+    "journal_word_samples": 4,
+    "boundary_fallback_messages": 7
+  },
+  "unknown_compile_messages": [
+    {
+      "line": 48725,
+      "text": "[   24.0730] EE: Unrecognized op 5"
+    },
+    {
+      "line": 48728,
+      "text": "[   24.0731] EE: Unrecognized op 7665642f"
+    },
+    {
+      "line": 48729,
+      "text": "[   24.0732] EE: Unrecognized op 732c5"
+    },
+    {
+      "line": 48733,
+      "text": "[   24.0736] EE: Unrecognized op 732c5"
+    }
+  ],
+  "focused_transition": [
+    {
+      "line": 48722,
+      "text": "[   24.0727] cpuTlbMiss pc:80030f84, cycl:bb7c1914, addr: 7fff7a04, status=10010c01, code=c"
+    },
+    {
+      "line": 48723,
+      "text": "[   24.0729] cpuTlbMiss pc:2ab59284, cycl:bb7c1b94, addr: 2ab59280, status=10c11, code=8"
+    },
+    {
+      "line": 48724,
+      "text": "[   24.0730] Unknown R5900 SPECIAL: 00000005"
+    },
+    {
+      "line": 48725,
+      "text": "[   24.0730] EE: Unrecognized op 5"
+    },
+    {
+      "line": 48726,
+      "text": "[   24.0731] Unknown R5900 SPECIAL: 000732C5"
+    },
+    {
+      "line": 48727,
+      "text": "[   24.0731] Unknown R5900 Standard: 7665642F"
+    },
+    {
+      "line": 48728,
+      "text": "[   24.0731] EE: Unrecognized op 7665642f"
+    },
+    {
+      "line": 48729,
+      "text": "[   24.0732] EE: Unrecognized op 732c5"
+    },
+    {
+      "line": 48730,
+      "text": "[   24.0732] Branch fb89960 in delay slot!"
+    },
+    {
+      "line": 48731,
+      "text": "[   24.0735] cpuTlbMiss pc:7fff7750, cycl:bb7c1c98, addr: 6e88, status=10c11, code=8"
+    },
+    {
+      "line": 48732,
+      "text": "[   24.0735] Unknown R5900 SPECIAL: 000732C5"
+    },
+    {
+      "line": 48733,
+      "text": "[   24.0736] EE: Unrecognized op 732c5"
+    },
+    {
+      "line": 48734,
+      "text": "[   24.0736] Branch fb89960 in delay slot!"
+    },
+    {
+      "line": 48735,
+      "text": "[   24.0737] cpuTlbMiss pc:7fff7750, cycl:bb7c1cb3, addr: 6e88, status=10c11, code=8"
+    }
+  ],
+  "snapshots": [
+    {
+      "slot": "001",
+      "path": "H:\\Emulation Files\\pcsx2\\sstates\\PSBBN-auto-1792559553114767-001.p2s",
+      "read_successfully": false,
+      "sha256": null,
+      "log_capture_pc": "8000dad0",
+      "exists_at_receipt_generation": false
+    },
+    {
+      "slot": "002",
+      "path": "H:\\Emulation Files\\pcsx2\\sstates\\PSBBN-auto-1792559553114767-002.p2s",
+      "read_successfully": true,
+      "hash_computed_during_prior_read": true,
+      "sha256": "ee36fa7776fa10228532cc0b6fcd19b55064eec98c5a0ab649b6b8667ad6746d",
+      "cpu_offset": 333,
+      "pc": "800185f0",
+      "cycle": 4472398310,
+      "status": "10010c01",
+      "cause": "00000800",
+      "epc": "800185f0",
+      "entry_hi": "00400110",
+      "bad_vaddr": "00401764",
+      "gp": "80016000",
+      "sp": "80017f40",
+      "ra": "8001860c",
+      "word_at_gp_plus_14": "00000000",
+      "screenshot_sha256": "95843424d6df0995e32ef8ae3da5caf053c48be6b042e974f1c996aff7ea5021",
+      "exists_at_receipt_generation": false
+    },
+    {
+      "slot": "003",
+      "path": "H:\\Emulation Files\\pcsx2\\sstates\\PSBBN-auto-1792559553114767-003.p2s",
+      "read_successfully": true,
+      "hash_computed_during_prior_read": true,
+      "sha256": "4da1edf8c544973d6454ab9b104233fd565fb36e3ac1f42b2aa7598f1d2b9d88",
+      "cpu_offset": 333,
+      "pc": "800185f0",
+      "cycle": 7424470313,
+      "status": "10010c01",
+      "cause": "00000400",
+      "epc": "800185d8",
+      "entry_hi": "00400110",
+      "bad_vaddr": "00401764",
+      "gp": "80016000",
+      "sp": "80017f40",
+      "ra": "8001860c",
+      "word_at_gp_plus_14": "00000000",
+      "screenshot_sha256": "95843424d6df0995e32ef8ae3da5caf053c48be6b042e974f1c996aff7ea5021",
+      "exists_at_receipt_generation": false
+    }
+  ],
+  "snapshot_002_to_003": {
+    "cycle_delta": 2952072003,
+    "changed_ee_4k_pages": 28,
+    "screenshots_identical": true,
+    "source": "Direct comparison during successful earlier ZIP reads; originals unavailable at receipt generation."
+  },
+  "captured_idle_loop_words": [
+    {
+      "pc": "800185d8",
+      "word": "3c02801f"
+    },
+    {
+      "pc": "800185dc",
+      "word": "8c428b10"
+    },
+    {
+      "pc": "800185e0",
+      "word": "10400003"
+    },
+    {
+      "pc": "800185e4",
+      "word": "00000000"
+    },
+    {
+      "pc": "800185e8",
+      "word": "0040f809"
+    },
+    {
+      "pc": "800185ec",
+      "word": "00000000"
+    },
+    {
+      "pc": "800185f0",
+      "word": "8f820014"
+    },
+    {
+      "pc": "800185f4",
+      "word": "1040fff8"
+    },
+    {
+      "pc": "800185f8",
+      "word": "00000000"
+    },
+    {
+      "pc": "800185fc",
+      "word": "0c009920"
+    },
+    {
+      "pc": "80018600",
+      "word": "00000000"
+    },
+    {
+      "pc": "80018604",
+      "word": "0c00f22c"
+    },
+    {
+      "pc": "80018608",
+      "word": "00000000"
+    },
+    {
+      "pc": "8001860c",
+      "word": "0800617c"
+    },
+    {
+      "pc": "80018610",
+      "word": "00000000"
+    }
+  ],
+  "classification": [
+    "recUnknown and branch-in-delay messages are compilation diagnostics; the latter logs an opcode, not a PC.",
+    "Sampled memory-fault next-PC7FFF7750 suggests faulting instruction7FFF774C; its incoming branch source is not logged.",
+    "Two later captures match a kernel idle-loop pattern with advancing cycles, different interrupt-related state and28changedRAMpages; no hang or successful boot is established.",
+    "Snapshot001 was named by user/log but not opened successfully.",
+    "Snapshot002and003 were read as ZIPs, never loaded; originals later disappeared from directory.",
+    "No agent build/C++tests/emulatorlaunch or guest/image writes."
+  ]
+}

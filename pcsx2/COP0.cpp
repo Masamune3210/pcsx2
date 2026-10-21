@@ -11,6 +11,10 @@
 #include <cstring>
 #include <unordered_set>
 
+#if defined(_M_X64) || defined(__x86_64__)
+void recResetControlFlowTrace();
+#endif
+
 // Diagnostic observer only. Existing EE COP0 trace settings are the opt-in.
 // No guest memory reads: instruction_sample can be stale on fetch faults and JIT misses.
 namespace
@@ -84,6 +88,9 @@ u32 s_psbbn_gp_mismatch_events = 0;
 
 void PSBBNResetTlbTrace()
 {
+#if defined(_M_X64) || defined(__x86_64__)
+	recResetControlFlowTrace();
+#endif
 	s_psbbn_trace = {};
 	s_psbbn_late = {};
 	s_psbbn_user_faults = {};
