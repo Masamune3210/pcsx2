@@ -717,6 +717,14 @@ void _eeMoveGPRtoM(uptr to, int fromgpr)
 
 // Use this to call into interpreter functions that require an immediate branchtest
 // to be done afterward (anything that throws an exception or enables interrupts, etc).
+// DI's EE interrupt-disable operation is deliberately delayed until the
+// following instruction. The runtime bridge prevents that instruction from
+// becoming an untracked second physical page in a fine-mode BaseBlocks span.
+bool recNeedsDIBoundaryContinuation()
+{
+	return EERecNeedsRuntimeDINextInstruction(g_recUseGuestTLBDispatch != 0, pc, g_recompilingDelaySlot);
+}
+
 void recBranchCall(void (*func)())
 {
 	// In order to make sure a branch test is performed, the nextBranchCycle is set
