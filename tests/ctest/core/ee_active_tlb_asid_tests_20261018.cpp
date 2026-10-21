@@ -604,3 +604,37 @@ TEST(EEActiveTLB, SeededProjectionAndProductionActionsMatchIndependentModel)
 	}
 	EXPECT_GT(memoHits, 100U);
 }
+
+TEST(EEActiveTLB, ProfileCanDisablePermissionOnlyShortcutWithoutChangingMappings)
+{
+	const EEActiveTLBPageMap before{{0x100u, EEActiveTLBPage{0x00100000u, false, false}}};
+	const EEActiveTLBPageMap after{{0x100u, EEActiveTLBPage{0x00100000u, false, true}}};
+	u32 removed = 0, installed = 0, permissionOnly = 0;
+	auto record = [&](EEActiveTLBMappingAction action, u32, const EEActiveTLBPage&) {
+		removed += action == EEActiveTLBMappingAction::Remove;
+		installed += action == EEActiveTLBMappingAction::Install;
+		permissionOnly += action == EEActiveTLBMappingAction::PermissionOnly;
+	};
+	PlanEEActiveTLBMappingChanges(before, after, record, false);
+	EXPECT_EQ(removed, 1u);
+	EXPECT_EQ(installed, 1u);
+	EXPECT_EQ(permissionOnly, 0u);
+	removed = installed = permissionOnly = 0;
+	PlanEEActiveTLBMappingChanges(before, after, record, true);
+	EXPECT_EQ(removed, 0u);
+	EXPECT_EQ(installed, 0u);
+	EXPECT_EQ(permissionOnly, 1u);
+}
+
+TEST(EEActiveTLB, IdenticalBackingAndPermissionNeverTriggersMappingMutation)
+{
+	const EEActiveTLBPageMap before{{0x120u, EEActiveTLBPage{0x00200000u, false, true}}};
+	u32 changes = 0;
+	for (const bool shortcut : {false, true})
+	{
+		PlanEEActiveTLBMappingChanges(before, before, [&](EEActiveTLBMappingAction action, u32, const EEActiveTLBPage&) {
+			changes += action != EEActiveTLBMappingAction::Unchanged;
+		}, shortcut);
+	}
+	EXPECT_EQ(changes, 0u);
+}
