@@ -37,7 +37,8 @@ inline constexpr const char* EEJitInvalidationCauseName(EEJitInvalidationCause c
 // Implemented by the x86 EE recompiler. Existing virtual CPU-provider callbacks
 // remain separate so a known physical address is never translated twice.
 void recClearPhysical(u32 address, u32 dwords,
-	EEJitInvalidationCause cause = EEJitInvalidationCause::Unknown);
+	EEJitInvalidationCause cause = EEJitInvalidationCause::Unknown,
+	u32 triggeringVirtualPage = 0xffffffffu);
 void EEJitRecordFastmemBackpatch(u32 hostBytes);
 
 // Diagnostic source fingerprints are NOT a correctness/reuse key: data mapping,
