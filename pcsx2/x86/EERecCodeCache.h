@@ -6,6 +6,7 @@
 #include "x86/BaseblockEx.h"
 
 #include <algorithm>
+#include <array>
 
 // Native blocks keep their original linking policy. In guest-TLB mode, an
 // independently remappable target VPN must be resolved at execution, including
@@ -53,6 +54,50 @@ inline BASEBLOCK* EERecGetPhysicalBlock(const uptr* physicalLUT, u32 address)
 	return reinterpret_cast<BASEBLOCK*>(physicalLUT[address >> 16] +
 		static_cast<uptr>(address) * (sizeof(BASEBLOCK) / 4));
 }
+
+
+// A conservative negative filter for physical code-cache invalidation.
+// A page can be skipped only if no recompiler block has *ever* touched it
+// during this cache generation. Bits intentionally remain set after individual
+// blocks are invalidated; this prevents false negatives for overlapping
+// blocks, pending incoming links, and in-flight recompilation.
+template <u32 RAMBytes>
+class EERecCompiledPhysicalPages
+{
+	static_assert(RAMBytes != 0 && (RAMBytes & 0xfffu) == 0);
+	static constexpr u32 PageCount = RAMBytes >> 12;
+	std::array<u64, (PageCount + 63u) / 64u> m_seen{};
+
+public:
+	void Reset() { m_seen.fill(0); }
+
+	void Mark(u32 physicalAddress)
+	{
+		if (physicalAddress < RAMBytes)
+		{
+			const u32 page = physicalAddress >> 12;
+			m_seen[page >> 6] |= (u64{1} << (page & 63u));
+		}
+	}
+
+	// Clear sizes are in 32-bit guest instructions / dwords. Covers every
+	// touched physical page, including a code block crossing a 4 KiB edge.
+	// Addresses outside the managed RAM window are conservatively retained.
+	bool MayContainCode(u32 physicalAddress, u32 dwords) const
+	{
+		if (dwords == 0)
+			return false;
+		const u64 lastByte = static_cast<u64>(physicalAddress) + static_cast<u64>(dwords) * 4 - 1;
+		if (lastByte >= RAMBytes)
+			return true;
+		for (u32 page = physicalAddress >> 12; page <= static_cast<u32>(lastByte >> 12); ++page)
+		{
+			if (m_seen[page >> 6] & (u64{1} << (page & 63u)))
+				return true;
+		}
+		return false;
+	}
+};
 
 // Shared with the standalone cache regressions. This is the recompiler's
 // existing overlap/link invalidation, using physical dispatch entries only.
