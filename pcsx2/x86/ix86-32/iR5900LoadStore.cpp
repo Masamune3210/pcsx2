@@ -223,18 +223,18 @@ void recLHU()
 }
 void recLW()
 {
-	// The guest load at 0x800B1580 reads back the bitmap pointer written
-	// immediately beforehand. Capture both sides without modifying the data.
-	if (pc == 0x800B1580)
+	// recompileNextInstruction() increments its compiler PC before emitting
+	// the opcode. The actual guest load is at pc - 4, not pc.
+	if (pc == 0x800B1584)
 	{
-		iFlushCall(FLUSH_FULLVTLB);
-		xFastCall((void*)PSBBNTraceJournalWordAccess, pc, 2u);
+		iFlushCall(FLUSH_EVERYTHING);
+		xFastCall((void*)PSBBNTraceJournalWordAccess, 0x800B1580u, 2u);
 	}
 	recLoad(32, true);
-	if (pc == 0x800B1580)
+	if (pc == 0x800B1584)
 	{
-		iFlushCall(FLUSH_FULLVTLB);
-		xFastCall((void*)PSBBNTraceJournalWordAccess, pc, 3u);
+		iFlushCall(FLUSH_EVERYTHING);
+		xFastCall((void*)PSBBNTraceJournalWordAccess, 0x800B1580u, 3u);
 	}
 	EE::Profiler.EmitOp(eeOpcode::LW);
 }
@@ -266,17 +266,17 @@ void recSH()
 }
 void recSW()
 {
-	// Target the observed journal slot-pointer store, not every Linux write.
-	if (pc == 0x800B1578)
+	// Same compiler-PC convention as recLW(): guest SW is at pc - 4.
+	if (pc == 0x800B157Cu)
 	{
-		iFlushCall(FLUSH_FULLVTLB);
-		xFastCall((void*)PSBBNTraceJournalWordAccess, pc, 0u);
+		iFlushCall(FLUSH_EVERYTHING);
+		xFastCall((void*)PSBBNTraceJournalWordAccess, 0x800B1578u, 0u);
 	}
 	recStore(32);
-	if (pc == 0x800B1578)
+	if (pc == 0x800B157Cu)
 	{
-		iFlushCall(FLUSH_FULLVTLB);
-		xFastCall((void*)PSBBNTraceJournalWordAccess, pc, 1u);
+		iFlushCall(FLUSH_EVERYTHING);
+		xFastCall((void*)PSBBNTraceJournalWordAccess, 0x800B1578u, 1u);
 	}
 	EE::Profiler.EmitOp(eeOpcode::SW);
 }
