@@ -944,6 +944,13 @@ namespace
 EEActiveTLBPageMap s_active_tlb_pages;
 }
 
+#if defined(_M_X64) || defined(__x86_64__)
+// Implemented by the x64 EE recompiler. Its code dispatch needs the same
+// 4 KiB guest virtual->physical aliases as vTLB data accesses.
+void recMapTLBPage(u32 virtualPage, u32 physicalPage);
+void recUnmapTLBPage(u32 virtualPage);
+#endif
+
 void SyncActiveTLBMappings()
 {
 	EEActiveTLBPageMap desired =
@@ -960,6 +967,9 @@ void SyncActiveTLBMappings()
 		{
 			memClearPageAddr(page << 12);
 			Cpu->Clear(page << 12, 0x400);
+#if defined(_M_X64) || defined(__x86_64__)
+			recUnmapTLBPage(page << 12);
+#endif
 		}
 	}
 	std::unordered_set<u32> scratchBasesToUpdate;
@@ -979,6 +989,9 @@ void SyncActiveTLBMappings()
 		}
 		memSetPageAddr(page << 12, now.physicalAddress);
 		Cpu->Clear(page << 12, 0x400);
+#if defined(_M_X64) || defined(__x86_64__)
+		recMapTLBPage(page << 12, now.physicalAddress);
+#endif
 	}
 	for (const u32 basePage : scratchBasesToUpdate)
 	{
@@ -1037,6 +1050,9 @@ void ResetActiveTLBMappings()
 		memClearPageAddr(page << 12);
 		if (Cpu)
 			Cpu->Clear(page << 12, 0x400);
+#if defined(_M_X64) || defined(__x86_64__)
+		recUnmapTLBPage(page << 12);
+#endif
 	}
 	s_active_tlb_pages.clear();
 }
