@@ -7,7 +7,13 @@ add_pcsx2_test(core_test
 )
 
 if(ARCH_X86)
-	target_sources(core_test PRIVATE ee_rec_code_cache_tests_20261020.cpp)
+	target_sources(core_test PRIVATE
+		ee_rec_code_cache_tests_20261020.cpp
+		ee_jit_coherence_tests_20261021.cpp
+		ee_rec_coherence_policy_tests_20261021.cpp
+		ee_rec_boundary_bridge_tests_20261021.cpp
+		ee_active_tlb_sync_tests_20261021.cpp
+	)
 endif()
 
 set(multi_isa_sources
