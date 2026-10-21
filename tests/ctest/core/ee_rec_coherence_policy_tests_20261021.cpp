@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
+#include "EEExecutionProfile.h"
 #include "x86/EERecCoherence.h"
 #include <gtest/gtest.h>
 
@@ -65,4 +66,40 @@ TEST(EERecCoherencePolicy, GuestTLBManagedConstantDataAddressesNeedDependenciesB
 	EXPECT_FALSE(EERecConstantAddressUsesGuestTLB(0x80000000u));
 	EXPECT_FALSE(EERecConstantAddressUsesGuestTLB(0xa0000000u));
 	EXPECT_FALSE(EERecConstantAddressUsesGuestTLB(0xbfffffffu));
+}
+
+TEST(EEExecutionProfile, AutomaticRecognitionRequiresVerifiedBootDiscSerial)
+{
+	EXPECT_EQ(ResolveEEExecutionProfile(EEExecutionProfilePreference::Auto, "SCPN-60160"),
+		EEExecutionProfileMode::ExtendedMMU);
+	EXPECT_EQ(ResolveEEExecutionProfile(EEExecutionProfilePreference::Auto, "SLUS-00000"),
+		EEExecutionProfileMode::Standard);
+	EXPECT_EQ(ResolveEEExecutionProfile(EEExecutionProfilePreference::Auto, ""),
+		EEExecutionProfileMode::Standard);
+}
+
+TEST(EEExecutionProfile, ManualPreferenceOverridesDiscDetection)
+{
+	EXPECT_EQ(ResolveEEExecutionProfile(EEExecutionProfilePreference::Standard, "SCPN-60160"),
+		EEExecutionProfileMode::Standard);
+	EXPECT_EQ(ResolveEEExecutionProfile(EEExecutionProfilePreference::ExtendedMMU, ""),
+		EEExecutionProfileMode::ExtendedMMU);
+	EXPECT_EQ(ParseEEExecutionProfilePreference("Extended"), EEExecutionProfilePreference::ExtendedMMU);
+	EXPECT_EQ(ParseEEExecutionProfilePreference("Standard"), EEExecutionProfilePreference::Standard);
+	EXPECT_EQ(ParseEEExecutionProfilePreference("Auto"), EEExecutionProfilePreference::Auto);
+	EXPECT_EQ(ParseEEExecutionProfilePreference("unknown"), EEExecutionProfilePreference::Auto);
+}
+
+TEST(EEExecutionProfile, RuntimeSelectionIsLatchedUntilShutdown)
+{
+	EEExecutionProfile::ResetAtShutdown();
+	EXPECT_FALSE(EEExecutionProfile::IsExtendedMMU());
+	EXPECT_TRUE(EEExecutionProfile::SelectAtBoot(EEExecutionProfileMode::ExtendedMMU));
+	EXPECT_TRUE(EEExecutionProfile::IsExtendedMMU());
+	EXPECT_FALSE(EEExecutionProfile::SelectAtBoot(EEExecutionProfileMode::Standard));
+	EXPECT_TRUE(EEExecutionProfile::IsExtendedMMU());
+	EEExecutionProfile::ResetAtShutdown();
+	EXPECT_TRUE(EEExecutionProfile::SelectAtBoot(EEExecutionProfileMode::Standard));
+	EXPECT_FALSE(EEExecutionProfile::IsExtendedMMU());
+	EEExecutionProfile::ResetAtShutdown();
 }
