@@ -957,7 +957,7 @@ struct EETLBChurnStats
 {
 	u64 syncs = 0, tlbWrites = 0, asidChanges = 0;
 	u64 removed = 0, installed = 0, unchanged = 0;
-	u64 physicalClearRequests = 0, scratchClearRequests = 0;
+	u64 physicalClearRequests = 0, duplicatePhysicalClearsAvoided = 0, scratchClearRequests = 0;
 	u64 syncMicroseconds = 0;
 };
 EETLBChurnStats s_ee_tlb_churn;
@@ -968,7 +968,7 @@ void EEReportTLBChurn(const char* reason)
 	if (!PSBBNTlbTraceEnabled())
 		return;
 	const auto& s = s_ee_tlb_churn;
-	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu physicalClearRequests=%llu scratchClearRequests=%llu syncUs=%llu",
+	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu",
 		reason, static_cast<unsigned long long>(s.syncs),
 		static_cast<unsigned long long>(s.tlbWrites),
 		static_cast<unsigned long long>(s.asidChanges),
@@ -976,6 +976,7 @@ void EEReportTLBChurn(const char* reason)
 		static_cast<unsigned long long>(s.installed),
 		static_cast<unsigned long long>(s.unchanged),
 		static_cast<unsigned long long>(s.physicalClearRequests),
+		static_cast<unsigned long long>(s.duplicatePhysicalClearsAvoided),
 		static_cast<unsigned long long>(s.scratchClearRequests),
 		static_cast<unsigned long long>(s.syncMicroseconds));
 }
@@ -1016,6 +1017,26 @@ void SyncActiveTLBMappings()
 	if (profiling)
 		started = std::chrono::steady_clock::now();
 	u32 removed = 0, installed = 0, unchanged = 0;
+	// Invalidation is keyed by compiled guest *physical* code. Removing an
+	// alias and installing a replacement can touch the same physical page
+	// several times in one synchronous TLB projection. It is sufficient to
+	// invalidate that page once before guest execution resumes.
+	std::unordered_set<u32> physicallyInvalidatedPages;
+	auto clearCodeForMapping = [&](u32 page, const EEActiveTLBPage& mapping)
+	{
+#if defined(_M_X64) || defined(__x86_64__)
+		if (!mapping.scratchpad && mapping.physicalAddress < Ps2MemSize::ExposedRam)
+		{
+			if (!physicallyInvalidatedPages.insert(mapping.physicalAddress >> 12).second)
+			{
+				if (profiling)
+					++s_ee_tlb_churn.duplicatePhysicalClearsAvoided;
+				return;
+			}
+		}
+#endif
+		ClearActiveTLBCodePage(page, mapping);
+	};
 	EEActiveTLBPageMap desired =
 		BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi));
 
@@ -1030,7 +1051,7 @@ void SyncActiveTLBMappings()
 		{
 			++removed;
 			memClearPageAddr(page << 12);
-			ClearActiveTLBCodePage(page, old);
+			clearCodeForMapping(page, old);
 #if defined(_M_X64) || defined(__x86_64__)
 			recUnmapTLBPage(page << 12);
 #endif
@@ -1056,7 +1077,7 @@ void SyncActiveTLBMappings()
 			continue;
 		}
 		memSetPageAddr(page << 12, now.physicalAddress);
-		ClearActiveTLBCodePage(page, now);
+		clearCodeForMapping(page, now);
 #if defined(_M_X64) || defined(__x86_64__)
 		recMapTLBPage(page << 12, now.physicalAddress);
 #endif
