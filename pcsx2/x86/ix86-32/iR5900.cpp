@@ -552,7 +552,7 @@ static void recError(u32 error)
 		const u32 fetch_pc = cpuRegs.pc;
 		if ((fetch_pc < 0x80000000u || fetch_pc >= 0xc0000000u) && vtlb_private::vtlbdata.vmap)
 		{
-			const auto& mapping = vtlb_private::vtlbdata.vmap[fetch_pc >> VTLB_PAGE_BITS];
+			const auto& mapping = vtlb_private::vtlbdata.vmap[fetch_pc >> vtlb_private::VTLB_PAGE_BITS];
 			if (mapping.isHandler(fetch_pc) && mapping.assumeHandlerGetID() == 0)
 			{
 				// cpuTlbMissR() subtracts 4 from cpuRegs.pc before recording
