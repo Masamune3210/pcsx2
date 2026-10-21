@@ -24,6 +24,20 @@ EmulationSettingsWidget::EmulationSettingsWidget(SettingsWindow* settings_dialog
 
 	setupTab(m_ui);
 
+	// This mode is latched when the virtual PS2 boots. The Qt binder handles
+	// both global and per-game overrides, including "Use Global Setting".
+	// Stable item data, not translated labels, is written to EmuCore.
+	m_ui.eeExecutionProfile->addItem(tr("Automatic (Default)"), QStringLiteral("Auto"));
+	m_ui.eeExecutionProfile->addItem(tr("Standard"), QStringLiteral("Standard"));
+	m_ui.eeExecutionProfile->addItem(tr("Extended MMU / OS"), QStringLiteral("Extended"));
+	SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.eeExecutionProfile, "EmuCore", "EEExecutionProfile", "Auto");
+	dialog()->registerWidgetHelp(m_ui.eeExecutionProfile, tr("EE Execution Profile"), tr("Automatic (Default)"),
+		tr("Selects the Emotion Engine recompiler's MMU compatibility policy. "
+		   "Automatic selects Extended for recognized PSBBN disc boots; HDD-only BB Navigator boots need Extended selected explicitly. "
+		   "Standard preserves the fork's current conservative cache policy. "
+		   "Extended enables experimental MMU/TLB cache optimizations. "
+		   "<b>The selection is latched at PS2 startup. Fully shut down and boot the PS2 again to apply a change.</b>"));
+
 	initializeSpeedCombo(m_ui.normalSpeed, "Framerate", "NominalScalar", 1.0f);
 	initializeSpeedCombo(m_ui.fastForwardSpeed, "Framerate", "TurboScalar", 2.0f);
 	initializeSpeedCombo(m_ui.slowMotionSpeed, "Framerate", "SlomoScalar", 0.5f);
