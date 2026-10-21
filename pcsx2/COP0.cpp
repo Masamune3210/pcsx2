@@ -1065,7 +1065,8 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	auto clearCodeForMapping = [&](u32 page, const EEActiveTLBPage& mapping)
 	{
 #if defined(_M_X64) || defined(__x86_64__)
-		if (!physicallyInvalidatedPages.ShouldInvalidate(mapping, Ps2MemSize::ExposedRam))
+		if (EEExecutionProfile::IsExtendedMMU() &&
+			!physicallyInvalidatedPages.ShouldInvalidate(mapping, Ps2MemSize::ExposedRam))
 		{
 			if (profiling)
 				++s_ee_tlb_churn.duplicatePhysicalClearsAvoided;
