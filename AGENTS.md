@@ -1,8 +1,10 @@
-# Current objective on the PSBBN EE JIT branch (2026-10-21)
+# Current PSBBN EE JIT objective (2026-10-21, updated)
 
-**If working on `note-working/psbbn-jit-reiserfs-mmu-witness-20261020`:** read [execution-profile isolation v31](notes/PSBBN_EE_EXECUTION_PROFILE_ISOLATION_20261021_v31.md), then [current v32 checkpoint](notes/PSBBN_EE_PROFILE_ISOLATION_SHARED_CACHE_REVIEW_20261021_v32.md) FIRST. The immediate objective is to protect ordinary PS2 games by separating verified common EE hardware fixes from experimental OS/MMU JIT policy, with Standard versus Extended compatibility profiles. Review the actual commit histories relative to `testing` and `note-working/psbbn-tlb-boot-20261017`, not only recent optimization commits. Do not call Standard equivalent to `testing` yet. No dormant-code reuse, reclamation, or wholesale cache invalidation removal until the profile boundary, writer dependencies, savestates, and full JIT behavior have been verified. Do not compile or run the user's Windows emulator in lieu of their testing; source checks may be documented separately. Remain on the named branch and update a uniquely named follow-up handoff.
+**On `note-working/psbbn-jit-reiserfs-mmu-witness-20261020`, read [v33 current policy](notes/PSBBN_EE_PROFILE_SCOPE_DECISION_20261021_v33.md) first**, then [v32 technical checkpoint](notes/PSBBN_EE_PROFILE_ISOLATION_SHARED_CACHE_REVIEW_20261021_v32.md) if source context is needed.
 
-The DEV9 ATA audit and Run12 instructions further below are **historical and branch-specific**, not the current priority on this PSBBN EE branch. Preserve that unrelated work without mixing it into the EE profile migration.
+**User decision:** This is a personal fork. Leave Standard's existing behavior alone while it remains sane; **do not try to force byte-for-byte upstream parity** or automatically roll back post-upstream changes. Upstream may deliberately retain compatibility shortcuts. Also do not presume existing modifications are guaranteed hardware fixes. Revert/refine only when evidence shows a concrete regression. Focus new MMU/JIT cache work on Extended/PSBBN, maintaining coherence, precise faults, and safe lifetime management. Source-only reasoning is not a runtime test. Keep working on the existing branch and leave uniquely named handoffs. Dormant reuse/arena reclamation must remain disabled until instruction/data dependencies, writer barriers, link ownership and unwinding are established.
+
+The older profile-isolation investigation in v31/v32 is historical evidence, **not** a standing instruction to replicate upstream Standard. DEV9 ATA/Run12 instructions below apply to their separate branch and remain historical here.
 
 ---
 
