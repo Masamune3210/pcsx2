@@ -1021,18 +1021,15 @@ void SyncActiveTLBMappings()
 	// alias and installing a replacement can touch the same physical page
 	// several times in one synchronous TLB projection. It is sufficient to
 	// invalidate that page once before guest execution resumes.
-	std::unordered_set<u32> physicallyInvalidatedPages;
+	EEPhysicalCodeInvalidationSet physicallyInvalidatedPages;
 	auto clearCodeForMapping = [&](u32 page, const EEActiveTLBPage& mapping)
 	{
 #if defined(_M_X64) || defined(__x86_64__)
-		if (!mapping.scratchpad && mapping.physicalAddress < Ps2MemSize::ExposedRam)
+		if (!physicallyInvalidatedPages.ShouldInvalidate(mapping, Ps2MemSize::ExposedRam))
 		{
-			if (!physicallyInvalidatedPages.insert(mapping.physicalAddress >> 12).second)
-			{
-				if (profiling)
-					++s_ee_tlb_churn.duplicatePhysicalClearsAvoided;
-				return;
-			}
+			if (profiling)
+				++s_ee_tlb_churn.duplicatePhysicalClearsAvoided;
+			return;
 		}
 #endif
 		ClearActiveTLBCodePage(page, mapping);
