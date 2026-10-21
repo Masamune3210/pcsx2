@@ -1186,7 +1186,8 @@ void VMManager::UpdateDiscDetails(bool booting)
 		const std::string selected = Host::GetStringSettingValue("EmuCore", "EEExecutionProfile", "Auto");
 		const EEExecutionProfilePreference preference = ParseEEExecutionProfilePreference(selected);
 		const EEExecutionProfileMode profile = ResolveEEExecutionProfile(preference, s_disc_serial);
-		EEExecutionProfile::SelectAtBoot(profile);
+		if (!EEExecutionProfile::SelectAtBoot(profile))
+			Console.Warning("EE execution profile is already latched; refusing to change it without VM teardown");
 		Console.WriteLn("EE execution profile: %s (setting=%s, boot disc serial=%s)",
 			profile == EEExecutionProfileMode::ExtendedMMU ? "ExtendedMMU" : "Standard",
 			selected.c_str(), s_disc_serial.c_str());
