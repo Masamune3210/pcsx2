@@ -47,8 +47,13 @@ static bool eeCpuExecuting = false;
 static bool eeRecExitRequested = false;
 static bool g_resetEeScalingStats = false;
 
+// Preserve the original 64 KiB JIT dispatch for standard PS2 execution.
+// Only transition to per-4 KiB dispatch when a real guest instruction fetch
+// needs a mapped TLB page outside those fixed boot aliases.
+static u32 g_recUseGuestTLBDispatch = 0;
+
 // The original 64 KiB LUT cannot represent MIPS 4 KiB guest TLB mappings.
-#define PC_GETBLOCK(x) ((BASEBLOCK*)(recLUTPages[(static_cast<u32>(x)) >> 12] + (static_cast<uptr>(static_cast<u32>(x)) * (sizeof(BASEBLOCK) / 4))))
+#define PC_GETBLOCK(x) ((BASEBLOCK*)(((g_recUseGuestTLBDispatch ? recLUTPages[static_cast<u32>(x) >> 12] : recLUT[static_cast<u32>(x) >> 16])) + (static_cast<uptr>(static_cast<u32>(x)) * (sizeof(BASEBLOCK) / 4))))
 
 u32 maxrecmem = 0;
 alignas(16) static uptr recLUT[_64kb];
@@ -58,7 +63,7 @@ alignas(16) static u32 hwLUT[_64kb];
 alignas(16) static uptr recLUTPages[0x100000];
 alignas(16) static u32 hwLUTPages[0x100000];
 
-static __fi u32 HWADDR(u32 mem) { return hwLUTPages[mem >> 12] + mem; }
+static __fi u32 HWADDR(u32 mem) { return (g_recUseGuestTLBDispatch ? hwLUTPages[mem >> 12] : hwLUT[mem >> 16]) + mem; }
 
 u32 s_nBlockCycles = 0; // cycles of current block recompiling
 bool s_nBlockInterlocked = false; // Block is VU0 interlocked
@@ -467,6 +472,14 @@ static const void* _DynGen_JITCompile()
 	// base[addr >> 2]();
 	xMOV(eax, ptr[&cpuRegs.pc]);
 	xMOV(edx, eax);
+	// Unmodified 64 KiB recLUT remains the native PS2 hot path.
+	xCMP(ptr32[&g_recUseGuestTLBDispatch], 0);
+	xForwardJNE32 useGuestTLBPages;
+	xSHR(eax, 16);
+	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUT, rax * wordsize)]);
+	xJMP(ptrNative[rdx * (wordsize / 4) + rcx]);
+
+	useGuestTLBPages.SetTarget();
 	xSHR(eax, 12);
 	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUTPages, rax * wordsize)]);
 	xJMP(ptrNative[rdx * (wordsize / 4) + rcx]);
@@ -485,6 +498,14 @@ static const void* _DynGen_DispatcherReg()
 	// base[addr >> 2]();
 	xMOV(eax, ptr[&cpuRegs.pc]);
 	xMOV(edx, eax);
+	// Unmodified 64 KiB recLUT remains the native PS2 hot path.
+	xCMP(ptr32[&g_recUseGuestTLBDispatch], 0);
+	xForwardJNE32 useGuestTLBPages;
+	xSHR(eax, 16);
+	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUT, rax * wordsize)]);
+	xJMP(ptrNative[rdx * (wordsize / 4) + rcx]);
+
+	useGuestTLBPages.SetTarget();
 	xSHR(eax, 12);
 	xMOV(rcx, ptrNative[xComplexAddress(rcx, recLUTPages, rax * wordsize)]);
 	xJMP(ptrNative[rdx * (wordsize / 4) + rcx]);
@@ -591,6 +612,18 @@ static void recError(u32 error)
 		// not treated as a fatal JIT dispatch error. The dispatcher has
 		// already committed the target PC and GPR state to cpuRegs.
 		const u32 fetch_pc = cpuRegs.pc;
+		// A genuine guest TLB code alias has now been installed. Switch to
+		// fine-grained dispatch only on demand, never during normal PS2
+		// BIOS/game execution in the original flat 64 KiB code regions.
+		if (!g_recUseGuestTLBDispatch &&
+			(fetch_pc < 0x80000000u || fetch_pc >= 0xc0000000u) &&
+			recLUTPages[fetch_pc >> 12] != recLUT[fetch_pc >> 16])
+		{
+			g_recUseGuestTLBDispatch = 1;
+			Console.WriteLn("EE JIT enabled 4KiB guest TLB instruction dispatch at %08x", fetch_pc);
+			recExitExecution();
+			return;
+		}
 		if ((fetch_pc < 0x80000000u || fetch_pc >= 0xc0000000u) && vtlb_private::vtlbdata.vmap)
 		{
 			const auto& mapping = vtlb_private::vtlbdata.vmap[fetch_pc >> vtlb_private::VTLB_PAGE_BITS];
@@ -731,6 +764,10 @@ alignas(16) static u8 manual_counter[Ps2MemSize::TotalRam >> 12];
 ////////////////////////////////////////////////////
 static void recResetRaw()
 {
+	// Any dynamically installed guest-code aliases will be rebuilt by the
+	// guest TLB projection. Keep the native fast path until code actually needs
+	// per-page virtual dispatch again.
+	g_recUseGuestTLBDispatch = 0;
 	Console.WriteLn(Color_StrongBlack, "EE/iR5900 Recompiler Reset");
 
 	if (CHECK_EXTRAMEM != extraRam)
