@@ -2712,6 +2712,8 @@ static void recRecompile(const u32 startpc)
 	pxAssert(!s_pCurBlockEx || s_pCurBlockEx->startpc != HWADDR(startpc));
 
 	s_pCurBlockEx = recBlocks.New(HWADDR(startpc), (uptr)recPtr);
+	// Mark before publishing the block. Re-entrant invalidation must not skip it.
+	s_recCompiledPhysicalPages.Mark(HWADDR(startpc));
 
 	pxAssert(s_pCurBlockEx);
 
