@@ -304,4 +304,18 @@ TEST_F(EERecCodeCache, PresenceFilterRetainsOverlappingBlockAndIncomingLinkInval
 	EXPECT_TRUE(pages.MayContainCode(0x3000, 0x400));
 }
 
+TEST(EERecPhysicalPagePresence, NoncontiguousGuestPFNsStillProtectPhysicalBlockMetadata)
+{
+	EERecCompiledPhysicalPages<0x20000> pages;
+	// Guest source at the final instruction of one page followed by a
+	// separately mapped next page. The physical block metadata nevertheless
+	// describes the contiguous range starting at 0x1ffc.
+	pages.Mark(0x1ffcu);
+	pages.Mark(0x6000u);
+	EXPECT_FALSE(pages.MayContainCode(0x2000u, 1)); // original false negative
+	pages.MarkMetadataExtent(0x1ffcu, 12u);
+	EXPECT_TRUE(pages.MayContainCode(0x2000u, 1));
+	EXPECT_TRUE(pages.MayContainCode(0x6000u, 1));
+}
+
 } // namespace
