@@ -1028,17 +1028,19 @@ static void recResetRaw()
 		EEReportTLBChurn("jit-reset");
 		const u64 cachedBytes = recPtr && SysMemory::GetEERec() ?
 			static_cast<u64>(recPtr - SysMemory::GetEERec()) : 0u;
-		Console.WriteLn("EE-JIT-CHURN reset mode=%u blockCompiles=%llu compiledBytes=%llu physicalClearCalls=%llu cacheUsed=%llu cacheCapacity=%llu",
+		Console.WriteLn("EE-JIT-CHURN reset mode=%u blockCompiles=%llu compiledBytes=%llu physicalClearCalls=%llu skippedNeverCompiled=%llu cacheUsed=%llu cacheCapacity=%llu",
 			g_recUseGuestTLBDispatch,
 			static_cast<unsigned long long>(s_recCompiledBlocks),
 			static_cast<unsigned long long>(s_recCompiledBytes),
 			static_cast<unsigned long long>(s_recPhysicalClearCalls),
+			static_cast<unsigned long long>(s_recSkippedUncompiledPageClears),
 			static_cast<unsigned long long>(cachedBytes),
 			static_cast<unsigned long long>(SysMemory::GetEERecEnd() - SysMemory::GetEERec()));
 	}
 	s_recCompiledBlocks = 0;
 	s_recCompiledBytes = 0;
 	s_recPhysicalClearCalls = 0;
+	s_recSkippedUncompiledPageClears = 0;
 	EERecResetDispatchMode(g_recUseGuestTLBDispatch, eeRecResetToNative);
 	eeRecResetToNative = false;
 	Console.WriteLn(Color_StrongBlack, "EE/iR5900 Recompiler Reset");
@@ -1071,6 +1073,7 @@ static void recResetRaw()
 		memset(s_pInstCache, 0, sizeof(EEINST) * s_nInstCacheSize);
 
 	recBlocks.Reset();
+	s_recCompiledPhysicalPages.Reset();
 	vtlb_ClearLoadStoreInfo();
 
 	g_branch = 0;
