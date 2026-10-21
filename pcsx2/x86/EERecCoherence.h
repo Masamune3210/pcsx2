@@ -52,6 +52,17 @@ constexpr bool EERecNeedsRuntimeBoundarySlot(bool fineDispatch, u32 branchPC, bo
 	return (branchPC & 0xfffu) == 0xffcu && (fineDispatch || !slotReadable);
 }
 
+// DI intentionally postpones changing EIE until the following instruction
+// (a longstanding PCSX2 compatibility behavior). Do not compile that next
+// instruction into a fine-mode block at the last word of a guest page:
+// its instruction PFN can be unrelated or not mapped yet. Execute exactly
+// that continuation at runtime instead. The encompassing branch bridge already
+// owns delay slots, so do not create a nested interpreter bridge there.
+constexpr bool EERecNeedsRuntimeDINextInstruction(bool fineDispatch, u32 nextPC, bool delaySlot)
+{
+	return fineDispatch && !delaySlot && (nextPC & 0xfffu) == 0;
+}
+
 // Ordinary untaken interpreter branches leave PC at the unexecuted slot;
 // likely branches annul it by advancing PC again. A taken JR can deliberately
 // target the slot's address, so the taken marker is required as well as PC.
