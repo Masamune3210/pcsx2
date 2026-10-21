@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "x86/EEJitCoherence.h"
+
 struct tlbs;
 
 extern void WriteCP0Status(u32 value);
@@ -11,7 +13,7 @@ extern void cpuUpdateOperationMode();
 extern void WriteTLB(int i);
 extern void UnmapTLB(const tlbs& t, int i);
 extern void MapTLB(const tlbs& t, int i);
-extern void SyncActiveTLBMappings();
+extern void SyncActiveTLBMappings(EEJitInvalidationCause cause = EEJitInvalidationCause::TLBProjection);
 // Bounded diagnostics, reported at JIT resets and every 4096 TLB syncs when COP0 tracing is enabled.
 extern void EEReportTLBChurn(const char* reason);
 extern bool EETLBStoreNeedsModification(u32 address);

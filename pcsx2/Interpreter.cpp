@@ -7,6 +7,7 @@
 #include "VMManager.h"
 #include "Elfheader.h"
 #include "Cache.h"
+#include "x86/EERecCoherence.h"
 
 #include "DebugTools/Breakpoints.h"
 
@@ -38,8 +39,8 @@ static bool intExitExecution = false;
 static fastjmp_buf intJmpBuf;
 static u32 intLastBranchTo;
 
-// When a JIT branch's delay slot crosses into a currently unmapped guest
-// page, execute that single branch through the existing interpreter. A TLB
+// When a JIT branch's delay slot crosses a guest page boundary, execute
+// that single branch through the existing interpreter. A TLB
 // exception must escape the step instead of restarting at the handler PC.
 static bool s_jitBoundaryBranchStep = false;
 
@@ -285,7 +286,7 @@ static __fi void _doBranch_shared(u32 tar)
 
 	if( cpuRegs.branch != 0 )
 	{
-		if (Cpu == &intCpu)
+		if (Cpu == &intCpu && !s_jitBoundaryBranchStep)
 		{
 			if (intLastBranchTo == tar && EmuConfig.Speedhacks.WaitLoop)
 			{
@@ -614,6 +615,12 @@ static void intReset()
 
 void intEventTest()
 {
+	// The JIT bridge must restore its provider and unwind its private jump
+	// target before the scheduler can request a JIT exit. Its generated
+	// epilogue tests events immediately after this single branch and slot.
+	if (s_jitBoundaryBranchStep)
+		return;
+
 	// Perform counters, ints, and IOP updates:
 	_cpuEventTest_Shared();
 
@@ -658,13 +665,30 @@ void EEInterpretCrossPageBranchFromJIT(u32 branchPC)
 	Cpu = &intCpu;
 	s_jitBoundaryBranchStep = true;
 	cpuBlockCycles = 0;
+	branch2 = cpuRegs.branch = 0;
 	cpuRegs.pc = branchPC;
-	if (fastjmp_set(&intJmpBuf) == 0)
+	const int stepResult = fastjmp_set(&intJmpBuf);
+	if (stepResult == 0)
+	{
 		execI();
+		if (EERecNeedsFallthroughDelaySlot(branchPC, cpuRegs.pc, branch2 != 0))
+		{
+			// Untaken ordinary branches normally leave the slot to the next
+			// interpreter iteration. Execute it here with the same branch
+			// marker as a taken branch, so a slot fault keeps EPC/BD exact.
+			doBranch(branchPC + 8u);
+		}
+	}
+	// Taken paths (including the explicit fallthrough above) charge in
+	// doBranch/intDoBranch. Annulled likely branches and canceled fetches
+	// have not reached that charge. Never discard their accumulated cycles.
+	if (stepResult != 0 || !branch2)
+		intUpdateCPUCycles();
 	// intCancelInstruction() returns 2 for a guest TLB fault, while normal
 	// branch completion returns directly. Both must restore the JIT context.
 	s_jitBoundaryBranchStep = false;
 	cpuBlockCycles = 0;
+	branch2 = 0;
 	Cpu = savedCPU;
 }
 

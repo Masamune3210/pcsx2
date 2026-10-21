@@ -35,6 +35,99 @@ struct EEActiveTLBPage
 
 using EEActiveTLBPageMap = std::unordered_map<u32, EEActiveTLBPage>;
 
+enum class EEActiveTLBMappingAction
+{
+	Remove,
+	Install,
+	PermissionOnly,
+	Unchanged,
+};
+
+// Production diff policy, independent of host mapping/JIT side effects. All
+// removals precede installations. The callback must not mutate either map.
+template <typename Emit>
+inline void PlanEEActiveTLBMappingChanges(
+	const EEActiveTLBPageMap& active, const EEActiveTLBPageMap& desired, Emit&& emit)
+{
+	for (const auto& [page, old] : active)
+	{
+		const auto now = desired.find(page);
+		if (now == desired.end() || !old.HasSameBacking(now->second))
+			emit(EEActiveTLBMappingAction::Remove, page, old);
+	}
+	for (const auto& [page, now] : desired)
+	{
+		const auto old = active.find(page);
+		if (old == active.end() || !old->second.HasSameBacking(now))
+			emit(EEActiveTLBMappingAction::Install, page, now);
+		else
+			emit(old->second.writable == now.writable ? EEActiveTLBMappingAction::Unchanged :
+				EEActiveTLBMappingAction::PermissionOnly, page, now);
+	}
+}
+
+// Memoize only the inputs to BuildEEActiveTLBPageMap, never architectural TLB
+// writes or cache-mode descriptors. One fixed record per slot preserves first-
+// slot overlap priority, including all 48 entries, without heap allocation.
+// Equality is sufficient, not necessary: a shadowed changed slot may rebuild.
+class EEActiveTLBProjectionMemo
+{
+public:
+	bool Matches(const tlbs* entries, std::size_t count, u8 asid) const
+	{
+		if (!m_valid || count != m_count || count > m_slots.size())
+			return false;
+		for (std::size_t i = 0; i < count; ++i)
+		{
+			if (!(m_slots[i] == SelectInput(entries[i], asid)))
+				return false;
+		}
+		return true;
+	}
+
+	// Publish only after the corresponding active page map is installed.
+	void Remember(const tlbs* entries, std::size_t count, u8 asid)
+	{
+		m_valid = false;
+		if (count > m_slots.size())
+			return;
+		for (std::size_t i = 0; i < count; ++i)
+			m_slots[i] = SelectInput(entries[i], asid);
+		m_count = count;
+		m_valid = true;
+	}
+
+	// Host mapping/dispatch reset and state load must invalidate this memo.
+	void Invalidate() { m_valid = false; }
+
+private:
+	struct SlotInput
+	{
+		u32 vpn = 0, mask = 0, physical0 = 0, physical1 = 0;
+		// Low bits encode V0,D0,V1,D1; bit 4 selects legacy SPR mapping.
+		u32 flags = 0;
+		bool operator==(const SlotInput&) const = default;
+	};
+
+	static SlotInput SelectInput(const tlbs& t, u8 asid)
+	{
+		if (!t.isGlobal() && t.EntryHi.ASID != asid)
+			return {};
+		if (t.isSPR())
+			return {t.VPN2(), 0, 0, 0, 0x10};
+		if (!t.EntryLo0.V && !t.EntryLo1.V)
+			return {};
+		return {t.VPN2(), t.Mask(), t.EntryLo0.V ? t.PFN0() : 0,
+			t.EntryLo1.V ? t.PFN1() : 0,
+			(t.EntryLo0.V ? 1u | (t.EntryLo0.D ? 2u : 0u) : 0u) |
+			(t.EntryLo1.V ? 4u | (t.EntryLo1.D ? 8u : 0u) : 0u)};
+	}
+
+	std::array<SlotInput, 48> m_slots{};
+	std::size_t m_count = 0;
+	bool m_valid = false;
+};
+
 // This tracker belongs to one synchronous architectural-TLB projection.
 // A physical compiled-code page needs clearing at most once per projection:
 // replacing multiple virtual aliases cannot execute guest instructions between

@@ -17,6 +17,8 @@
 #include "vtlb.h"
 #include "x86/BaseblockEx.h"
 #include "x86/EERecCodeCache.h"
+#include "x86/EERecCoherence.h"
+#include "x86/EEJitCoherence.h"
 #include "x86/iR5900.h"
 #include "x86/iR5900Analysis.h"
 
@@ -26,6 +28,7 @@
 #include "common/Perf.h"
 
 #include <array>
+#include <chrono>
 #include <cstring>
 
 // Only for MOVQ workaround.
@@ -66,11 +69,40 @@ static u64 s_recSkippedUncompiledPageClears = 0;
 // ExposedRam is selected at runtime. Cover the full allocated RAM ceiling so
 // retail/development memory changes cannot truncate the conservative bitmap.
 static EERecCompiledPhysicalPages<Ps2MemSize::TotalRam> s_recCompiledPhysicalPages;
+using EEJitClock = std::chrono::steady_clock;
+struct EEJitInvalidationInterval
+{
+	u64 requests = 0, clearCalls = 0, boundsRejected = 0, neverCompiled = 0;
+	u64 distinctRamPages = 0, clearNanoseconds = 0;
+	BaseBlocks::Metrics mutations;
+	EERecCompiledPhysicalPages<Ps2MemSize::TotalRam> requestedPages;
+};
+static std::array<EEJitInvalidationInterval, static_cast<size_t>(EEJitInvalidationCause::Count)> s_recInvalidations;
+static BaseBlocks::Metrics s_recLinkMetrics;
+static EEJitSourceHistory<> s_recSourceHistory;
+static u64 s_recCompileNanoseconds = 0, s_recRepeatSources = 0;
+static u64 s_recThunkBytes = 0, s_recBackpatches = 0, s_recBackpatchBytes = 0;
+// Bitmask: startup=1, provider=2, arena=4, dispatch mode=8, thunk=16, gamefix=32.
+static u32 s_recResetReasons = 1;
+
+void EEJitRecordFastmemBackpatch(u32 hostBytes)
+{
+	if (PSBBNTlbTraceEnabled())
+	{
+		++s_recBackpatches;
+		s_recBackpatchBytes += hostBytes;
+	}
+}
+
+static void recReportCoherence(const char* reason);
 
 // Preserve the original 64 KiB JIT dispatch for standard PS2 execution.
 // Only transition to per-4 KiB dispatch when a real guest instruction fetch
 // needs a mapped TLB page outside those fixed boot aliases.
 static u32 g_recUseGuestTLBDispatch = 0;
+// Compiler state: a helper in this block can replace even its own code mapping.
+// Its outgoing links must resolve through current virtual dispatch afterward.
+static bool s_recBlockChangesTranslation = false;
 
 // The original 64 KiB LUT cannot represent MIPS 4 KiB guest TLB mappings.
 #define PC_GETBLOCK(x) ((BASEBLOCK*)(((g_recUseGuestTLBDispatch ? recLUTPages[static_cast<u32>(x) >> 12] : recLUT[static_cast<u32>(x) >> 16])) + (static_cast<uptr>(static_cast<u32>(x)) * (sizeof(BASEBLOCK) / 4))))
@@ -159,6 +191,37 @@ static __fi const u32* recGetInstructionPtr(u32 virtualPC)
 }
 
 static BaseBlocks recBlocks;
+
+static void recReportCoherence(const char* reason)
+{
+	const auto live = recBlocks.GetLiveMetrics();
+	Console.WriteLn("EE-JIT-LIFETIME reason=%s resetReasons=%08x guestCycles=%llu liveBlocks=%llu liveHostBytes=%llu linkRecords=%llu compileUs=%llu repeatSourceFingerprints=%llu thunkBytes=%llu backpatches=%llu backpatchBytes=%llu linkAttempts=%llu linkWrites=%llu linkSkips=%llu",
+		reason, s_recResetReasons, static_cast<unsigned long long>(cpuRegs.cycle),
+		static_cast<unsigned long long>(live.blocks), static_cast<unsigned long long>(live.hostBytes),
+		static_cast<unsigned long long>(live.linkRecords), static_cast<unsigned long long>(s_recCompileNanoseconds / 1000),
+		static_cast<unsigned long long>(s_recRepeatSources), static_cast<unsigned long long>(s_recThunkBytes),
+		static_cast<unsigned long long>(s_recBackpatches), static_cast<unsigned long long>(s_recBackpatchBytes),
+		static_cast<unsigned long long>(s_recLinkMetrics.linkPatchAttempts),
+		static_cast<unsigned long long>(s_recLinkMetrics.linkPatchWrites),
+		static_cast<unsigned long long>(s_recLinkMetrics.linkPatchSkips));
+	for (size_t i = 0; i < s_recInvalidations.size(); ++i)
+	{
+		const auto& s = s_recInvalidations[i];
+		if (!s.requests)
+			continue;
+		const auto& m = s.mutations;
+		Console.WriteLn("EE-JIT-MUTATION cause=%s requests=%llu distinctRamPages=%llu clearCalls=%llu boundsRejected=%llu neverCompiled=%llu blocksEvicted=%llu retiredHostBytes=%llu dispatchAttempts=%llu dispatchWrites=%llu dispatchSkips=%llu linkAttempts=%llu linkWrites=%llu linkSkips=%llu clearUs=%llu",
+			EEJitInvalidationCauseName(static_cast<EEJitInvalidationCause>(i)),
+			static_cast<unsigned long long>(s.requests), static_cast<unsigned long long>(s.distinctRamPages),
+			static_cast<unsigned long long>(s.clearCalls), static_cast<unsigned long long>(s.boundsRejected),
+			static_cast<unsigned long long>(s.neverCompiled), static_cast<unsigned long long>(m.removedBlocks),
+			static_cast<unsigned long long>(m.retiredHostBytes), static_cast<unsigned long long>(m.dispatchWriteAttempts),
+			static_cast<unsigned long long>(m.dispatchWrites), static_cast<unsigned long long>(m.dispatchWriteSkips),
+			static_cast<unsigned long long>(m.linkPatchAttempts), static_cast<unsigned long long>(m.linkPatchWrites),
+			static_cast<unsigned long long>(m.linkPatchSkips), static_cast<unsigned long long>(s.clearNanoseconds / 1000));
+	}
+}
+
 static u8* recPtr = nullptr;
 static u8* recPtrEnd = nullptr;
 EEINST* s_pInstCache = nullptr;
@@ -686,8 +749,15 @@ static const void* DispatcherReg = nullptr;
 
 static void recLinkStaticBlock(u32 target, s32* jump)
 {
+	if (s_recBlockChangesTranslation)
+	{
+		BaseBlocks::PatchLink(jump, reinterpret_cast<uptr>(DispatcherReg),
+			PSBBNTlbTraceEnabled() ? &s_recLinkMetrics : nullptr);
+		return;
+	}
 	EERecLinkStaticBlock(recBlocks, g_recUseGuestTLBDispatch != 0, s_nStartBlock,
-		target, HWADDR(target), jump, reinterpret_cast<uptr>(DispatcherReg));
+		target, HWADDR(target), jump, reinterpret_cast<uptr>(DispatcherReg),
+		PSBBNTlbTraceEnabled() ? &s_recLinkMetrics : nullptr);
 }
 static const void* JITCompile = nullptr;
 static const void* EnterRecompiledCode = nullptr;
@@ -870,6 +940,7 @@ static void recError(u32 error)
 			recLUTPages[fetch_pc >> 12] != recLUT[fetch_pc >> 16])
 		{
 			EERecEnterGuestTLBDispatch(g_recUseGuestTLBDispatch, eeRecNeedsReset);
+			s_recResetReasons |= 8;
 			Console.WriteLn("EE JIT enabled 4KiB guest TLB instruction dispatch at %08x", fetch_pc);
 			recExitExecution();
 			return;
@@ -996,10 +1067,16 @@ static void recReserveRAM()
 	// A recResetRaw() can run while guest mappings are live; reconstruct
 	// physical dispatch aliases from the architectural entries, not stale
 	// cached pointers from before the recompiler reset.
-	const auto pages = BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi));
-	for (const auto& [page, mapping] : pages)
-		if (!mapping.scratchpad)
-			recMapTLBPage(page << 12, mapping.physicalAddress);
+	if (g_recUseGuestTLBDispatch)
+	{
+		const auto pages = BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi));
+		for (const auto& [page, mapping] : pages)
+			if (!mapping.scratchpad)
+				recMapTLBPage(page << 12, mapping.physicalAddress);
+	}
+	// External/native resets may resize tables before cpuReset clears the old
+	// architectural TLB. Do not resurrect those untracked aliases here; normal
+	// active-projection installation publishes mappings for the new execution.
 }
 
 static void recReserve()
@@ -1038,11 +1115,19 @@ static void recResetRaw()
 			static_cast<unsigned long long>(s_recSkippedUncompiledPageClears),
 			static_cast<unsigned long long>(cachedBytes),
 			static_cast<unsigned long long>(SysMemory::GetEERecEnd() - SysMemory::GetEERec()));
+		recReportCoherence("reset");
 	}
 	s_recCompiledBlocks = 0;
 	s_recCompiledBytes = 0;
 	s_recPhysicalClearCalls = 0;
 	s_recSkippedUncompiledPageClears = 0;
+	s_recInvalidations = {};
+	s_recLinkMetrics.Reset();
+	s_recCompileNanoseconds = s_recRepeatSources = 0;
+	s_recThunkBytes = s_recBackpatches = s_recBackpatchBytes = 0;
+	if (s_recResetReasons & 2u)
+		s_recSourceHistory.Reset();
+	s_recResetReasons = 0;
 	EERecResetDispatchMode(g_recUseGuestTLBDispatch, eeRecResetToNative);
 	eeRecResetToNative = false;
 	Console.WriteLn(Color_StrongBlack, "EE/iR5900 Recompiler Reset");
@@ -1167,6 +1252,7 @@ static void recSafeExitExecution()
 
 static void recResetEE()
 {
+	s_recResetReasons |= 2;
 	recResetControlFlowTrace();
 	eeRecResetToNative = true;
 	if (eeCpuExecuting)
@@ -1244,29 +1330,60 @@ void R5900::Dynarec::OpcodeImpl::recBREAK()
 // Physical write-protection/manual-integrity callbacks must not translate
 // their RAM address through the guest's current KUSEG instruction mapping.
 // Size is in dwords (4 bytes).
-void recClearPhysical(u32 addr, u32 size)
+void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause)
 {
+	const bool profiling = PSBBNTlbTraceEnabled();
+	if (static_cast<size_t>(cause) >= s_recInvalidations.size())
+		cause = EEJitInvalidationCause::Unknown;
+	auto* const interval = profiling ? &s_recInvalidations[static_cast<size_t>(cause)] : nullptr;
+	if (interval)
+	{
+		++interval->requests;
+		const u64 end = std::min<u64>(Ps2MemSize::TotalRam, u64{addr} + u64{size} * 4);
+		if (size)
+			for (u64 page = u64{addr} & ~u64{0xfff}; page < end; page += 0x1000)
+			{
+				if (!interval->requestedPages.MayContainCode(static_cast<u32>(page), 1))
+					++interval->distinctRamPages;
+				interval->requestedPages.Mark(static_cast<u32>(page));
+			}
+	}
 	if (!recRAM || addr >= maxrecmem || size == 0)
+	{
+		if (interval)
+			++interval->boundsRejected;
 		return;
+	}
 	// Invalidation cannot remove a compiled block from a RAM page which has
 	// never contained recompiled instructions during this cache generation.
 	if (!s_recCompiledPhysicalPages.MayContainCode(addr, size))
 	{
-		if (PSBBNTlbTraceEnabled())
+		if (interval)
+		{
 			++s_recSkippedUncompiledPageClears;
+			++interval->neverCompiled;
+		}
 		return;
 	}
-	if (PSBBNTlbTraceEnabled())
+	EEJitClock::time_point started;
+	if (interval)
+	{
 		++s_recPhysicalClearCalls;
+		++interval->clearCalls;
+		started = EEJitClock::now();
+	}
 	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
-		reinterpret_cast<uptr>(JITCompile), addr, size);
+		reinterpret_cast<uptr>(JITCompile), addr, size, interval ? &interval->mutations : nullptr);
+	if (interval)
+		interval->clearNanoseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+			EEJitClock::now() - started).count());
 }
 
 // CPU provider callback: fastmem-backpatch callers supply a guest virtual PC.
 // Translate before applying the physical cache's high-water mark.
 void recClear(u32 addr, u32 size)
 {
-	recClearPhysical(HWADDR(addr), size);
+	recClearPhysical(HWADDR(addr), size, EEJitInvalidationCause::VirtualClear);
 }
 
 
@@ -1310,7 +1427,10 @@ u8* recBeginThunk()
 {
 	// if recPtr reached the mem limit reset whole mem
 	if (recPtr >= recPtrEnd)
+	{
 		eeRecNeedsReset = true;
+		s_recResetReasons |= 4u | 16u;
+	}
 
 	xSetTextPtr(R5900_TEXTPTR);
 	xSetPtr(recPtr);
@@ -1325,6 +1445,8 @@ u8* recEndThunk()
 	u8* block_end = x86Ptr;
 
 	pxAssert(block_end < SysMemory::GetEERecEnd());
+	if (PSBBNTlbTraceEnabled())
+		s_recThunkBytes += static_cast<u64>(block_end - recPtr);
 	recPtr = block_end;
 	return block_end;
 }
@@ -1339,6 +1461,8 @@ bool TrySwapDelaySlot(u32 rs, u32 rt, u32 rd, bool allow_loadstore)
 	if (!instruction)
 		return false;
 	const u32 opcode_encoded = *instruction;
+	if (!EERecCanSwapTranslationSlot(g_recUseGuestTLBDispatch != 0, opcode_encoded))
+		return false;
 	if (opcode_encoded == 0)
 	{
 		recompileNextInstruction(true, true);
@@ -2453,7 +2577,7 @@ static void PreBlockCheck(u32 blockpc)
 void dyna_block_discard(u32 start, u32 sz)
 {
 	eeRecPerfLog.Write(Color_StrongGray, "Clearing Manual Block @ 0x%08X  [size=%d]", start, sz * 4);
-	recClearPhysical(start, sz);
+	recClearPhysical(start, sz, EEJitInvalidationCause::ManualIntegrity);
 }
 
 // called when a page under manual protection has been run enough times to be a candidate
@@ -2461,7 +2585,7 @@ void dyna_block_discard(u32 start, u32 sz)
 // and the block is re-assigned for write protection.
 void dyna_page_reset(u32 start, u32 sz)
 {
-	recClearPhysical(start & ~0xfffUL, 0x400);
+	recClearPhysical(start & ~0xfffUL, 0x400, EEJitInvalidationCause::ManualReprotect);
 	manual_counter[start >> 12]++;
 	mmap_MarkCountedRamPage(start);
 }
@@ -2648,6 +2772,8 @@ static void recHandleUnavailableCodePage(u32 guestPC)
 		const bool wasFineDispatch = g_recUseGuestTLBDispatch != 0;
 		recMapTLBPage(pageAddress, found->second.physicalAddress);
 		EERecEnterGuestTLBDispatch(g_recUseGuestTLBDispatch, eeRecNeedsReset);
+		if (!wasFineDispatch)
+			s_recResetReasons |= 8;
 		static u32 repaired = 0;
 		if (repaired++ < 32)
 			Console.Warning("EE JIT repaired instruction alias: PC=%08x JITPhysical=%08x TLBPhysical=%08x fineDispatch=%u ASID=%02x",
@@ -2682,8 +2808,9 @@ static void recRecompile(const u32 startpc)
 {
 	u32 i = 0;
 	u32 willbranch3 = 0;
-	bool interpretUnmappedBoundaryBranch = false;
+	bool interpretBoundaryBranch = false;
 	u32 interpreterBranchPC = 0;
+	s_recBlockChangesTranslation = false;
 
 	pxAssert(startpc);
 
@@ -2698,7 +2825,10 @@ static void recRecompile(const u32 startpc)
 
 	// if recPtr reached the mem limit reset whole mem
 	if (recPtr >= recPtrEnd)
+	{
 		eeRecNeedsReset = true;
+		s_recResetReasons |= 4;
+	}
 
 	if (HWADDR(startpc) == VMManager::Internal::GetCurrentELFEntryPoint())
 		VMManager::Internal::EntryPointCompilingOnCPUThread();
@@ -2709,6 +2839,8 @@ static void recRecompile(const u32 startpc)
 		recResetRaw();
 	}
 
+	const bool profileCompilation = PSBBNTlbTraceEnabled();
+	const auto compileStarted = profileCompilation ? EEJitClock::now() : EEJitClock::time_point{};
 	xSetTextPtr(R5900_TEXTPTR);
 	xSetPtr(recPtr);
 	recPtr = xGetAlignedCallTarget();
@@ -2721,7 +2853,8 @@ static void recRecompile(const u32 startpc)
 	s_pCurBlockEx = recBlocks.Get(HWADDR(startpc));
 	pxAssert(!s_pCurBlockEx || s_pCurBlockEx->startpc != HWADDR(startpc));
 
-	s_pCurBlockEx = recBlocks.New(HWADDR(startpc), (uptr)recPtr);
+	s_pCurBlockEx = recBlocks.New(HWADDR(startpc), (uptr)recPtr,
+		profileCompilation ? &s_recLinkMetrics : nullptr);
 	// Mark before publishing the block. Re-entrant invalidation must not skip it.
 	s_recCompiledPhysicalPages.Mark(HWADDR(startpc));
 
@@ -2785,6 +2918,7 @@ static void recRecompile(const u32 startpc)
 		{
 			// Game will unmap some virtual addresses. If a constant address were hardcoded in the block, we would be in a bad situation.
 			eeRecNeedsReset = true;
+			s_recResetReasons |= 32;
 			// 0x3563b8 is the start address of the function that invalidate entry in TLB cache
 			xFastCall((void*)GoemonUnloadTlb, ptr32[&cpuRegs.GPR.n.a0.UL[0]]);
 		}
@@ -2871,6 +3005,16 @@ static void recRecompile(const u32 startpc)
 			break;
 		}
 		cpuRegs.code = *instruction;
+		if (EERecPlanTranslationBoundary(g_recUseGuestTLBDispatch != 0, cpuRegs.code, false) !=
+			EERecTranslationBoundary::None)
+		{
+			// Include the mutation itself, then use the existing block epilogue
+			// to commit the next PC and cycles before resolving current dispatch.
+			s_recBlockChangesTranslation = true;
+			is_timeout_loop = false;
+			s_nEndBlock = i + 4;
+			goto StartRecomp;
+		}
 
 		if (is_timeout_loop)
 		{
@@ -2983,28 +3127,47 @@ static void recRecompile(const u32 startpc)
 
 StartRecomp:
 
-	// Branches at the last word of a 4 KiB guest page extend the block by
-	// one delay-slot instruction. The next page might not yet be mapped in
-	// the guest TLB, even though the branch itself can be fetched.
-	// Do not dereference PSM(nullptr) in the backward opcode-analysis pass.
-	// Run this rare boundary branch using the interpreter at execution time,
-	// allowing it to raise a precise TLBL/BD exception when appropriate.
+	// BaseBlocks represents one contiguous physical extent. In fine mode,
+	// keep a boundary branch's compiled bytes on its page: fetch its slot
+	// through the interpreter, with its branch/BD/EPC semantics. recDI's
+	// eager following instruction remains a separate cross-page blocker.
+	// The native path retains its existing unmapped-slot fallback only.
 	if ((s_nEndBlock & 0xfffu) == 4u && s_nEndBlock >= startpc + 8u)
 	{
 		const u32 branchPC = s_nEndBlock - 8u;
 		const u32 delayPC = s_nEndBlock - 4u;
-		if ((branchPC & 0xfffu) == 0xffcu && !recGetInstructionPtr(delayPC))
+		if (EERecNeedsRuntimeBoundarySlot(g_recUseGuestTLBDispatch != 0,
+			branchPC, recGetInstructionPtr(delayPC) != nullptr))
 		{
 			const u32* const branchOpcode = recGetInstructionPtr(branchPC);
 			if (branchOpcode && (GetInstruction(*branchOpcode).flags & IS_BRANCH))
 			{
-				interpretUnmappedBoundaryBranch = true;
+				interpretBoundaryBranch = true;
 				interpreterBranchPC = branchPC;
-				s_nEndBlock = delayPC; // exclude the unmapped slot from every compile-time pass
+				s_nEndBlock = delayPC; // exclude the runtime slot from every compile-time pass
+				is_timeout_loop = false;
 				static u32 loggedCrossPageFallbacks = 0;
 				if (loggedCrossPageFallbacks++ < 32)
 					Console.WriteLn("EE JIT cross-page delay-slot interpreter fallback: branch=%08x slot=%08x",
 						branchPC, delayPC);
+			}
+		}
+	}
+	// A mutation in a compiled delay slot is already followed by the branch
+	// emitter's exit. Force *all* its outgoing paths (including same-page
+	// branches patched later) through the virtual dispatcher. The scanner
+	// stops ordinary mutations above; this also covers debugger-sized blocks.
+	if (g_recUseGuestTLBDispatch)
+	{
+		for (u32 sourcePC = startpc; sourcePC < s_nEndBlock; sourcePC += 4)
+		{
+			if (EERecInstructionChangesTranslation(*recGetInstructionPtr(sourcePC)))
+			{
+				s_recBlockChangesTranslation = true;
+				is_timeout_loop = false;
+				if (sourcePC + 4 < s_nEndBlock)
+					s_nEndBlock = sourcePC + 4;
+				break;
 			}
 		}
 	}
@@ -3164,7 +3327,7 @@ StartRecomp:
 		g_pCurInstInfo = s_pInstCache;
 		while (!g_branch && pc < s_nEndBlock)
 		{
-			if (interpretUnmappedBoundaryBranch && pc == interpreterBranchPC)
+			if (interpretBoundaryBranch && pc == interpreterBranchPC)
 			{
 				// The branch and its potentially faulting slot execute together
 				// at runtime, including in instruction-dump builds.
@@ -3223,12 +3386,11 @@ StartRecomp:
 
 	pxAssert((pc - startpc) >> 2 <= 0xffff);
 	s_pCurBlockEx->size = (pc - startpc) >> 2;
-	// The block-cache overlap/search machinery regards this size as a
-	// physically contiguous extent, even if the guest crosses to another
-	// noncontiguous PFN. Track that metadata extent as well as real source PFNs.
+	// Fine boundary branches exclude their runtime slots; recDI can still
+	// eagerly extend a span. Keep both conservative markings until that
+	// separate cross-page dependency blocker is resolved.
 	s_recCompiledPhysicalPages.MarkMetadataExtent(HWADDR(startpc), pc - startpc);
-	// A compiled span can cross 4 KiB virtual pages backed by different PFNs.
-	// Record every source page, not just the physical start address.
+	// Record every source page (native boundary branches can include a slot).
 	for (u32 virtualPC = startpc; virtualPC < pc;)
 	{
 		s_recCompiledPhysicalPages.Mark(HWADDR(virtualPC));
@@ -3238,17 +3400,20 @@ StartRecomp:
 		virtualPC = nextPage;
 	}
 
-	if (HWADDR(pc) <= Ps2MemSize::ExposedRam)
+	// pc may be the first word of a different guest mapping. Translate the
+	// source start, then add its byte length to get the physical exclusive end.
+	const u32 physicalEnd = HWADDR(startpc) + (pc - startpc);
+	if (physicalEnd <= Ps2MemSize::ExposedRam)
 	{
 		BASEBLOCKEX* oldBlock;
 		int i;
 
-		i = recBlocks.LastIndex(HWADDR(pc) - 4);
+		i = recBlocks.LastIndex(physicalEnd - 4);
 		while ((oldBlock = recBlocks[i--]))
 		{
 			if (oldBlock == s_pCurBlockEx)
 				continue;
-			if (oldBlock->startpc >= HWADDR(pc))
+			if (oldBlock->startpc >= physicalEnd)
 				continue;
 			if ((oldBlock->startpc + oldBlock->size * 4) <= HWADDR(startpc))
 				break;
@@ -3256,7 +3421,7 @@ StartRecomp:
 			if (memcmp(&recRAMCopy[oldBlock->startpc], PSM(oldBlock->startpc),
 					oldBlock->size * 4))
 			{
-				recClear(startpc, (pc - startpc) / 4);
+				recClearPhysical(HWADDR(startpc), (pc - startpc) / 4, EEJitInvalidationCause::OverlapRecompile);
 				s_pCurBlockEx = recBlocks.Get(HWADDR(startpc));
 				pxAssert(s_pCurBlockEx->startpc == HWADDR(startpc));
 				break;
@@ -3323,10 +3488,29 @@ StartRecomp:
 	Perf::ee.RegisterPC((void*)s_pCurBlockEx->fnptr, s_pCurBlockEx->x86size, s_pCurBlockEx->startpc);
 
 	recPtr = xGetPtr();
-	if (PSBBNTlbTraceEnabled())
+	if (profileCompilation)
 	{
 		++s_recCompiledBlocks;
 		s_recCompiledBytes += s_pCurBlockEx->x86size;
+		s_recCompileNanoseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+			EEJitClock::now() - compileStarted).count());
+		u64 sourceFingerprint = 14695981039346656037ull;
+		bool complete = true;
+		for (u32 offset = 0; offset < s_pCurBlockEx->size; ++offset)
+		{
+			const u32* const source = recGetInstructionPtr(startpc + offset * 4);
+			if (!source)
+			{
+				complete = false;
+				break;
+			}
+			sourceFingerprint = (sourceFingerprint ^ *source) * 1099511628211ull;
+		}
+		if (complete && s_recSourceHistory.Observe({startpc, HWADDR(startpc),
+			s_pCurBlockEx->size, g_recUseGuestTLBDispatch, sourceFingerprint}))
+			++s_recRepeatSources;
+		if ((s_recCompiledBlocks & 0xffffu) == 0)
+			recReportCoherence("65536-compiles");
 	}
 
 	pxAssert((g_cpuHasConstReg & g_cpuFlushedConstReg) == g_cpuHasConstReg);

@@ -59,6 +59,9 @@ static void PreLoadPrep()
 	mmap_ResetBlockTracking();
 
 	VMManager::Internal::ClearCPUExecutionCaches();
+	// Discard the cached projection before loading RAM/CP0. Equal restored TLB
+	// inputs must not reuse a projection tied to the previous execution caches.
+	ResetActiveTLBMappings();
 }
 
 static void PostLoadPrep()

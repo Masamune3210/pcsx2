@@ -47,7 +47,6 @@ using namespace vtlb_private;
 // guest register file and the precise memory-instruction PC to cpuRegs.
 extern u32 g_recPreciseMemoryFaultArmed;
 void recHandlePreciseTlbMiss(u32 addr, u32 mode);
-void recClearPhysical(u32 addr, u32 size);
 #endif
 
 #define verify pxAssert
@@ -1036,6 +1035,10 @@ static void vtlb_RemoveFastmemMappings(u32 vaddr, u32 size)
 {
 	pxAssert((vaddr & VTLB_PAGE_MASK) == 0);
 	pxAssert(size > 0 && (size & VTLB_PAGE_MASK) == 0);
+	// A host vTLB view can be initialized before the optional fastmem view.
+	// Match the whole-view removal overload: there are no aliases to remove.
+	if (s_fastmem_virtual_mapping.empty())
+		return;
 
 	const u32 num_pages = size / VTLB_PAGE_SIZE;
 	for (u32 i = 0; i < num_pages; i++, vaddr += VTLB_PAGE_SIZE)
@@ -1167,6 +1170,9 @@ bool vtlb_BackpatchLoadStore(uptr code_address, uptr fault_address)
 	vtlb_DynBackpatchLoadStore(code_address, info.code_size, info.guest_pc, guest_addr,
 		info.gpr_bitmask, info.fpr_bitmask, info.address_register, info.data_register,
 		info.size_in_bits, info.is_signed, info.is_load, info.is_fpr);
+#if defined(_M_X64) || defined(__x86_64__)
+	EEJitRecordFastmemBackpatch(info.code_size);
+#endif
 
 	// queue block for recompilation later
 	Cpu->Clear(info.guest_pc, 1);
@@ -1286,6 +1292,9 @@ void vtlb_VMapUnmap(u32 vaddr, u32 size)
 // vtlb_Init -- Clears vtlb handlers and memory mappings.
 void vtlb_Init()
 {
+	// This destroys the host mapping view even if the architectural TLB will
+	// later contain identical entries. Do not retain its projection/memo.
+	ResetActiveTLBMappings();
 	vtlbHandlerCount = 0;
 	std::memset(vtlbdata.RWFT, 0, sizeof(vtlbdata.RWFT));
 
@@ -1545,7 +1554,8 @@ static __fi void mmap_ClearCpuBlock(uint offset)
 #if defined(_M_X64) || defined(__x86_64__)
 	// ReverseRamMap is physical, unlike the guest PC supplied by fastmem
 	// backpatching. Clear takes words, while host page size is in bytes.
-	recClearPhysical(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize / 4);
+	recClearPhysical(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize / 4,
+		EEJitInvalidationCause::HostWriteProtection);
 #endif
 }
 

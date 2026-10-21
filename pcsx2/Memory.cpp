@@ -22,6 +22,7 @@ BIOS
 0xBFC00000 - 0xBFFFFFFF un-cached
 */
 
+#include "COP0.h"
 #include "DEV9/DEV9.h"
 #include "IopHw.h"
 #include "GS/Renderers/Common/GSFunctionMap.h"
@@ -238,6 +239,9 @@ bool memGetExtraMemMode()
 
 void memSetExtraMemMode(bool mode)
 {
+	// Boot/reset calls this before rebuilding the CPU's RAM-sized code tables.
+	// Retire the previous projection while its old RAM bounds still apply.
+	ResetActiveTLBMappings();
 	s_extra_memory = mode;
 
 	// update the amount of RAM exposed to the VM
