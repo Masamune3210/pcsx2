@@ -102,6 +102,50 @@ bool PSBBNTlbTraceEnabled()
 	return EmuConfig.Trace.Enabled && EmuConfig.Trace.EE.cop0;
 }
 
+// One guest instruction pair only. No virtual->physical writes, no speculative
+// guest loads, and no vtlb_V2P() (its ppmap is optional). The JIT emitter
+// flushes live GPRs before calling this observer, so the registered guest PC
+// is exact even when cpuRegs.pc is stale inside a translated block.
+void PSBBNTraceJournalWordAccess(u32 guestPc, u32 phase)
+{
+	if (!PSBBNTlbTraceEnabled() || Cpu == &intCpu)
+		return;
+	if (!((guestPc == 0x800B1578 && phase <= 1) ||
+		(guestPc == 0x800B1580 && phase >= 2 && phase <= 3)))
+		return;
+	static u32 emitted = 0;
+	if (emitted >= 32)
+		return;
+	++emitted;
+
+	const u32 v0 = cpuRegs.GPR.r[2].UL[0];
+	const u32 v1 = cpuRegs.GPR.r[3].UL[0];
+	const u32 base = (phase <= 1) ? v1 : v0;
+	const u32 address = base + 0x2dc;
+	const auto& cp0 = cpuRegs.CP0.n;
+	const u8 asid = static_cast<u8>(cp0.EntryHi);
+	const auto active = BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid);
+	const auto entry = active.find(address >> 12);
+	const bool archMapped = entry != active.end();
+	const u32 physical = archMapped ? entry->second.physicalAddress + (address & 0xfff) : 0xffffffffu;
+	const bool writable = archMapped && entry->second.writable;
+	bool directlyMapped = false;
+	u32 virtualWord = 0xffffffffu;
+	if (vtlb_private::vtlbdata.vmap)
+		virtualWord = vtlb_ramRead<mem32_t>(address, &directlyMapped);
+
+	bool physicalReadable = eeMem && physical <= Ps2MemSize::MainRam - sizeof(u32);
+	u32 physicalWord = 0xffffffffu;
+	if (physicalReadable)
+		std::memcpy(&physicalWord, eeMem->Main + physical, sizeof(physicalWord));
+
+	Console.WriteLn("PSBBN-JOURNAL-WORD n=%u phase=%u guestPC=%08x ea=%08x v0=%08x v1=%08x vmapDirect=%u vmapValue=%08x archMapped=%u archPhysical=%08x archWritable=%u physicalReadable=%u physValue=%08x ASID=%02x Status=%08x Cause=%08x EPC=%08x EntryHi=%08x",
+		emitted, phase, guestPc, address, v0, v1, directlyMapped ? 1u : 0u,
+		virtualWord, archMapped ? 1u : 0u, physical, writable ? 1u : 0u,
+		physicalReadable ? 1u : 0u, physicalWord, asid, cp0.Status.val,
+		cp0.Cause, cp0.EPC, cp0.EntryHi);
+}
+
 void PSBBNResetUserFaultWindow()
 {
 	if (!PSBBNTlbTraceEnabled())
