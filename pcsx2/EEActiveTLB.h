@@ -8,6 +8,8 @@
 
 #include "R5900.h"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <unordered_map>
 #include <unordered_set>
@@ -37,11 +39,26 @@ public:
 	{
 		if (page.scratchpad || page.physicalAddress >= exposedRAMSize)
 			return true;
-		return m_invalidated.insert(page.physicalAddress >> 12).second;
+
+		const u32 physicalPage = page.physicalAddress >> 12;
+		if (std::find(m_firstPages.begin(), m_firstPages.begin() + m_firstCount, physicalPage) !=
+			m_firstPages.begin() + m_firstCount)
+			return false;
+
+		// Almost all TLB refills touch only a handful of pages. Avoid creating
+		// a host heap allocation for every ordinary/native-game TLB update.
+		if (m_firstCount < m_firstPages.size())
+		{
+			m_firstPages[m_firstCount++] = physicalPage;
+			return true;
+		}
+		return m_extraPages.insert(physicalPage).second;
 	}
 
 private:
-	std::unordered_set<u32> m_invalidated;
+	std::array<u32, 16> m_firstPages{};
+	std::size_t m_firstCount = 0;
+	std::unordered_set<u32> m_extraPages;
 };
 
 // A matched, valid and non-writable mapping must raise TLB Modification on a
