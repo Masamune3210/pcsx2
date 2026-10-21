@@ -208,6 +208,7 @@ static BaseBlocks recBlocks;
 // The limit is PER VM SESSION, not per arena: otherwise a reset loop would
 // produce unbounded multi-million-line logs even with a nominal cap.
 static bool s_recEvictionTraceEnabled = false;
+static bool s_recEvictionTraceConfigured = false;
 static u32 s_recEvictionTraceLimit = 20000;
 static u64 s_recEvictionTraceSeen = 0;
 static u64 s_recEvictionTracePrinted = 0;
@@ -219,6 +220,7 @@ struct EERecEvictionTraceContext
 	u32 physicalAddress;
 	u32 dwords;
 	u32 triggeringVirtualPage = 0xffffffffu;
+	const char* mappingAction = "none";
 };
 
 static void recTraceRemovedBlock(const BASEBLOCKEX& block, void* rawContext)
@@ -240,8 +242,8 @@ static void recTraceRemovedBlock(const BASEBLOCKEX& block, void* rawContext)
 		static_cast<u64>(block.startpc) < requestEnd && blockEnd > context.physicalAddress;
 	// cpuPC and EntryHi are a diagnostic snapshot at invalidation time. They
 	// are NOT proof of the original guest writer or the block's compiling ASID.
-	Console.WriteLn("EE-JIT-EVICT gen=%u cause=%s blockPA=%08x blockEnd=%08llx guestWords=%u hostPtr=%p hostBytes=%u requestPA=%08x requestEnd=%08llx aliasVA=%08x overlap=%u cpuPC=%08x entryHi=%08x asid=%02x cycle=%llu mode=%u resetReasons=%08x",
-		s_recEvictionTraceGeneration, context.cause, block.startpc,
+	Console.WriteLn("EE-JIT-EVICT gen=%u cause=%s mappingAction=%s blockPA=%08x blockEnd=%08llx guestWords=%u hostPtr=%p hostBytes=%u requestPA=%08x requestEnd=%08llx aliasVA=%08x overlap=%u cpuPC=%08x entryHi=%08x asid=%02x cycle=%llu mode=%u resetReasons=%08x",
+		s_recEvictionTraceGeneration, context.cause, context.mappingAction, block.startpc,
 		static_cast<unsigned long long>(blockEnd), block.size,
 		reinterpret_cast<void*>(block.fnptr), block.x86size,
 		context.physicalAddress, static_cast<unsigned long long>(requestEnd),
@@ -1200,9 +1202,18 @@ static void recResetRaw()
 	// The flag and cap are read at the JIT reset boundary, not for every
 	// host memory write or TLB projection. The event cap persists across all
 	// internal arena resets in the same VM session.
-	s_recEvictionTraceEnabled = Host::GetBoolSettingValue("EmuCore", "EEJitEvictionTrace", false);
-	s_recEvictionTraceLimit = static_cast<u32>(std::clamp(
-		Host::GetIntSettingValue("EmuCore", "EEJitEvictionTraceLimit", 20000), 0, 1000000));
+	if (!s_recEvictionTraceConfigured)
+	{
+		// Latch the diagnostic for the same lifetime as the VM. A full arena
+		// reset must not restart the cap or silently enable new traces.
+		s_recEvictionTraceEnabled = Host::GetBoolSettingValue("EmuCore", "EEJitEvictionTrace", false);
+		s_recEvictionTraceLimit = static_cast<u32>(std::clamp(
+			Host::GetIntSettingValue("EmuCore", "EEJitEvictionTraceLimit", 20000), 0, 1000000));
+		s_recEvictionTraceConfigured = true;
+		if (s_recEvictionTraceEnabled)
+			Console.WriteLn("EE-JIT-EVICT-CONFIG enabled=1 limit=%u (0 means unlimited)",
+				s_recEvictionTraceLimit);
+	}
 	// Internal code-cache exhaustion and the first guest-dispatch transition
 	// must retain the selected mode. The CPU-provider Reset callback retains
 	// its existing native policy (also used for settings/savestate cache clears).
@@ -1283,6 +1294,7 @@ void recShutdown()
 {
 	recTraceRemainingBlocks("provider-shutdown");
 	s_recEvictionTraceEnabled = false;
+	s_recEvictionTraceConfigured = false;
 	s_recEvictionTraceSeen = s_recEvictionTracePrinted = 0;
 	s_recEvictionTraceGeneration = 0;
 	recRAMCopy.deallocate();
@@ -1443,7 +1455,8 @@ void R5900::Dynarec::OpcodeImpl::recBREAK()
 // Physical write-protection/manual-integrity callbacks must not translate
 // their RAM address through the guest's current KUSEG instruction mapping.
 // Size is in dwords (4 bytes).
-void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause, u32 triggeringVirtualPage)
+void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause,
+	u32 triggeringVirtualPage, const char* mappingAction)
 {
 	const bool profiling = PSBBNTlbTraceEnabled();
 	if (static_cast<size_t>(cause) >= s_recInvalidations.size())
@@ -1488,7 +1501,7 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause, u32 trig
 		started = EEJitClock::now();
 	}
 	EERecEvictionTraceContext evictionContext{EEJitInvalidationCauseName(cause),
-		addr, size, triggeringVirtualPage};
+		addr, size, triggeringVirtualPage, mappingAction};
 	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
 		reinterpret_cast<uptr>(JITCompile), addr, size, interval ? &interval->mutations : nullptr,
 		s_recEvictionTraceEnabled ? &recTraceRemovedBlock : nullptr,
