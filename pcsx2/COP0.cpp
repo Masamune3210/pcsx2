@@ -956,7 +956,7 @@ EEActiveTLBPageMap s_active_tlb_pages;
 struct EETLBChurnStats
 {
 	u64 syncs = 0, tlbWrites = 0, asidChanges = 0;
-	u64 removed = 0, installed = 0, unchanged = 0;
+	u64 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
 	u64 physicalClearRequests = 0, duplicatePhysicalClearsAvoided = 0, scratchClearRequests = 0;
 	u64 syncMicroseconds = 0;
 };
@@ -968,13 +968,14 @@ void EEReportTLBChurn(const char* reason)
 	if (!PSBBNTlbTraceEnabled())
 		return;
 	const auto& s = s_ee_tlb_churn;
-	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu",
+	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu permissionOnlyUpdates=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu",
 		reason, static_cast<unsigned long long>(s.syncs),
 		static_cast<unsigned long long>(s.tlbWrites),
 		static_cast<unsigned long long>(s.asidChanges),
 		static_cast<unsigned long long>(s.removed),
 		static_cast<unsigned long long>(s.installed),
 		static_cast<unsigned long long>(s.unchanged),
+		static_cast<unsigned long long>(s.permissionOnlyUpdates),
 		static_cast<unsigned long long>(s.physicalClearRequests),
 		static_cast<unsigned long long>(s.duplicatePhysicalClearsAvoided),
 		static_cast<unsigned long long>(s.scratchClearRequests),
@@ -1016,7 +1017,7 @@ void SyncActiveTLBMappings()
 	std::chrono::steady_clock::time_point started;
 	if (profiling)
 		started = std::chrono::steady_clock::now();
-	u32 removed = 0, installed = 0, unchanged = 0;
+	u32 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
 	// Invalidation is keyed by compiled guest *physical* code. Removing an
 	// alias and installing a replacement can touch the same physical page
 	// several times in one synchronous TLB projection. It is sufficient to
@@ -1042,9 +1043,7 @@ void SyncActiveTLBMappings()
 	for (const auto& [page, old] : s_active_tlb_pages)
 	{
 		const auto match = desired.find(page);
-		if (match == desired.end() || match->second.physicalAddress != old.physicalAddress ||
-			match->second.scratchpad != old.scratchpad ||
-			match->second.writable != old.writable)
+		if (match == desired.end() || !old.HasSameBacking(match->second))
 		{
 			++removed;
 			memClearPageAddr(page << 12);
@@ -1058,11 +1057,15 @@ void SyncActiveTLBMappings()
 	for (const auto& [page, now] : desired)
 	{
 		const auto old = s_active_tlb_pages.find(page);
-		if (old != s_active_tlb_pages.end() && old->second.physicalAddress == now.physicalAddress &&
-			old->second.scratchpad == now.scratchpad &&
-			old->second.writable == now.writable)
+		if (old != s_active_tlb_pages.end() && old->second.HasSameBacking(now))
 		{
-			++unchanged;
+			if (old->second.writable == now.writable)
+				++unchanged;
+			else
+				++permissionOnlyUpdates;
+			// D is checked against s_active_tlb_pages before stores. The swap
+			// below publishes the new permission without rebuilding an identical
+			// host mapping, disturbing SMC protection, or discarding unchanged code.
 			continue;
 		}
 		++installed;
@@ -1121,6 +1124,7 @@ void SyncActiveTLBMappings()
 		s.removed += removed;
 		s.installed += installed;
 		s.unchanged += unchanged;
+		s.permissionOnlyUpdates += permissionOnlyUpdates;
 		s.syncMicroseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::microseconds>(
 			std::chrono::steady_clock::now() - started).count());
 		if ((s.syncs & 0xfffu) == 0)

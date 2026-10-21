@@ -22,6 +22,14 @@ struct EEActiveTLBPage
 	// Preserve it even when two ASIDs select the same physical page (Linux COW).
 	bool writable = true;
 
+	// Both entries must already be present and valid. EntryLo.D lives in the
+	// architectural permission map; host backing and instruction identity do not
+	// change when only D changes. Keep full equality below permission-sensitive.
+	bool HasSameBacking(const EEActiveTLBPage& other) const
+	{
+		return physicalAddress == other.physicalAddress && scratchpad == other.scratchpad;
+	}
+
 	bool operator==(const EEActiveTLBPage&) const = default;
 };
 

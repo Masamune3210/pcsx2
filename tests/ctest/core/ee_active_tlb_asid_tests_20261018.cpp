@@ -192,6 +192,30 @@ TEST(EEActiveTLB, TlbDirtyRewriteChangesPermissionWithoutChangingPFN)
 	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(after, 0x7fff7190));
 }
 
+TEST(EEActiveTLB, PermissionOnlyUpdatesRetainBackingAndPublishBothDirtyDirections)
+{
+	const EEActiveTLBPage readOnly{0x001da000, false, false};
+	const EEActiveTLBPage writable{0x001da000, false, true};
+	EXPECT_TRUE(readOnly.HasSameBacking(writable));
+	EXPECT_TRUE(writable.HasSameBacking(readOnly));
+	EXPECT_NE(readOnly, writable); // Full architectural equality still includes D.
+	EEActiveTLBPageMap active{{0x7fff7, writable}};
+	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(active, 0x7fff7190));
+	EEActiveTLBPageMap desired{{0x7fff7, readOnly}};
+	active.swap(desired);
+	EXPECT_TRUE(EEActiveTLBStoreNeedsModification(active, 0x7fff7190));
+	active.swap(desired);
+	EXPECT_FALSE(EEActiveTLBStoreNeedsModification(active, 0x7fff7190));
+}
+
+TEST(EEActiveTLB, BackingComparisonRequiresSamePhysicalPageAndMemoryKind)
+{
+	const EEActiveTLBPage page{0x3000, false, false};
+	EXPECT_TRUE(page.HasSameBacking(page));
+	EXPECT_FALSE(page.HasSameBacking(EEActiveTLBPage{0x4000, false, false}));
+	EXPECT_FALSE(page.HasSameBacking(EEActiveTLBPage{0x3000, true, false}));
+}
+
 TEST(EEActiveTLB, ReadOnlyGlobalEntryTrapsForEveryASID)
 {
 	tlbs t = MakeEntry(0x00400000, 0x05, 0x00100000, 0x00101000, true);
