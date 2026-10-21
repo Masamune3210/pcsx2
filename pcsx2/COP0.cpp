@@ -6,6 +6,7 @@
 #include "EEActiveTLB.h"
 #include "vtlb.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <unordered_set>
