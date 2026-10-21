@@ -996,7 +996,7 @@ void recUnmapTLBPage(u32 virtualPage);
 #endif
 
 static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping,
-	EEJitInvalidationCause cause)
+	EEJitInvalidationCause cause, const char* mappingAction)
 {
 #if defined(_M_X64) || defined(__x86_64__)
 	if (!mapping.scratchpad)
@@ -1005,7 +1005,7 @@ static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping,
 		// mode is selected or whether the virtual alias is installed yet.
 		if (PSBBNTlbTraceEnabled())
 			++s_ee_tlb_churn.physicalClearRequests;
-		recClearPhysical(mapping.physicalAddress, 0x400, cause, page << 12);
+		recClearPhysical(mapping.physicalAddress, 0x400, cause, page << 12, mappingAction);
 		return;
 	}
 #endif
@@ -1062,7 +1062,7 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	// several times in one synchronous TLB projection. It is sufficient to
 	// invalidate that page once before guest execution resumes.
 	EEPhysicalCodeInvalidationSet physicallyInvalidatedPages;
-	auto clearCodeForMapping = [&](u32 page, const EEActiveTLBPage& mapping)
+	auto clearCodeForMapping = [&](u32 page, const EEActiveTLBPage& mapping, const char* mappingAction)
 	{
 #if defined(_M_X64) || defined(__x86_64__)
 		if (EEExecutionProfile::IsExtendedMMU() &&
@@ -1073,7 +1073,7 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			return;
 		}
 #endif
-		ClearActiveTLBCodePage(page, mapping, cause);
+		ClearActiveTLBCodePage(page, mapping, cause, mappingAction);
 	};
 	EEActiveTLBPageMap desired =
 		BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid);
@@ -1088,7 +1088,7 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			{
 				++removed;
 				memClearPageAddr(page << 12);
-				clearCodeForMapping(page, mapping);
+				clearCodeForMapping(page, mapping, "remove");
 #if defined(_M_X64) || defined(__x86_64__)
 				recUnmapTLBPage(page << 12);
 #endif
@@ -1114,7 +1114,7 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 				return;
 			}
 			memSetPageAddr(page << 12, mapping.physicalAddress);
-			clearCodeForMapping(page, mapping);
+			clearCodeForMapping(page, mapping, "install");
 #if defined(_M_X64) || defined(__x86_64__)
 			recMapTLBPage(page << 12, mapping.physicalAddress);
 #endif
