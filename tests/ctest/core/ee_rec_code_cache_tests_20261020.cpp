@@ -237,4 +237,21 @@ TEST(EERecDispatchMode, ExternalProviderCacheResetRestoresNativePolicy)
 	EERecResetDispatchMode(mode, true);
 	EXPECT_EQ(mode, 0U);
 }
+TEST(EERecPhysicalPagePresence, SkipNeverCompiledPages)
+{
+	EERecCompiledPhysicalPages<0x20000> pages;
+	EXPECT_FALSE(pages.MayContainCode(0x3000, 0x400));
+	pages.Mark(0x7000);
+	EXPECT_FALSE(pages.MayContainCode(0x3000, 0x400));
+	EXPECT_TRUE(pages.MayContainCode(0x7000, 0x400));
+}
+
+TEST(EERecPhysicalPagePresence, RetainCodeCrossingPageBoundary)
+{
+	EERecCompiledPhysicalPages<0x20000> pages;
+	pages.Mark(0x4000);
+	EXPECT_TRUE(pages.MayContainCode(0x3ffc, 2));
+	EXPECT_FALSE(pages.MayContainCode(0x5000, 1));
+}
+
 } // namespace
