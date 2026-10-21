@@ -7,6 +7,44 @@
 
 #include <algorithm>
 
+// Native blocks keep their original linking policy. In guest-TLB mode, an
+// independently remappable target VPN must be resolved at execution, including
+// pending targets which have no BaseBlocks metadata to invalidate yet.
+inline void EERecLinkStaticBlock(BaseBlocks& blocks, bool useGuestTLB, u32 virtualStart,
+	u32 virtualTarget, u32 physicalTarget, s32* jump, uptr dispatcher)
+{
+	const bool managedTarget = virtualTarget < 0x80000000u || virtualTarget >= 0xc0000000u;
+	if (useGuestTLB && managedTarget && (virtualStart >> 12) != (virtualTarget >> 12))
+		*jump = static_cast<s32>(dispatcher - reinterpret_cast<uptr>(jump + 1));
+	else
+		blocks.Link(physicalTarget, jump);
+}
+
+// A readable physical RAM pointer does not make an unmapped guest VPN executable.
+// The dispatch-page bias is the same one used by recUnmapTLBPage.
+inline const u32* EERecGetInstructionPtr(bool useGuestTLB, u32 address, uptr dispatchPage,
+	const BASEBLOCK* unmapped, const u32* physicalCode)
+{
+	const uptr unmappedPage = reinterpret_cast<uptr>(unmapped) -
+		static_cast<uptr>(address & 0xffff0000u) * (sizeof(BASEBLOCK) / 4);
+	return useGuestTLB && dispatchPage == unmappedPage ? nullptr : physicalCode;
+}
+
+inline void EERecEnterGuestTLBDispatch(u32& mode, bool& reset)
+{
+	if (mode == 0)
+	{
+		mode = 1;
+		reset = true; // discard links emitted under native assumptions
+	}
+}
+
+inline void EERecResetDispatchMode(u32& mode, bool externalReset)
+{
+	if (externalReset)
+		mode = 0;
+}
+
 // BaseBlocks keys and all extents below are PHYSICAL addresses. The fixed
 // physical LUT must never be replaced by the active guest-virtual dispatch
 // LUT: a low physical address can itself be an unmapped/remapped guest VPN.
