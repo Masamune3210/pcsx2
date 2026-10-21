@@ -452,6 +452,8 @@ int vtlb_DynGenReadNonQuad_Const(u32 bits, bool sign, bool xmm, u32 addr_const, 
 
 	int x86_dest_reg;
 	auto vmv = vtlbdata.vmap[addr_const >> VTLB_PAGE_BITS];
+	if (PSBBNTlbTraceEnabled())
+		recRecordConstantDataLookup(addr_const, false, !vmv.isHandler(addr_const));
 	if (!vmv.isHandler(addr_const))
 	{
 		auto ppf = vmv.assumePtr(addr_const);
@@ -599,6 +601,8 @@ int vtlb_DynGenReadQuad_Const(u32 bits, u32 addr_const, vtlb_ReadRegAllocCallbac
 
 	int reg;
 	auto vmv = vtlbdata.vmap[addr_const >> VTLB_PAGE_BITS];
+	if (PSBBNTlbTraceEnabled())
+		recRecordConstantDataLookup(addr_const, false, !vmv.isHandler(addr_const));
 	if (!vmv.isHandler(addr_const))
 	{
 		void* ppf = reinterpret_cast<void*>(vmv.assumePtr(addr_const));
@@ -803,6 +807,8 @@ void vtlb_DynGenWrite_Const(u32 bits, bool xmm, u32 addr_const, int value_reg)
 #endif
 
 	auto vmv = vtlbdata.vmap[addr_const >> VTLB_PAGE_BITS];
+	if (PSBBNTlbTraceEnabled())
+		recRecordConstantDataLookup(addr_const, true, !vmv.isHandler(addr_const));
 	if (!vmv.isHandler(addr_const))
 	{
 		auto ppf = vmv.assumePtr(addr_const);
