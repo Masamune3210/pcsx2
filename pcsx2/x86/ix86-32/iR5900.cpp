@@ -2660,8 +2660,10 @@ StartRecomp:
 				interpretUnmappedBoundaryBranch = true;
 				interpreterBranchPC = branchPC;
 				s_nEndBlock = delayPC; // exclude the unmapped slot from every compile-time pass
-				Console.WriteLn("EE JIT cross-page delay-slot interpreter fallback: branch=%08x slot=%08x",
-					branchPC, delayPC);
+				static u32 loggedCrossPageFallbacks = 0;
+				if (loggedCrossPageFallbacks++ < 32)
+					Console.WriteLn("EE JIT cross-page delay-slot interpreter fallback: branch=%08x slot=%08x",
+						branchPC, delayPC);
 			}
 		}
 	}
