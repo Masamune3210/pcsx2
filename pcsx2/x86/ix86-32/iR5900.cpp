@@ -3223,6 +3223,10 @@ StartRecomp:
 
 	pxAssert((pc - startpc) >> 2 <= 0xffff);
 	s_pCurBlockEx->size = (pc - startpc) >> 2;
+	// The block-cache overlap/search machinery regards this size as a
+	// physically contiguous extent, even if the guest crosses to another
+	// noncontiguous PFN. Track that metadata extent as well as real source PFNs.
+	s_recCompiledPhysicalPages.MarkMetadataExtent(HWADDR(startpc), pc - startpc);
 	// A compiled span can cross 4 KiB virtual pages backed by different PFNs.
 	// Record every source page, not just the physical start address.
 	for (u32 virtualPC = startpc; virtualPC < pc;)
