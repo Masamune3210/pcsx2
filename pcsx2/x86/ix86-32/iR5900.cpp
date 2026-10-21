@@ -542,6 +542,36 @@ static void _DynGen_Dispatchers()
 
 static void recError(u32 error)
 {
+	if (error == 0)
+	{
+		// The recLUT has no compiled block for this virtual page. This is a
+		// normal instruction-fetch TLB miss when the guest is executing from
+		// kuseg or mapped kernel segments; it must be delivered to the guest,
+		// not treated as a fatal JIT dispatch error. The dispatcher has
+		// already committed the target PC and GPR state to cpuRegs.
+		const u32 fetch_pc = cpuRegs.pc;
+		if ((fetch_pc < 0x80000000u || fetch_pc >= 0xc0000000u) && vtlb_private::vtlbdata.vmap)
+		{
+			const auto& mapping = vtlb_private::vtlbdata.vmap[fetch_pc >> VTLB_PAGE_BITS];
+			if (mapping.isHandler(fetch_pc) && mapping.assumeHandlerGetID() == 0)
+			{
+				// cpuTlbMissR() subtracts 4 from cpuRegs.pc before recording
+				// EPC. Unlike translated load/store helpers, the dispatcher
+				// holds the exact *next fetch* PC, not the PC after an opcode.
+				cpuRegs.pc = fetch_pc + 4;
+				cpuRegs.IsDelaySlot = 0;
+				g_recPreciseMemoryFaultArmed = 0;
+				static u32 logged_fetch_misses = 0;
+				if (logged_fetch_misses++ < 32)
+					Console.WriteLn("EE JIT instruction-fetch TLBL pc=%08x status=%08x EntryHi=%08x",
+						fetch_pc, cpuRegs.CP0.n.Status.val, cpuRegs.CP0.n.EntryHi);
+				cpuTlbMissR(fetch_pc, 0);
+				recExitExecution();
+				return;
+			}
+		}
+	}
+
 	switch (error)
 	{
 		case 0:
