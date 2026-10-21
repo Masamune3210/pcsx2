@@ -183,7 +183,7 @@ TEST_F(EERecBoundaryBridge, DIContinuationExecutesMappedNextInstructionBeforeDis
 		EXPECT_EQ(cpuRegs.pc, BranchPC + 8);
 		EXPECT_EQ(cpuRegs.GPR.r[2].UD[0], 1u);
 		EXPECT_EQ(cpuRegs.CP0.n.Status.b.EIE, 0u);
-		EXPECT_EQ(cpuRegs.cycle, 100u + std::max(1u, R5900::GetInstruction(0x24420001u).cycles >> 3));
+		EXPECT_EQ(cpuRegs.cycle, 100u + std::max(1u, static_cast<u32>(R5900::GetInstruction(0x24420001u).cycles) >> 3));
 		EXPECT_EQ(Cpu, &recCpu);
 	});
 }
