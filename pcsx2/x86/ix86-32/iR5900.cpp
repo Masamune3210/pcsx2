@@ -1889,7 +1889,12 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 
 		opcode.recompile();
 		if (may_fault_memory)
+		{
 			xMOV(ptr32[&g_recPreciseMemoryFaultArmed], 0u);
+			// Do not leak a translated delay-slot marker into later guest ops.
+			if (g_recompilingDelaySlot)
+				xMOV(ptr32[&cpuRegs.IsDelaySlot], 0u);
+		}
 	}
 
 	if (!swapped_delay_slot)
