@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <unordered_set>
 
@@ -950,6 +951,33 @@ __fi void COP0_UpdatePCCR()
 namespace
 {
 EEActiveTLBPageMap s_active_tlb_pages;
+
+// Bounded host-side diagnostics selected by existing EE COP0 trace.
+struct EETLBChurnStats
+{
+	u64 syncs = 0, tlbWrites = 0, asidChanges = 0;
+	u64 removed = 0, installed = 0, unchanged = 0;
+	u64 physicalClearRequests = 0, scratchClearRequests = 0;
+	u64 syncMicroseconds = 0;
+};
+EETLBChurnStats s_ee_tlb_churn;
+}
+
+void EEReportTLBChurn(const char* reason)
+{
+	if (!PSBBNTlbTraceEnabled())
+		return;
+	const auto& s = s_ee_tlb_churn;
+	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu physicalClearRequests=%llu scratchClearRequests=%llu syncUs=%llu",
+		reason, static_cast<unsigned long long>(s.syncs),
+		static_cast<unsigned long long>(s.tlbWrites),
+		static_cast<unsigned long long>(s.asidChanges),
+		static_cast<unsigned long long>(s.removed),
+		static_cast<unsigned long long>(s.installed),
+		static_cast<unsigned long long>(s.unchanged),
+		static_cast<unsigned long long>(s.physicalClearRequests),
+		static_cast<unsigned long long>(s.scratchClearRequests),
+		static_cast<unsigned long long>(s.syncMicroseconds));
 }
 
 #if defined(_M_X64) || defined(__x86_64__)
@@ -967,16 +995,27 @@ static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping)
 	{
 		// Use the projection's explicit PFN, regardless of which dispatch
 		// mode is selected or whether the virtual alias is installed yet.
+		if (PSBBNTlbTraceEnabled())
+			++s_ee_tlb_churn.physicalClearRequests;
 		recClearPhysical(mapping.physicalAddress, 0x400);
 		return;
 	}
 #endif
 	if (Cpu)
+	{
+		if (PSBBNTlbTraceEnabled())
+			++s_ee_tlb_churn.scratchClearRequests;
 		Cpu->Clear(page << 12, 0x400);
+	}
 }
 
 void SyncActiveTLBMappings()
 {
+	const bool profiling = PSBBNTlbTraceEnabled();
+	std::chrono::steady_clock::time_point started;
+	if (profiling)
+		started = std::chrono::steady_clock::now();
+	u32 removed = 0, installed = 0, unchanged = 0;
 	EEActiveTLBPageMap desired =
 		BuildEEActiveTLBPageMap(tlb, std::size(tlb), static_cast<u8>(cpuRegs.CP0.n.EntryHi));
 
@@ -989,6 +1028,7 @@ void SyncActiveTLBMappings()
 			match->second.scratchpad != old.scratchpad ||
 			match->second.writable != old.writable)
 		{
+			++removed;
 			memClearPageAddr(page << 12);
 			ClearActiveTLBCodePage(page, old);
 #if defined(_M_X64) || defined(__x86_64__)
@@ -1003,7 +1043,11 @@ void SyncActiveTLBMappings()
 		if (old != s_active_tlb_pages.end() && old->second.physicalAddress == now.physicalAddress &&
 			old->second.scratchpad == now.scratchpad &&
 			old->second.writable == now.writable)
+		{
+			++unchanged;
 			continue;
+		}
+		++installed;
 		if (now.scratchpad)
 		{
 			// Preserve the existing 16KB scratchpad fastmem path; mapping it
@@ -1052,6 +1096,18 @@ void SyncActiveTLBMappings()
 		}
 	}
 	s_active_tlb_pages.swap(desired);
+	if (profiling)
+	{
+		auto& s = s_ee_tlb_churn;
+		++s.syncs;
+		s.removed += removed;
+		s.installed += installed;
+		s.unchanged += unchanged;
+		s.syncMicroseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - started).count());
+		if ((s.syncs & 0xfffu) == 0)
+			EEReportTLBChurn("4096-syncs");
+	}
 }
 
 // All active translations remain readable through the existing vTLB mapping;
@@ -1089,11 +1145,17 @@ void WriteCP0EntryHi(u32 value)
 	const u8 previousAsid = static_cast<u8>(cpuRegs.CP0.n.EntryHi);
 	cpuRegs.CP0.n.EntryHi = value;
 	if (static_cast<u8>(value) != previousAsid)
+	{
+		if (PSBBNTlbTraceEnabled())
+			++s_ee_tlb_churn.asidChanges;
 		SyncActiveTLBMappings();
+	}
 }
 
 void MapTLB(const tlbs&, int)
 {
+	if (PSBBNTlbTraceEnabled())
+		++s_ee_tlb_churn.tlbWrites;
 	// The caller has already installed tlb[i]. Update only the physical pages
 	// visible under the selected ASID instead of flattening *every* TLB entry.
 	SyncActiveTLBMappings();
