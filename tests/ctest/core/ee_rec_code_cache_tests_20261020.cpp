@@ -32,17 +32,171 @@ protected:
 			ram[word].SetFnptr(compiler);
 	}
 
-	void AddBlock(u32 address, u32 words, uptr code)
+	void AddBlock(u32 address, u32 words, uptr code, u32 hostBytes = 16)
 	{
-		blocks.New(address, code)->size = words;
+		BASEBLOCKEX* block = blocks.New(address, code);
+		block->size = words;
+		block->x86size = hostBytes;
 		ram[address / 4].SetFnptr(code);
 	}
 
-	void Clear(u32 address, u32 words, BASEBLOCK* compiling = nullptr)
+	void Clear(u32 address, u32 words, BASEBLOCK* compiling = nullptr, BaseBlocks::Metrics* metrics = nullptr)
 	{
-		EERecClearPhysicalBlocks(blocks, physicalLUT.data(), compiling, compiler, address, words);
+		EERecClearPhysicalBlocks(blocks, physicalLUT.data(), compiling, compiler, address, words, metrics);
 	}
 };
+
+TEST_F(EERecCodeCache, MutationMetricsCountRemovedOverlapsButPreserveCompilingAndLiveBytes)
+{
+	AddBlock(0x3000, 8, reinterpret_cast<uptr>(firstCode.data()), 11);
+	AddBlock(0x3010, 4, reinterpret_cast<uptr>(secondCode.data()), 17);
+	BASEBLOCKEX* compiling = blocks.New(0x3018, reinterpret_cast<uptr>(dispatcherCode.data()));
+	compiling->size = 2;
+	compiling->x86size = 13;
+	AddBlock(0x6000, 4, reinterpret_cast<uptr>(secondCode.data()), 23);
+	const auto before = blocks.GetLiveMetrics();
+	EXPECT_EQ(before.blocks, 4U);
+	EXPECT_EQ(before.hostBytes, 64U);
+
+	BaseBlocks::Metrics metrics;
+	Clear(0x301c, 1, &ram[0x3018 / 4], &metrics);
+	EXPECT_EQ(metrics.removedBlocks, 2U);
+	EXPECT_EQ(metrics.retiredHostBytes, 28U);
+	EXPECT_EQ(metrics.dispatchWrites, 2U);
+	EXPECT_EQ(metrics.dispatchWriteAttempts, 10U);
+	EXPECT_EQ(metrics.dispatchWriteSkips, 8U);
+	EXPECT_EQ(metrics.dispatchWriteAttempts, metrics.dispatchWrites + metrics.dispatchWriteSkips);
+	EXPECT_NE(blocks.Get(0x3018), nullptr);
+	const auto after = blocks.GetLiveMetrics();
+	EXPECT_EQ(after.blocks, 2U);
+	EXPECT_EQ(after.hostBytes, 36U);
+	EXPECT_EQ(after.hostBytes + metrics.retiredHostBytes, before.hostBytes);
+	// Repeating an empty clear does not retire bytes or write dispatch entries.
+	const u64 attempts = metrics.dispatchWriteAttempts;
+	Clear(0x301c, 1, &ram[0x3018 / 4], &metrics);
+	EXPECT_EQ(metrics.removedBlocks, 2U);
+	EXPECT_EQ(metrics.retiredHostBytes, 28U);
+	EXPECT_EQ(metrics.dispatchWriteAttempts, attempts);
+}
+
+TEST_F(EERecCodeCache, LinkMutationMetricsCoverPendingPublishRemoveAndRepeatedPatch)
+{
+	BaseBlocks::Metrics metrics;
+	s32 jump = static_cast<s32>(compiler - reinterpret_cast<uptr>(&jump + 1));
+	blocks.Link(0x3000, &jump, &metrics);
+	EXPECT_EQ(metrics.linkPatchSkips, 1U);
+	BASEBLOCKEX* block = blocks.New(0x3000, reinterpret_cast<uptr>(firstCode.data()), &metrics);
+	block->size = 4;
+	block->x86size = 9;
+	blocks.Link(0x3000, &jump, &metrics);
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 2U);
+	blocks.Remove(0, 0, &metrics);
+	EXPECT_EQ(jump, static_cast<s32>(compiler - reinterpret_cast<uptr>(&jump + 1)));
+	EXPECT_EQ(metrics.linkPatchAttempts, 5U);
+	EXPECT_EQ(metrics.linkPatchWrites, 2U);
+	EXPECT_EQ(metrics.linkPatchSkips, 3U);
+	EXPECT_EQ(metrics.removedBlocks, 1U);
+	EXPECT_EQ(metrics.retiredHostBytes, 9U);
+	// Records remain valid until the arena/reset lifecycle discards them.
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 2U);
+	block = blocks.New(0x3000, reinterpret_cast<uptr>(secondCode.data()), &metrics);
+	block->size = 4;
+	EXPECT_EQ(jump, static_cast<s32>(block->fnptr - reinterpret_cast<uptr>(&jump + 1)));
+	EXPECT_EQ(metrics.linkPatchAttempts, 7U);
+	EXPECT_EQ(metrics.linkPatchWrites, 3U);
+	EXPECT_EQ(metrics.linkPatchSkips, 4U);
+}
+
+TEST_F(EERecCodeCache, DispatcherLinkUsesSameIdempotentPatchAccounting)
+{
+	BaseBlocks::Metrics metrics;
+	s32 jump = 0;
+	const uptr dispatcher = reinterpret_cast<uptr>(dispatcherCode.data());
+	EERecLinkStaticBlock(blocks, true, 0x4000, 0x5000, 0x6000, &jump, dispatcher, &metrics);
+	EERecLinkStaticBlock(blocks, true, 0x4000, 0x5000, 0x6000, &jump, dispatcher, &metrics);
+	EXPECT_EQ(jump, static_cast<s32>(dispatcher - reinterpret_cast<uptr>(&jump + 1)));
+	EXPECT_EQ(metrics.linkPatchAttempts, 2U);
+	EXPECT_EQ(metrics.linkPatchWrites, 1U);
+	EXPECT_EQ(metrics.linkPatchSkips, 1U);
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 0U);
+}
+
+TEST_F(EERecCodeCache, CacheAndMetricsResetHaveSeparateExplicitLifetimes)
+{
+	BaseBlocks::Metrics metrics;
+	AddBlock(0x3000, 4, reinterpret_cast<uptr>(firstCode.data()), 19);
+	s32 jump = 0;
+	blocks.Link(0x3000, &jump, &metrics);
+	Clear(0x3000, 1, nullptr, &metrics);
+	AddBlock(0x6000, 4, reinterpret_cast<uptr>(secondCode.data()), 23);
+	blocks.Reset();
+	const auto live = blocks.GetLiveMetrics();
+	EXPECT_EQ(live.blocks, 0U);
+	EXPECT_EQ(live.hostBytes, 0U);
+	EXPECT_EQ(live.linkRecords, 0U);
+	EXPECT_EQ(metrics.removedBlocks, 1U);
+	metrics.Reset();
+	EXPECT_EQ(metrics.removedBlocks, 0U);
+	EXPECT_EQ(metrics.retiredHostBytes, 0U);
+	EXPECT_EQ(metrics.dispatchWriteAttempts, 0U);
+	EXPECT_EQ(metrics.dispatchWrites, 0U);
+	EXPECT_EQ(metrics.dispatchWriteSkips, 0U);
+	EXPECT_EQ(metrics.linkPatchAttempts, 0U);
+	EXPECT_EQ(metrics.linkPatchWrites, 0U);
+	EXPECT_EQ(metrics.linkPatchSkips, 0U);
+}
+
+TEST_F(EERecCodeCache, LargeClearRangeDoesNotWrapBeforeFindingPhysicalBlocks)
+{
+	AddBlock(0x3000, 4, reinterpret_cast<uptr>(firstCode.data()));
+	BaseBlocks::Metrics metrics;
+	Clear(0x3000, 0x40000000, nullptr, &metrics);
+	EXPECT_EQ(blocks.Get(0x3000), nullptr);
+	EXPECT_EQ(metrics.removedBlocks, 1U);
+	EXPECT_EQ(ram[0x3000 / 4].GetFnptr(), compiler);
+}
+
+TEST_F(EERecCodeCache, HostByteAccountingDoesNotTruncateAtFourGiB)
+{
+	AddBlock(0x3000, 4, reinterpret_cast<uptr>(firstCode.data()), 0xfffffff0u);
+	AddBlock(0x3010, 4, reinterpret_cast<uptr>(secondCode.data()), 0xfffffff0u);
+	// Deliberately synthetic metadata sizes exercise the aggregate width;
+	// retirement never reads or frees the claimed host-code byte ranges.
+	EXPECT_EQ(blocks.GetLiveMetrics().hostBytes, u64{0x1ffffffe0});
+	BaseBlocks::Metrics metrics;
+	Clear(0x3000, 8, nullptr, &metrics);
+	EXPECT_EQ(metrics.retiredHostBytes, u64{0x1ffffffe0});
+	EXPECT_EQ(blocks.GetLiveMetrics().hostBytes, 0U);
+}
+
+TEST_F(EERecCodeCache, PhysicalBlockLookupExtentDoesNotWrapAtAddressSpaceEnd)
+{
+	BASEBLOCKEX* block = blocks.New(0xfffffffcu, reinterpret_cast<uptr>(firstCode.data()));
+	block->size = 2;
+	EXPECT_EQ(blocks.Get(0xfffffffcu), block);
+	EXPECT_EQ(blocks.Get(0), nullptr);
+}
+
+TEST(EERecLinkPatch, UnalignedImmediateRetainsExactDisplacementBitsAndAdjacentBytes)
+{
+	std::array<u8, 8> storage;
+	storage.fill(0xab);
+	s32* jump = reinterpret_cast<s32*>(storage.data() + 1);
+	const uptr target = reinterpret_cast<uptr>(jump) + sizeof(s32) + u32{0xf1234567};
+	BaseBlocks::Metrics metrics;
+	BaseBlocks::PatchLink(jump, target, &metrics);
+	BaseBlocks::PatchLink(jump, target, &metrics);
+	u32 actual;
+	std::memcpy(&actual, storage.data() + 1, sizeof(actual));
+	EXPECT_EQ(actual, 0xf1234567u);
+	EXPECT_EQ(storage[0], 0xab);
+	EXPECT_EQ(storage[5], 0xab);
+	EXPECT_EQ(storage[6], 0xab);
+	EXPECT_EQ(storage[7], 0xab);
+	EXPECT_EQ(metrics.linkPatchAttempts, 2U);
+	EXPECT_EQ(metrics.linkPatchWrites, 1U);
+	EXPECT_EQ(metrics.linkPatchSkips, 1U);
+}
 
 // A physical code page remains a cache object even if no guest virtual page
 // currently maps it. Its dispatch entry and incoming links must both be reset.
