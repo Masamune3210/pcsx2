@@ -232,4 +232,36 @@ TEST_F(EERecBoundaryBridge, DIContinuationUntakenLikelyAnnulsSlot)
 	});
 }
 
+TEST_F(EERecBoundaryBridge, DIContinuationFaultedMemoryReadDoesNotApplyDI)
+{
+	RunIsolated([this] {
+		slotPage[0] = 0x8c020000u; // lw v0,0(zero); virtual 0 is unmapped
+		vtlb_VMapBuffer(BranchPC + 4, slotPage.data(), 4096);
+		cpuRegs.CP0.n.Status.b.EIE = 1;
+		EEInterpretDINextInstructionFromJIT(BranchPC + 4);
+		EXPECT_EQ(cpuRegs.CP0.n.EPC, BranchPC + 4);
+		EXPECT_EQ(cpuRegs.CP0.n.BadVAddr, 0u);
+		EXPECT_EQ(cpuRegs.CP0.n.Cause & 0x7cu, 8u);
+		EXPECT_EQ(cpuRegs.CP0.n.Cause & 0x80000000u, 0u);
+		EXPECT_EQ(cpuRegs.CP0.n.Status.b.EIE, 1u);
+		EXPECT_EQ(Cpu, &recCpu);
+	});
+}
+
+TEST_F(EERecBoundaryBridge, DIContinuationBranchSlotFaultPreservesBDAndPriorEIE)
+{
+	RunIsolated([this] {
+		slotPage[0] = 0x10200008u; // beq at,zero: untaken, slot executes
+		slotPage[1] = 0x8c020000u; // lw v0,0(zero): unmapped data
+		vtlb_VMapBuffer(BranchPC + 4, slotPage.data(), 4096);
+		cpuRegs.CP0.n.Status.b.EIE = 1;
+		EEInterpretDINextInstructionFromJIT(BranchPC + 4);
+		EXPECT_EQ(cpuRegs.CP0.n.EPC, BranchPC + 4);
+		EXPECT_EQ(cpuRegs.CP0.n.BadVAddr, 0u);
+		EXPECT_NE(cpuRegs.CP0.n.Cause & 0x80000000u, 0u);
+		EXPECT_EQ(cpuRegs.CP0.n.Status.b.EIE, 1u);
+		EXPECT_EQ(Cpu, &recCpu);
+	});
+}
+
 } // namespace
