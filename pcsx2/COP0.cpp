@@ -1150,6 +1150,21 @@ namespace Interpreter {
 namespace OpcodeImpl {
 namespace COP0 {
 
+// The EE Random register cycles through the non-wired TLB entries.
+// PCSX2 previously left it fixed at 47 after reset/MTC0 Wired, causing
+// TLBWR to continually evict one entry. Use the emulated EE cycle counter
+// so both interpreter and JIT select changing entries without a per-opcode
+// host cost or unsaved host-side phase state.
+//
+// The exact hardware decrement phase is still approximate because JIT cycle
+// accounting is block-based. The range and read-only behavior are preserved.
+static void UpdateTLBRandom()
+{
+	const u32 wired = std::min(cpuRegs.CP0.n.Wired & 0x3fu, 47u);
+	const u32 available = 48u - wired;
+	cpuRegs.CP0.n.Random = 47u - static_cast<u32>(cpuRegs.cycle % available);
+}
+
 	void TLBR()
 	{
 		if (!PSBBNTlbTraceEnabled())
@@ -1198,6 +1213,7 @@ namespace COP0 {
 
 	void TLBWR()
 	{
+		UpdateTLBRandom();
 		const u8 j = cpuRegs.CP0.n.Random & 0x3f;
 		PSBBNTraceTlb(PSBBNTlbEvent::TlbwrBefore, cpuRegs.CP0.n.EntryHi, 0, j, true);
 
@@ -1249,6 +1265,11 @@ namespace COP0 {
 		//if(bExecBIOS == FALSE && _Rd_ == 25) Console.WriteLn("MFC0 _Rd_ %x = %x", _Rd_, cpuRegs.CP0.r[_Rd_]);
 		switch (_Rd_)
 		{
+			case 1:
+				UpdateTLBRandom();
+				cpuRegs.GPR.r[_Rt_].SD[0] = (s32)cpuRegs.CP0.n.Random;
+				break;
+
 			case 12:
 				cpuRegs.GPR.r[_Rt_].SD[0] = (s32)(cpuRegs.CP0.r[_Rd_] & 0xf0c79c1f);
 				break;
