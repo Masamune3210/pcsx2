@@ -1246,6 +1246,14 @@ void recClearPhysical(u32 addr, u32 size)
 {
 	if (!recRAM || addr >= maxrecmem || size == 0)
 		return;
+	// Invalidation cannot remove a compiled block from a RAM page which has
+	// never contained recompiled instructions during this cache generation.
+	if (!s_recCompiledPhysicalPages.MayContainCode(addr, size))
+	{
+		if (PSBBNTlbTraceEnabled())
+			++s_recSkippedUncompiledPageClears;
+		return;
+	}
 	if (PSBBNTlbTraceEnabled())
 		++s_recPhysicalClearCalls;
 	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
