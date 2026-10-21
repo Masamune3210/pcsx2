@@ -732,13 +732,20 @@ static void recReserveRAM()
 		recLUT_SetPage(recLUT, hwLUT, recROM2, 0x8000, i, i - 0x1e40);
 		recLUT_SetPage(recLUT, hwLUT, recROM2, 0xa000, i, i - 0x1e40);
 	}
-	// Expand 64 KiB boot aliases to a 4 KiB dispatch/identity table. Later
-	// TLBWI/TLBWR operations replace individual guest virtual page aliases.
+	// Preserve the legacy 64 KiB boot aliases for the native PS2 fast
+	// dispatcher, but NOT for TLB-managed instruction fetches in fine mode.
+	// The old table directly aliases low KUSEG RAM and the first 32 MiB of
+	// KSEG2/3. In 4 KiB mode those pages must fault until a real guest TLB
+	// entry projects them onto physical memory. Otherwise user code can
+	// compile and execute unrelated physical data (including ASCII strings).
 	for (u32 block = 0; block < 0x10000; block++)
 		for (u32 sub = 0; sub < 16; sub++)
 		{
-			recLUTPages[block * 16 + sub] = recLUT[block];
-			hwLUTPages[block * 16 + sub] = hwLUT[block];
+			const u32 virtualPage = (block * 16u + sub) << 12;
+			recLUTPages[virtualPage >> 12] = recLUT[block];
+			hwLUTPages[virtualPage >> 12] = hwLUT[block];
+			if (virtualPage < 0x80000000u || virtualPage >= 0xc0000000u)
+				recUnmapTLBPage(virtualPage);
 		}
 	// A recResetRaw() can run while guest mappings are live; reconstruct
 	// physical dispatch aliases from the architectural entries, not stale
