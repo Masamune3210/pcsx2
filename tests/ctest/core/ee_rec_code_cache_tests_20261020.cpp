@@ -254,4 +254,13 @@ TEST(EERecPhysicalPagePresence, RetainCodeCrossingPageBoundary)
 	EXPECT_FALSE(pages.MayContainCode(0x5000, 1));
 }
 
+TEST(EERecPhysicalPagePresence, ResetDiscardsSeenPages)
+{
+	EERecCompiledPhysicalPages<0x20000> pages;
+	pages.Mark(0x11000);
+	EXPECT_TRUE(pages.MayContainCode(0x11000, 0x400));
+	pages.Reset();
+	EXPECT_FALSE(pages.MayContainCode(0x11000, 0x400));
+}
+
 } // namespace
