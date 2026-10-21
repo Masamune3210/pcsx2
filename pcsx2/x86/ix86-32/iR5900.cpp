@@ -110,9 +110,10 @@ void recUnmapTLBPage(u32 virtualPage)
 	if (!recRAM || (virtualPage & 0xfff))
 		return;
 	const u32 index = virtualPage >> 12;
-	// Keep boot-time fixed segment aliases, but never treat a KSEG2/3
-	// translation as a direct physical alias after its guest TLB entry goes.
-	if (virtualPage >= 0xc0000000u)
+	// Keep KSEG0/1 boot-time direct aliases. After a tracked guest TLB
+	// entry disappears, KUSEG and KSEG2/3 instruction fetches must fault,
+	// including low KUSEG addresses which had a legacy boot-time alias.
+	if (virtualPage < 0x80000000u || virtualPage >= 0xc0000000u)
 	{
 		recLUTPages[index] = reinterpret_cast<uptr>(recLutUnmapped.data()) -
 			static_cast<uptr>(virtualPage & 0xffff0000u) * (sizeof(BASEBLOCK) / 4);
