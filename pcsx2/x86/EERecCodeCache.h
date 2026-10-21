@@ -80,6 +80,21 @@ public:
 		}
 	}
 
+	// BaseBlocks records each compiled block as a contiguous physical extent
+	// from its starting PFN. The next guest virtual page may map a different
+	// PFN, so also mark the *metadata extent* even if no opcode was fetched
+	// from some of its intervening physical pages. Missing such a page could
+	// incorrectly skip invalidation of overlapping BaseBlocks metadata.
+	void MarkMetadataExtent(u32 physicalStart, u32 byteCount)
+	{
+		if (!byteCount)
+			return;
+		const u64 end = static_cast<u64>(physicalStart) + byteCount;
+		for (u64 pageStart = static_cast<u64>(physicalStart) & ~u64{0xfff};
+			pageStart < end && pageStart < RAMBytes; pageStart += 0x1000u)
+			Mark(static_cast<u32>(pageStart));
+	}
+
 	// Clear sizes are in 32-bit guest instructions / dwords. Covers every
 	// touched physical page, including a code block crossing a 4 KiB edge.
 	// Addresses outside the managed RAM window are conservatively retained.
