@@ -1,5 +1,9 @@
 # PSBBN EE JIT: measured 64 MiB thrash and safe within-sync physical clear deduplication (v22)
 
+Follow-up: [physical code presence filter integration](PSBBN_JIT_CODE_PRESENCE_FILTER_20261021_v23.md)
+records the completed wiring, runtime-versus-constant RAM template correction,
+prospective edge coverage and source-only verification limits.
+
 ## Branch / state
 - Repository: `Masamune3210/pcsx2`.
 - Continue existing branch `note-working/psbbn-jit-reiserfs-mmu-witness-20261020`, do not create nested branches.
