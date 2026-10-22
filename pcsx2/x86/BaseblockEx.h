@@ -147,11 +147,18 @@ protected:
 	std::multimap<u32, uptr> links;
 	uptr recompiler;
 	BaseBlockArray blocks;
+	LinkObserver linkObserver = nullptr;
+	void* linkObserverContext = nullptr;
 
 public:
 	// Called only for blocks that are actually removed from the metadata table.
 	// An observer must not modify BaseBlocks or retain the borrowed reference.
 	using RemovalObserver = void (*)(const BASEBLOCKEX& block, void* context);
+	// Optional observational callbacks. A link site is an x86 rel32 displacement;
+	// notifications never participate in deciding whether it can be patched.
+	enum class LinkEvent : u8 { Register, TargetCompiled, TargetRemoved };
+	using LinkObserver = void (*)(LinkEvent event, u32 targetPC, uptr jumpSite,
+		uptr destination, bool wrote, void* context);
 
 	// Caller-owned bounded aggregates; passing nullptr keeps other recompilers
 	// free of accounting work. Retirement is logical, never arena reclamation.
@@ -182,6 +189,12 @@ public:
 	{
 	}
 
+	void SetLinkObserver(LinkObserver observer, void* context)
+	{
+		linkObserver = observer;
+		linkObserverContext = context;
+	}
+
 	void SetJITCompile(const void *recompiler_)
 	{
 		recompiler = reinterpret_cast<uptr>(recompiler_);
@@ -193,7 +206,7 @@ public:
 
 	// Compare the same low 32 displacement bits used by the original patch.
 	// memcpy also supports unaligned x86 branch immediates without typed loads.
-	static __fi void PatchLink(s32* jump, uptr target, Metrics* metrics = nullptr)
+	static __fi bool PatchLink(s32* jump, uptr target, Metrics* metrics = nullptr)
 	{
 		const u32 displacement = static_cast<u32>(target - (reinterpret_cast<uptr>(jump) + sizeof(s32)));
 		u32 previous;
@@ -204,11 +217,12 @@ public:
 		{
 			if (metrics)
 				metrics->linkPatchSkips++;
-			return;
+			return false;
 		}
 		memcpy(jump, &displacement, sizeof(displacement));
 		if (metrics)
 			metrics->linkPatchWrites++;
+		return true;
 	}
 
 	// Snapshot only: x86size describes current metadata (zero until finalized),
@@ -264,7 +278,12 @@ public:
 			//u32 startpc = blocks[idx].startpc;
 			std::pair<linkiter_t, linkiter_t> range = links.equal_range(blocks[idx].startpc);
 			for (linkiter_t i = range.first; i != range.second; ++i)
-				PatchLink(reinterpret_cast<s32*>(i->second), recompiler, metrics);
+			{
+				const bool wrote = PatchLink(reinterpret_cast<s32*>(i->second), recompiler, metrics);
+				if (linkObserver)
+					linkObserver(LinkEvent::TargetRemoved, blocks[idx].startpc, i->second,
+						recompiler, wrote, linkObserverContext);
+			}
 			if (metrics)
 			{
 				metrics->removedBlocks++;
