@@ -425,8 +425,15 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 	// Use the architectural TLB under the CURRENT ASID, NOT the JIT LUT.
 	// COP0 calls the retirement observer before recUnmapTLBPage(), when the
 	// JIT LUT still advertises the OLD mapping being removed.
-	const auto architectural = BuildEEActiveTLBPageMap(tlb, std::size(tlb),
-		static_cast<u8>(cpuRegs.CP0.n.EntryHi));
+	const bool mappingKnown =
+		std::strcmp(context.cause, "asid-projection") == 0 ||
+		std::strcmp(context.cause, "tlb-projection") == 0;
+	EEActiveTLBPageMap architectural;
+	if (mappingKnown)
+		architectural = BuildEEActiveTLBPageMap(tlb, std::size(tlb),
+			static_cast<u8>(cpuRegs.CP0.n.EntryHi));
+	// Do NOT build an allocating TLB projection inside write-protection
+	// signal callbacks. Their mapping outcome is explicitly unresolved.
 	for (u32 i = 0; i < record.sources.pageCount; ++i)
 	{
 		const auto& p = record.sources.pages[i];
@@ -450,9 +457,10 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 		if (currentHash != p.hash)
 			bytesSame = false;
 		const bool managed = p.guestAddress < 0x80000000u || p.guestAddress >= 0xc0000000u;
-		const auto mapping = architectural.find(p.guestAddress >> 12);
-		const bool mapped = !managed || (mapping != architectural.end() &&
-			!mapping->second.scratchpad);
+		const auto mapping = mappingKnown ?
+			architectural.find(p.guestAddress >> 12) : architectural.end();
+		const bool mapped = mappingKnown && (!managed ||
+			(mapping != architectural.end() && !mapping->second.scratchpad));
 		const u32 currentPhysical = !mapped ? 0xffffffffu :
 			(managed ? mapping->second.physicalAddress + (p.guestAddress & 0xfffu) :
 			 HWADDR(p.guestAddress));
@@ -469,7 +477,7 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 			currentHash == p.hash ? 1u : 0u,
 			p.writable ? 1u : 0u, currentWritable ? 1u : 0u);
 	}
-	const auto verdict = EERecClassifySourceWitness(record.sources.complete,
+	const auto verdict = EERecClassifySourceWitness(record.sources.complete && mappingKnown,
 		physicalReadable, bytesSame, virtualMapped, sameMapping);
 	bool dataChanged = false;
 	for (u32 i = 0; i < record.dataCount; ++i)
@@ -486,14 +494,14 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 			currentDirect ? 1u : 0u, reinterpret_cast<void*>(data.hostPtr),
 			reinterpret_cast<void*>(currentHostPtr));
 	}
-	Console.WriteLn("EE-JIT-WITNESS gen=%u cause=%s action=%s blockPA=%08x hostPtr=%p compilePC=%08x words=%u compileEntryHi=%08x currentEntryHi=%08x compileASID=%02x nowASID=%02x compileMode=%u nowMode=%u verdict=%s pages=%u sourceComplete=%u dataRefs=%u dataOverflow=%u dataChanged=%u translationChanging=%u cycle=%llu",
+	Console.WriteLn("EE-JIT-WITNESS gen=%u cause=%s action=%s blockPA=%08x hostPtr=%p compilePC=%08x words=%u compileEntryHi=%08x currentEntryHi=%08x compileASID=%02x nowASID=%02x compileMode=%u nowMode=%u verdict=%s pages=%u sourceComplete=%u mappingKnown=%u dataRefs=%u dataOverflow=%u dataChanged=%u translationChanging=%u cycle=%llu",
 		s_recEvictionTraceGeneration, context.cause, context.mappingAction, record.physicalPC,
 		reinterpret_cast<void*>(block.fnptr), record.guestPC, record.sourceWords,
 		record.entryHi, static_cast<u32>(cpuRegs.CP0.n.EntryHi),
 		record.entryHi & 0xffu, static_cast<u32>(cpuRegs.CP0.n.EntryHi) & 0xffu,
 		record.dispatchMode, g_recUseGuestTLBDispatch,
 		EERecSourceWitnessVerdictName(verdict), record.sources.pageCount,
-		record.sources.complete ? 1u : 0u, record.dataCount,
+		record.sources.complete ? 1u : 0u, mappingKnown ? 1u : 0u, record.dataCount,
 		record.dataOverflow ? 1u : 0u, dataChanged ? 1u : 0u,
 		record.translationChanging ? 1u : 0u,
 		static_cast<unsigned long long>(cpuRegs.cycle));
