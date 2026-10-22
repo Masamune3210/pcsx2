@@ -140,6 +140,12 @@ public:
 
 class BaseBlocks
 {
+public:
+	// Optional observational callbacks. A link site is an x86 rel32 displacement;
+	// notifications never participate in deciding whether it can be patched.
+	enum class LinkEvent : u8 { Register, TargetCompiled, TargetRemoved };
+	using LinkObserver = void (*)(LinkEvent event, u32 targetPC, uptr jumpSite,
+		uptr destination, bool wrote, void* context);
 protected:
 	typedef std::multimap<u32, uptr>::iterator linkiter_t;
 
@@ -154,11 +160,6 @@ public:
 	// Called only for blocks that are actually removed from the metadata table.
 	// An observer must not modify BaseBlocks or retain the borrowed reference.
 	using RemovalObserver = void (*)(const BASEBLOCKEX& block, void* context);
-	// Optional observational callbacks. A link site is an x86 rel32 displacement;
-	// notifications never participate in deciding whether it can be patched.
-	enum class LinkEvent : u8 { Register, TargetCompiled, TargetRemoved };
-	using LinkObserver = void (*)(LinkEvent event, u32 targetPC, uptr jumpSite,
-		uptr destination, bool wrote, void* context);
 
 	// Caller-owned bounded aggregates; passing nullptr keeps other recompilers
 	// free of accounting work. Retirement is logical, never arena reclamation.
