@@ -19,6 +19,7 @@
 #include "x86/BaseblockEx.h"
 #include "x86/EERecCodeCache.h"
 #include "x86/EERecCoherence.h"
+#include "x86/EERecSourceWitness.h"
 #include "x86/EEJitCoherence.h"
 #include "x86/iR5900.h"
 #include "x86/iR5900Analysis.h"
@@ -32,6 +33,7 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <unordered_map>
 
 // Only for MOVQ workaround.
 #include "common/emitter/internal.h"
@@ -109,8 +111,29 @@ static u32 g_recUseGuestTLBDispatch = 0;
 // Its outgoing links must resolve through current virtual dispatch afterward.
 static bool s_recBlockChangesTranslation = false;
 
-void recRecordConstantDataLookup(u32 guestAddress, bool store, bool direct)
+// Only the explicitly watched block captures constant-address specializations.
+// This is compile-time metadata: it does not add guest-side memory observers.
+struct EERecWitnessDataAccess
 {
+	u32 guestAddress = 0;
+	uptr hostPtr = 0;
+	bool store = false;
+	bool direct = false;
+};
+static std::array<EERecWitnessDataAccess, 16> s_recWitnessCurrentData{};
+static u32 s_recWitnessCurrentDataCount = 0;
+static bool s_recWitnessCurrentDataOverflow = false;
+static bool s_recWitnessCollectData = false;
+
+void recRecordConstantDataLookup(u32 guestAddress, bool store, bool direct, uptr assumedHostPtr)
+{
+	if (s_recWitnessCollectData)
+	{
+		if (s_recWitnessCurrentDataCount < s_recWitnessCurrentData.size())
+			s_recWitnessCurrentData[s_recWitnessCurrentDataCount++] = {guestAddress, assumedHostPtr, store, direct};
+		else
+			s_recWitnessCurrentDataOverflow = true;
+	}
 	if (!PSBBNTlbTraceEnabled())
 		return;
 	const bool managed = g_recUseGuestTLBDispatch && EERecConstantAddressUsesGuestTLB(guestAddress);
