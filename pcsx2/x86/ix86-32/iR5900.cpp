@@ -631,7 +631,7 @@ static BASEBLOCKEX* s_pCurBlockEx = nullptr;
 static u32 s_nStartBlock = 0; // virtual start; metadata startpc is physical
 
 static void recLinkOwnershipObserver(BaseBlocks::LinkEvent event, u32 targetPC,
-	uptr jumpSite, uptr destination, bool wrote, void* context)
+	uptr jumpSite, uptr destination, bool wrote, void* /*context*/)
 {
 	if (event == BaseBlocks::LinkEvent::Register)
 	{
