@@ -48,6 +48,34 @@ protected:
 	}
 };
 
+TEST(EERecSourceWitness, SeparateVirtualPagesMayHaveNoncontiguousPhysicalSource)
+{
+	EERecSourceWitnessSnapshot snapshot;
+	snapshot.complete = true;
+	ASSERT_TRUE(EERecWitnessAppendWord(snapshot, 0x0fb6dffcu, 0x01ed8ffcu, 0x12345678u, false));
+	ASSERT_TRUE(EERecWitnessAppendWord(snapshot, 0x0fb6e000u, 0x00028000u, 0x87654321u, true));
+	ASSERT_TRUE(EERecWitnessAppendWord(snapshot, 0x0fb6e004u, 0x00028004u, 0x13572468u, true));
+	ASSERT_EQ(snapshot.pageCount, 2u);
+	EXPECT_EQ(snapshot.pages[0].guestAddress, 0x0fb6dffcu);
+	EXPECT_EQ(snapshot.pages[0].physicalAddress, 0x01ed8ffcu);
+	EXPECT_EQ(snapshot.pages[0].words, 1u);
+	EXPECT_FALSE(snapshot.pages[0].writable);
+	EXPECT_EQ(snapshot.pages[1].guestAddress, 0x0fb6e000u);
+	EXPECT_EQ(snapshot.pages[1].physicalAddress, 0x00028000u);
+	EXPECT_EQ(snapshot.pages[1].words, 2u);
+	EXPECT_TRUE(snapshot.pages[1].writable);
+}
+
+TEST(EERecSourceWitness, RejectsUnexpectedPhysicalStepInsideSameVirtualPage)
+{
+	EERecSourceWitnessSnapshot snapshot;
+	ASSERT_TRUE(EERecWitnessAppendWord(snapshot, 0x0fb6d000u, 0x01ed8000u, 0x1234u, true));
+	EXPECT_FALSE(EERecWitnessAppendWord(snapshot, 0x0fb6d004u, 0x01ef0004u, 0x5678u, true));
+	EXPECT_FALSE(EERecWitnessAppendWord(snapshot, 0x0fb6d004u, 0x01ed8004u, 0x5678u, false));
+	EXPECT_EQ(snapshot.pageCount, 1u);
+	EXPECT_EQ(snapshot.pages[0].words, 1u);
+}
+
 TEST(EERecSourceWitness, ClassifiesPhysicalByteChangesBeforeMappingStatus)
 {
 	EXPECT_EQ(EERecClassifySourceWitness(true, true, false, false, false),
