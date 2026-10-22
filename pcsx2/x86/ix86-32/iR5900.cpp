@@ -247,6 +247,200 @@ struct EERecEvictionTraceContext
 	const char* mappingAction = "none";
 };
 
+static constexpr u32 EERecWitnessPhysicalPage = 0x01ed8000u;
+static constexpr u32 EERecWitnessVirtualPage = 0x0fb6d000u;
+static constexpr u32 EERecWitnessMaxLive = 512;
+static constexpr u32 EERecWitnessMaxWords = 4096;
+static bool s_recWitnessEnabled = false;
+static u32 s_recWitnessLimit = 2048;
+static u64 s_recWitnessMatched = 0;
+static u64 s_recWitnessPrinted = 0;
+static u64 s_recWitnessDropped = 0;
+
+struct EERecWitnessRecord
+{
+	u32 guestPC = 0;
+	u32 physicalPC = 0;
+	u32 sourceWords = 0;
+	u32 entryHi = 0;
+	u32 dispatchMode = 0;
+	bool translationChanging = false;
+	EERecSourceWitnessSnapshot sources{};
+	std::array<EERecWitnessDataAccess, 16> data{};
+	u32 dataCount = 0;
+	bool dataOverflow = false;
+};
+static std::unordered_map<uptr, EERecWitnessRecord> s_recWitnessRecords;
+
+// Capture every virtual 4KiB source page individually. The physical source
+// pages must NEVER be inferred by adding the block size to its first PFN.
+static EERecSourceWitnessSnapshot recWitnessCaptureSource(u32 virtualStart, u32 words)
+{
+	EERecSourceWitnessSnapshot snapshot;
+	snapshot.complete = (words != 0 && words <= EERecWitnessMaxWords);
+	if (!snapshot.complete)
+		return snapshot;
+
+	for (u32 offset = 0; offset < words; ++offset)
+	{
+		const u64 wideVA = static_cast<u64>(virtualStart) + static_cast<u64>(offset) * 4u;
+		if (wideVA > 0xfffffffcu)
+		{
+			snapshot.complete = false;
+			break;
+		}
+		const u32 va = static_cast<u32>(wideVA);
+		const u32 pa = HWADDR(va);
+		if (pa >= Ps2MemSize::ExposedRam || pa > Ps2MemSize::ExposedRam - 4)
+		{
+			snapshot.complete = false;
+			break;
+		}
+		const u32* source = recGetInstructionPtr(va);
+		if (!source)
+		{
+			snapshot.complete = false;
+			break;
+		}
+		if (snapshot.pageCount == 0 ||
+			(snapshot.pages[snapshot.pageCount - 1].guestAddress >> 12) != (va >> 12))
+		{
+			if (snapshot.pageCount >= snapshot.pages.size())
+			{
+				snapshot.complete = false;
+				break;
+			}
+			auto& page = snapshot.pages[snapshot.pageCount++];
+			page.guestAddress = va;
+			page.physicalAddress = pa;
+			page.hash = 14695981039346656037ull;
+		}
+		auto& page = snapshot.pages[snapshot.pageCount - 1];
+		if (pa != page.physicalAddress + page.words * 4u)
+		{
+			// A mapping changed while the source was being sampled.
+			snapshot.complete = false;
+			break;
+		}
+		page.hash = (page.hash ^ *source) * 1099511628211ull;
+		++page.words;
+	}
+	return snapshot;
+}
+
+static void recWitnessRecordCompilation(u32 virtualStart, const BASEBLOCKEX& block)
+{
+	if (!s_recWitnessEnabled || !EEExecutionProfile::IsExtendedMMU() ||
+		block.size == 0 || s_recWitnessPrinted >= s_recWitnessLimit)
+		return;
+	if ((virtualStart & ~0xfffu) != EERecWitnessVirtualPage &&
+		(block.startpc & ~0xfffu) != EERecWitnessPhysicalPage)
+		return;
+	if (s_recWitnessRecords.size() >= EERecWitnessMaxLive)
+	{
+		++s_recWitnessDropped;
+		return;
+	}
+
+	EERecWitnessRecord record;
+	record.guestPC = virtualStart;
+	record.physicalPC = block.startpc;
+	record.sourceWords = block.size;
+	record.entryHi = static_cast<u32>(cpuRegs.CP0.n.EntryHi);
+	record.dispatchMode = g_recUseGuestTLBDispatch;
+	record.translationChanging = s_recBlockChangesTranslation;
+	record.sources = recWitnessCaptureSource(virtualStart, block.size);
+	record.dataCount = s_recWitnessCurrentDataCount;
+	record.dataOverflow = s_recWitnessCurrentDataOverflow;
+	for (u32 i = 0; i < record.dataCount; ++i)
+		record.data[i] = s_recWitnessCurrentData[i];
+	s_recWitnessRecords.insert_or_assign(block.fnptr, record);
+}
+
+static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTraceContext& context)
+{
+	if (!s_recWitnessEnabled)
+		return;
+	const auto it = s_recWitnessRecords.find(block.fnptr);
+	if (it == s_recWitnessRecords.end())
+		return;
+	// Snapshot the record and erase BEFORE any diagnostic I/O, so it is not
+	// mistaken for a second retirement if callbacks become reentrant.
+	const EERecWitnessRecord record = it->second;
+	s_recWitnessRecords.erase(it);
+	++s_recWitnessMatched;
+	if (s_recWitnessPrinted >= s_recWitnessLimit)
+		return;
+	++s_recWitnessPrinted;
+
+	bool physicalReadable = record.sources.complete;
+	bool bytesSame = true;
+	bool virtualMapped = true;
+	bool sameMapping = (g_recUseGuestTLBDispatch == record.dispatchMode);
+	for (u32 i = 0; i < record.sources.pageCount; ++i)
+	{
+		const auto& p = record.sources.pages[i];
+		u64 currentHash = 14695981039346656037ull;
+		for (u32 j = 0; j < p.words; ++j)
+		{
+			const u64 physical = static_cast<u64>(p.physicalAddress) + j * 4ull;
+			if (physical + 4 > Ps2MemSize::ExposedRam)
+			{
+				physicalReadable = false;
+				break;
+			}
+			const u32* const source = static_cast<const u32*>(PSM(static_cast<u32>(physical)));
+			if (!source)
+			{
+				physicalReadable = false;
+				break;
+			}
+			currentHash = (currentHash ^ *source) * 1099511628211ull;
+		}
+		if (currentHash != p.hash)
+			bytesSame = false;
+		const u32 currentPhysical = HWADDR(p.guestAddress);
+		const bool mapped = currentPhysical < Ps2MemSize::ExposedRam &&
+			recGetInstructionPtr(p.guestAddress) != nullptr;
+		virtualMapped &= mapped;
+		sameMapping &= mapped && currentPhysical == p.physicalAddress;
+		Console.WriteLn("EE-JIT-WITNESS-PAGE gen=%u blockPA=%08x guestStart=%08x compiledPA=%08x nowPA=%08x words=%u oldHash=%016llx physicalHash=%016llx mapped=%u bytesSame=%u",
+			s_recEvictionTraceGeneration, record.physicalPC, p.guestAddress,
+			p.physicalAddress, mapped ? currentPhysical : 0xffffffffu,
+			p.words, static_cast<unsigned long long>(p.hash),
+			static_cast<unsigned long long>(currentHash), mapped ? 1u : 0u,
+			currentHash == p.hash ? 1u : 0u);
+	}
+	const auto verdict = EERecClassifySourceWitness(record.sources.complete,
+		physicalReadable, bytesSame, virtualMapped, sameMapping);
+	bool dataChanged = false;
+	for (u32 i = 0; i < record.dataCount; ++i)
+	{
+		const auto& data = record.data[i];
+		const auto& vmap = vtlb_private::vtlbdata.vmap[data.guestAddress >> vtlb_private::VTLB_PAGE_BITS];
+		const bool currentDirect = !vmap.isHandler(data.guestAddress);
+		const uptr currentHostPtr = currentDirect ? vmap.assumePtr(data.guestAddress) : 0;
+		dataChanged |= currentDirect != data.direct ||
+			(data.direct && currentHostPtr != data.hostPtr);
+		Console.WriteLn("EE-JIT-WITNESS-DATA gen=%u blockPA=%08x guestVA=%08x write=%u oldDirect=%u nowDirect=%u oldHost=%p nowHost=%p",
+			s_recEvictionTraceGeneration, record.physicalPC, data.guestAddress,
+			data.store ? 1u : 0u, data.direct ? 1u : 0u,
+			currentDirect ? 1u : 0u, reinterpret_cast<void*>(data.hostPtr),
+			reinterpret_cast<void*>(currentHostPtr));
+	}
+	Console.WriteLn("EE-JIT-WITNESS gen=%u cause=%s action=%s blockPA=%08x hostPtr=%p compilePC=%08x words=%u compileEntryHi=%08x currentEntryHi=%08x compileASID=%02x nowASID=%02x compileMode=%u nowMode=%u verdict=%s pages=%u sourceComplete=%u dataRefs=%u dataOverflow=%u dataChanged=%u translationChanging=%u cycle=%llu",
+		s_recEvictionTraceGeneration, context.cause, context.mappingAction, record.physicalPC,
+		reinterpret_cast<void*>(block.fnptr), record.guestPC, record.sourceWords,
+		record.entryHi, static_cast<u32>(cpuRegs.CP0.n.EntryHi),
+		record.entryHi & 0xffu, static_cast<u32>(cpuRegs.CP0.n.EntryHi) & 0xffu,
+		record.dispatchMode, g_recUseGuestTLBDispatch,
+		EERecSourceWitnessVerdictName(verdict), record.sources.pageCount,
+		record.sources.complete ? 1u : 0u, record.dataCount,
+		record.dataOverflow ? 1u : 0u, dataChanged ? 1u : 0u,
+		record.translationChanging ? 1u : 0u,
+		static_cast<unsigned long long>(cpuRegs.cycle));
+}
+
 static void recTraceRemovedBlock(const BASEBLOCKEX& block, void* rawContext)
 {
 	const auto& context = *static_cast<const EERecEvictionTraceContext*>(rawContext);
