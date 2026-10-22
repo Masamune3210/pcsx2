@@ -66,6 +66,17 @@ TEST(EERecSourceWitness, SeparateVirtualPagesMayHaveNoncontiguousPhysicalSource)
 	EXPECT_TRUE(snapshot.pages[1].writable);
 }
 
+TEST(EERecSourceWitness, BoundsSourcePageInventoryWithoutGuessingExtraPFNs)
+{
+	EERecSourceWitnessSnapshot snapshot;
+	for (u32 page = 0; page < EERecSourceWitnessSnapshot::MaxPages; ++page)
+		ASSERT_TRUE(EERecWitnessAppendWord(snapshot, 0x0fb6d000u + page * 0x1000u,
+			0x01ed8000u + page * 0x3000u, page, true));
+	ASSERT_EQ(snapshot.pageCount, EERecSourceWitnessSnapshot::MaxPages);
+	EXPECT_FALSE(EERecWitnessAppendWord(snapshot, 0x0fb75000u, 0x01f00000u, 9, true));
+	EXPECT_EQ(snapshot.pageCount, EERecSourceWitnessSnapshot::MaxPages);
+}
+
 TEST(EERecSourceWitness, RejectsUnexpectedPhysicalStepInsideSameVirtualPage)
 {
 	EERecSourceWitnessSnapshot snapshot;
