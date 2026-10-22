@@ -403,8 +403,10 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 	slot->occupied = false;
 	--s_recWitnessLive;
 	// A host write-protection exception can run inside a signal/SEH handler.
-	// Never allocate a TLB projection or print the source witness from there.
-	if (std::strcmp(context.cause, "host-write-protection") == 0)
+	// Provider teardown may outlive vTLB/RAM mappings. Neither context is
+	// safe for source reads, TLB reconstruction or detailed witness logging.
+	if (std::strcmp(context.cause, "host-write-protection") == 0 ||
+		std::strcmp(context.cause, "provider-shutdown") == 0)
 	{
 		++s_recWitnessDropped;
 		return;
