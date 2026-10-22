@@ -16,6 +16,7 @@ struct EERecSourceWitnessPage
 	u32 physicalAddress = 0;
 	u32 words = 0;
 	u64 hash = 0;
+	bool writable = false;
 };
 
 struct EERecSourceWitnessSnapshot
