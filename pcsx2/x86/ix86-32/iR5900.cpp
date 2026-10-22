@@ -33,7 +33,6 @@
 #include <array>
 #include <chrono>
 #include <cstring>
-#include <unordered_map>
 
 // Only for MOVQ workaround.
 #include "common/emitter/internal.h"
@@ -270,7 +269,16 @@ struct EERecWitnessRecord
 	u32 dataCount = 0;
 	bool dataOverflow = false;
 };
-static std::unordered_map<uptr, EERecWitnessRecord> s_recWitnessRecords;
+// Fixed slots avoid allocator work when a memory-protection fault retires a
+// watched block. A stale source is only retired after an explicit callback.
+struct EERecWitnessSlot
+{
+	uptr hostPtr = 0;
+	bool occupied = false;
+	EERecWitnessRecord record{};
+};
+static std::array<EERecWitnessSlot, EERecWitnessMaxLive> s_recWitnessRecords{};
+static u32 s_recWitnessLive = 0;
 
 // Capture every virtual 4KiB source page individually. The physical source
 // pages must NEVER be inferred by adding the block size to its first PFN.
@@ -354,7 +362,7 @@ static void recWitnessRecordCompilation(u32 virtualStart, const BASEBLOCKEX& blo
 	if ((virtualStart & ~0xfffu) != EERecWitnessVirtualPage &&
 		(block.startpc & ~0xfffu) != EERecWitnessPhysicalPage)
 		return;
-	if (s_recWitnessRecords.size() >= EERecWitnessMaxLive)
+	if (s_recWitnessLive >= EERecWitnessMaxLive)
 	{
 		++s_recWitnessDropped;
 		return;
@@ -372,20 +380,39 @@ static void recWitnessRecordCompilation(u32 virtualStart, const BASEBLOCKEX& blo
 	record.dataOverflow = s_recWitnessCurrentDataOverflow;
 	for (u32 i = 0; i < record.dataCount; ++i)
 		record.data[i] = s_recWitnessCurrentData[i];
-	s_recWitnessRecords.insert_or_assign(block.fnptr, record);
+	for (auto& slot : s_recWitnessRecords)
+	{
+		if (!slot.occupied)
+		{
+			slot.hostPtr = block.fnptr;
+			slot.record = record;
+			slot.occupied = true;
+			++s_recWitnessLive;
+			return;
+		}
+	}
+	++s_recWitnessDropped;
 }
 
 static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTraceContext& context)
 {
 	if (!s_recWitnessEnabled)
 		return;
-	const auto it = s_recWitnessRecords.find(block.fnptr);
-	if (it == s_recWitnessRecords.end())
+	EERecWitnessSlot* slot = nullptr;
+	for (auto& candidate : s_recWitnessRecords)
+	{
+		if (candidate.occupied && candidate.hostPtr == block.fnptr)
+		{
+			slot = &candidate;
+			break;
+		}
+	}
+	if (!slot)
 		return;
-	// Snapshot the record and erase BEFORE any diagnostic I/O, so it is not
-	// mistaken for a second retirement if callbacks become reentrant.
-	const EERecWitnessRecord record = it->second;
-	s_recWitnessRecords.erase(it);
+	// Retire the fixed slot before writing a log or reading any guest mapping.
+	const EERecWitnessRecord record = slot->record;
+	slot->occupied = false;
+	--s_recWitnessLive;
 	++s_recWitnessMatched;
 	if (s_recWitnessPrinted >= s_recWitnessLimit)
 		return;
@@ -525,9 +552,11 @@ static void recTraceRemainingBlocks(const char* reason)
 			static_cast<unsigned long long>(s_recWitnessMatched),
 			static_cast<unsigned long long>(s_recWitnessPrinted),
 			static_cast<unsigned long long>(s_recWitnessDropped),
-			static_cast<unsigned long long>(s_recWitnessRecords.size()),
+			static_cast<unsigned long long>(s_recWitnessLive),
 			EERecWitnessPhysicalPage, EERecWitnessVirtualPage);
-	s_recWitnessRecords.clear();
+	for (auto& slot : s_recWitnessRecords)
+		slot.occupied = false;
+	s_recWitnessLive = 0;
 	if (!s_recEvictionTraceEnabled)
 		return;
 	Console.WriteLn("EE-JIT-EVICT-SUMMARY reason=%s gen=%u seen=%llu printed=%llu suppressed=%llu liveRetired=%u limit=%u",
@@ -1568,7 +1597,9 @@ void recShutdown()
 	s_recEvictionTraceConfigured = false;
 	s_recWitnessEnabled = false;
 	s_recWitnessCollectData = false;
-	s_recWitnessRecords.clear();
+	for (auto& slot : s_recWitnessRecords)
+		slot.occupied = false;
+	s_recWitnessLive = 0;
 	s_recWitnessMatched = s_recWitnessPrinted = s_recWitnessDropped = 0;
 	s_recEvictionTraceSeen = s_recEvictionTracePrinted = 0;
 	s_recEvictionTraceGeneration = 0;
