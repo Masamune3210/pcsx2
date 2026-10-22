@@ -7,7 +7,11 @@ BASEBLOCKEX* BaseBlocks::New(u32 startpc, uptr fnptr, Metrics* metrics)
 {
 	std::pair<linkiter_t, linkiter_t> range = links.equal_range(startpc);
 	for (linkiter_t i = range.first; i != range.second; ++i)
-		PatchLink(reinterpret_cast<s32*>(i->second), fnptr, metrics);
+	{
+		const bool wrote = PatchLink(reinterpret_cast<s32*>(i->second), fnptr, metrics);
+		if (linkObserver)
+			linkObserver(LinkEvent::TargetCompiled, startpc, i->second, fnptr, wrote, linkObserverContext);
+	}
 
 	return blocks.insert(startpc, fnptr);
 }
@@ -60,9 +64,11 @@ BASEBLOCKEX* BaseBlocks::GetByX86(uptr ip)
 void BaseBlocks::Link(u32 pc, s32* jumpptr, Metrics* metrics)
 {
 	BASEBLOCKEX* targetblock = Get(pc);
-	if (targetblock && targetblock->startpc == pc)
-		PatchLink(jumpptr, targetblock->fnptr, metrics);
-	else
-		PatchLink(jumpptr, recompiler, metrics);
+	const uptr destination = targetblock && targetblock->startpc == pc ?
+		targetblock->fnptr : recompiler;
+	const bool wrote = PatchLink(jumpptr, destination, metrics);
+	if (linkObserver)
+		linkObserver(LinkEvent::Register, pc, reinterpret_cast<uptr>(jumpptr),
+			destination, wrote, linkObserverContext);
 	links.insert(std::pair<u32, uptr>(pc, (uptr)jumpptr));
 }
