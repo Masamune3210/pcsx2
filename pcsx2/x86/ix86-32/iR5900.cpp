@@ -444,6 +444,9 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 static void recTraceRemovedBlock(const BASEBLOCKEX& block, void* rawContext)
 {
 	const auto& context = *static_cast<const EERecEvictionTraceContext*>(rawContext);
+	recWitnessOnRetire(block, context);
+	if (!s_recEvictionTraceEnabled)
+		return;
 	++s_recEvictionTraceSeen;
 	if (s_recEvictionTraceLimit != 0 && s_recEvictionTracePrinted >= s_recEvictionTraceLimit)
 	{
@@ -474,7 +477,7 @@ static void recTraceRemovedBlock(const BASEBLOCKEX& block, void* rawContext)
 
 static void recTraceRemainingBlocks(const char* reason)
 {
-	if (!s_recEvictionTraceEnabled)
+	if (!s_recEvictionTraceEnabled && !s_recWitnessEnabled)
 		return;
 	// This is the other actual retirement path: a complete arena reset clears
 	// live metadata without going through BaseBlocks::Remove.
@@ -485,6 +488,17 @@ static void recTraceRemainingBlocks(const char* reason)
 		if (const BASEBLOCKEX* block = recBlocks[static_cast<int>(i)])
 			recTraceRemovedBlock(*block, &context);
 	}
+	if (s_recWitnessEnabled)
+		Console.WriteLn("EE-JIT-WITNESS-SUMMARY reason=%s gen=%u matched=%llu printed=%llu dropped=%llu pending=%llu watchPA=%08x watchVA=%08x",
+			reason, s_recEvictionTraceGeneration,
+			static_cast<unsigned long long>(s_recWitnessMatched),
+			static_cast<unsigned long long>(s_recWitnessPrinted),
+			static_cast<unsigned long long>(s_recWitnessDropped),
+			static_cast<unsigned long long>(s_recWitnessRecords.size()),
+			EERecWitnessPhysicalPage, EERecWitnessVirtualPage);
+	s_recWitnessRecords.clear();
+	if (!s_recEvictionTraceEnabled)
+		return;
 	Console.WriteLn("EE-JIT-EVICT-SUMMARY reason=%s gen=%u seen=%llu printed=%llu suppressed=%llu liveRetired=%u limit=%u",
 		reason, s_recEvictionTraceGeneration,
 		static_cast<unsigned long long>(s_recEvictionTraceSeen),
@@ -1427,7 +1441,15 @@ static void recResetRaw()
 		s_recEvictionTraceEnabled = Host::GetBoolSettingValue("EmuCore", "EEJitEvictionTrace", false);
 		s_recEvictionTraceLimit = static_cast<u32>(std::clamp(
 			Host::GetIntSettingValue("EmuCore", "EEJitEvictionTraceLimit", 20000), 0, 1000000));
+		s_recWitnessEnabled = Host::GetBoolSettingValue("EmuCore", "EEJitSourceWitness", false) &&
+			EEExecutionProfile::IsExtendedMMU();
+		s_recWitnessLimit = static_cast<u32>(std::clamp(
+			Host::GetIntSettingValue("EmuCore", "EEJitSourceWitnessLimit", 2048), 1, 10000));
 		s_recEvictionTraceConfigured = true;
+		if (s_recWitnessEnabled)
+			Console.WriteLn("EE-JIT-WITNESS-CONFIG enabled=1 watchPA=%08x watchVA=%08x maxEvents=%u maxLive=%u",
+				EERecWitnessPhysicalPage, EERecWitnessVirtualPage,
+				s_recWitnessLimit, EERecWitnessMaxLive);
 		if (s_recEvictionTraceEnabled)
 			Console.WriteLn("EE-JIT-EVICT-CONFIG enabled=1 limit=%u (0 means unlimited)",
 				s_recEvictionTraceLimit);
@@ -1513,6 +1535,10 @@ void recShutdown()
 	recTraceRemainingBlocks("provider-shutdown");
 	s_recEvictionTraceEnabled = false;
 	s_recEvictionTraceConfigured = false;
+	s_recWitnessEnabled = false;
+	s_recWitnessCollectData = false;
+	s_recWitnessRecords.clear();
+	s_recWitnessMatched = s_recWitnessPrinted = s_recWitnessDropped = 0;
 	s_recEvictionTraceSeen = s_recEvictionTracePrinted = 0;
 	s_recEvictionTraceGeneration = 0;
 	recRAMCopy.deallocate();
@@ -1722,8 +1748,8 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause,
 		addr, size, triggeringVirtualPage, mappingAction};
 	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
 		reinterpret_cast<uptr>(JITCompile), addr, size, interval ? &interval->mutations : nullptr,
-		s_recEvictionTraceEnabled ? &recTraceRemovedBlock : nullptr,
-		s_recEvictionTraceEnabled ? &evictionContext : nullptr);
+		(s_recEvictionTraceEnabled || s_recWitnessEnabled) ? &recTraceRemovedBlock : nullptr,
+		(s_recEvictionTraceEnabled || s_recWitnessEnabled) ? &evictionContext : nullptr);
 	if (interval)
 		interval->clearNanoseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
 			EEJitClock::now() - started).count());
@@ -3190,6 +3216,12 @@ static void recRecompile(const u32 startpc)
 	}
 
 	const bool profileCompilation = PSBBNTlbTraceEnabled();
+	s_recWitnessCollectData = s_recWitnessEnabled &&
+		((HWADDR(startpc) & ~0xfffu) == EERecWitnessPhysicalPage ||
+		 (startpc & ~0xfffu) == EERecWitnessVirtualPage) &&
+		s_recWitnessPrinted < s_recWitnessLimit;
+	s_recWitnessCurrentDataCount = 0;
+	s_recWitnessCurrentDataOverflow = false;
 	const auto compileStarted = profileCompilation ? EEJitClock::now() : EEJitClock::time_point{};
 	xSetTextPtr(R5900_TEXTPTR);
 	xSetPtr(recPtr);
@@ -3828,6 +3860,11 @@ StartRecomp:
 	pxAssert(xGetPtr() < SysMemory::GetEERecEnd());
 
 	s_pCurBlockEx->x86size = static_cast<u32>(xGetPtr() - recPtr);
+	// Source and embedded host-data assumptions are sampled after emission;
+	// the witness is NEVER consulted by the code-cache invalidation policy.
+	if (s_recWitnessCollectData)
+		recWitnessRecordCompilation(startpc, *s_pCurBlockEx);
+	s_recWitnessCollectData = false;
 
 #if 0
 	// Example: Dump both x86/EE code
