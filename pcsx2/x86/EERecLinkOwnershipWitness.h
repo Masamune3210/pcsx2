@@ -5,7 +5,9 @@
 
 #include "x86/BaseblockEx.h"
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <unordered_map>
 
 // Diagnostics only. Source ownership is recorded at rel32 creation, so later
