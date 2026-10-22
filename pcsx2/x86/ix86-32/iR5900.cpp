@@ -409,7 +409,7 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 		++s_recWitnessDropped;
 		return;
 	}
-	++s_recWitnessMatched;
+	const u64 witnessEvent = ++s_recWitnessMatched;
 	if (s_recWitnessPrinted >= s_recWitnessLimit)
 		return;
 	++s_recWitnessPrinted;
@@ -465,8 +465,8 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 		virtualMapped &= inRam;
 		sameMapping &= inRam && currentPhysical == p.physicalAddress &&
 			currentWritable == p.writable;
-		Console.WriteLn("EE-JIT-WITNESS-PAGE gen=%u blockPA=%08x guestStart=%08x compiledPA=%08x nowPA=%08x words=%u oldHash=%016llx physicalHash=%016llx mapped=%u bytesSame=%u oldWrite=%u nowWrite=%u",
-			s_recEvictionTraceGeneration, record.physicalPC, p.guestAddress,
+		Console.WriteLn("EE-JIT-WITNESS-PAGE event=%llu gen=%u blockPA=%08x guestStart=%08x compiledPA=%08x nowPA=%08x words=%u oldHash=%016llx physicalHash=%016llx mapped=%u bytesSame=%u oldWrite=%u nowWrite=%u",
+			static_cast<unsigned long long>(witnessEvent), s_recEvictionTraceGeneration, record.physicalPC, p.guestAddress,
 			p.physicalAddress, inRam ? currentPhysical : 0xffffffffu,
 			p.words, static_cast<unsigned long long>(p.hash),
 			static_cast<unsigned long long>(currentHash), inRam ? 1u : 0u,
@@ -484,14 +484,14 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 		const uptr currentHostPtr = currentDirect ? vmap.assumePtr(data.guestAddress) : 0;
 		dataChanged |= currentDirect != data.direct ||
 			(data.direct && currentHostPtr != data.hostPtr);
-		Console.WriteLn("EE-JIT-WITNESS-DATA gen=%u blockPA=%08x guestVA=%08x write=%u oldDirect=%u nowDirect=%u oldHost=%p nowHost=%p",
-			s_recEvictionTraceGeneration, record.physicalPC, data.guestAddress,
+		Console.WriteLn("EE-JIT-WITNESS-DATA event=%llu gen=%u blockPA=%08x guestVA=%08x write=%u oldDirect=%u nowDirect=%u oldHost=%p nowHost=%p",
+			static_cast<unsigned long long>(witnessEvent), s_recEvictionTraceGeneration, record.physicalPC, data.guestAddress,
 			data.store ? 1u : 0u, data.direct ? 1u : 0u,
 			currentDirect ? 1u : 0u, reinterpret_cast<void*>(data.hostPtr),
 			reinterpret_cast<void*>(currentHostPtr));
 	}
-	Console.WriteLn("EE-JIT-WITNESS gen=%u cause=%s action=%s blockPA=%08x hostPtr=%p compilePC=%08x words=%u compileEntryHi=%08x currentEntryHi=%08x compileASID=%02x nowASID=%02x compileMode=%u nowMode=%u verdict=%s pages=%u sourceComplete=%u mappingKnown=%u dataRefs=%u dataOverflow=%u dataChanged=%u translationChanging=%u cycle=%llu",
-		s_recEvictionTraceGeneration, context.cause, context.mappingAction, record.physicalPC,
+	Console.WriteLn("EE-JIT-WITNESS event=%llu gen=%u cause=%s action=%s blockPA=%08x hostPtr=%p compilePC=%08x words=%u compileEntryHi=%08x currentEntryHi=%08x compileASID=%02x nowASID=%02x compileMode=%u nowMode=%u verdict=%s pages=%u sourceComplete=%u mappingKnown=%u dataRefs=%u dataOverflow=%u dataChanged=%u translationChanging=%u cycle=%llu",
+		static_cast<unsigned long long>(witnessEvent), s_recEvictionTraceGeneration, context.cause, context.mappingAction, record.physicalPC,
 		reinterpret_cast<void*>(block.fnptr), record.guestPC, record.sourceWords,
 		record.entryHi, static_cast<u32>(cpuRegs.CP0.n.EntryHi),
 		record.entryHi & 0xffu, static_cast<u32>(cpuRegs.CP0.n.EntryHi) & 0xffu,
