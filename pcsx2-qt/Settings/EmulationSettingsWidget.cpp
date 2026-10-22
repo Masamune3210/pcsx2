@@ -51,6 +51,18 @@ EmulationSettingsWidget::EmulationSettingsWidget(SettingsWindow* settings_dialog
 		   "including across JIT arena resets. A limit of zero disables the cap and may produce huge logs. "
 		   "Events beyond the limit are still counted and summarized."));
 
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeJitSourceWitness, "EmuCore", "EEJitSourceWitness", false);
+	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.eeJitSourceWitnessLimit, "EmuCore", "EEJitSourceWitnessLimit", 2048);
+	dialog()->registerWidgetHelp(m_ui.eeJitSourceWitness, tr("Compare PSBBN JIT Source at Compilation and Eviction"), tr("Unchecked"),
+		tr("Extended MMU diagnostic: tracks blocks beginning on physical page 0x01ED8000 or guest page 0x0FB6D000. "
+		   "At eviction, compares the original instruction bytes in physical RAM and the current virtual mappings, "
+		   "plus direct constant-data pointer assumptions recorded during compilation. "
+		   "This does not make any compiled code reusable or alter invalidation decisions. "
+		   "The diagnostic is bounded and extremely slow. Restart the emulated PS2 to apply changes."));
+	dialog()->registerWidgetHelp(m_ui.eeJitSourceWitnessLimit, tr("Maximum Source Witness Comparisons"), tr("2048"),
+		tr("Caps detailed EE-JIT-WITNESS comparison events across the entire VM session, including JIT resets. "
+		   "Tracking and output stop once the limit is reached, but metadata removal behavior remains unchanged."));
+
 	initializeSpeedCombo(m_ui.normalSpeed, "Framerate", "NominalScalar", 1.0f);
 	initializeSpeedCombo(m_ui.fastForwardSpeed, "Framerate", "TurboScalar", 2.0f);
 	initializeSpeedCombo(m_ui.slowMotionSpeed, "Framerate", "SlomoScalar", 0.5f);
