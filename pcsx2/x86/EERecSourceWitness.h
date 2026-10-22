@@ -27,6 +27,31 @@ struct EERecSourceWitnessSnapshot
 	bool complete = false;
 };
 
+// Caller supplies an actual translated PA for EACH source word. The helper
+// never extrapolates a second virtual page from the first physical page.
+inline bool EERecWitnessAppendWord(EERecSourceWitnessSnapshot& snapshot,
+	u32 guestAddress, u32 physicalAddress, u32 word, bool writable)
+{
+	if (snapshot.pageCount == 0 ||
+		(snapshot.pages[snapshot.pageCount - 1].guestAddress >> 12) != (guestAddress >> 12))
+	{
+		if (snapshot.pageCount >= snapshot.pages.size())
+			return false;
+		auto& page = snapshot.pages[snapshot.pageCount++];
+		page.guestAddress = guestAddress;
+		page.physicalAddress = physicalAddress;
+		page.writable = writable;
+		page.hash = 14695981039346656037ull;
+	}
+	auto& page = snapshot.pages[snapshot.pageCount - 1];
+	if (page.writable != writable ||
+		physicalAddress != page.physicalAddress + page.words * 4u)
+		return false;
+	page.hash = (page.hash ^ word) * 1099511628211ull;
+	++page.words;
+	return true;
+}
+
 enum class EERecSourceWitnessVerdict : u8
 {
 	Incomplete,
