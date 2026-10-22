@@ -281,6 +281,8 @@ static EERecSourceWitnessSnapshot recWitnessCaptureSource(u32 virtualStart, u32 
 	if (!snapshot.complete)
 		return snapshot;
 
+	const auto architectural = BuildEEActiveTLBPageMap(tlb, std::size(tlb),
+		static_cast<u8>(cpuRegs.CP0.n.EntryHi));
 	for (u32 offset = 0; offset < words; ++offset)
 	{
 		const u64 wideVA = static_cast<u64>(virtualStart) + static_cast<u64>(offset) * 4u;
@@ -314,6 +316,22 @@ static EERecSourceWitnessSnapshot recWitnessCaptureSource(u32 virtualStart, u32 
 			page.guestAddress = va;
 			page.physicalAddress = pa;
 			page.hash = 14695981039346656037ull;
+			const bool managed = va < 0x80000000u || va >= 0xc0000000u;
+			if (managed)
+			{
+				const auto it = architectural.find(va >> 12);
+				if (it == architectural.end() || it->second.scratchpad ||
+					it->second.physicalAddress + (va & 0xfffu) != pa)
+				{
+					snapshot.complete = false;
+					break;
+				}
+				page.writable = it->second.writable;
+			}
+			else
+			{
+				page.writable = true;
+			}
 		}
 		auto& page = snapshot.pages[snapshot.pageCount - 1];
 		if (pa != page.physicalAddress + page.words * 4u)
@@ -377,6 +395,11 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 	bool bytesSame = true;
 	bool virtualMapped = true;
 	bool sameMapping = (g_recUseGuestTLBDispatch == record.dispatchMode);
+	// Use the architectural TLB under the CURRENT ASID, NOT the JIT LUT.
+	// COP0 calls the retirement observer before recUnmapTLBPage(), when the
+	// JIT LUT still advertises the OLD mapping being removed.
+	const auto architectural = BuildEEActiveTLBPageMap(tlb, std::size(tlb),
+		static_cast<u8>(cpuRegs.CP0.n.EntryHi));
 	for (u32 i = 0; i < record.sources.pageCount; ++i)
 	{
 		const auto& p = record.sources.pages[i];
@@ -399,17 +422,25 @@ static void recWitnessOnRetire(const BASEBLOCKEX& block, const EERecEvictionTrac
 		}
 		if (currentHash != p.hash)
 			bytesSame = false;
-		const u32 currentPhysical = HWADDR(p.guestAddress);
-		const bool mapped = currentPhysical < Ps2MemSize::ExposedRam &&
-			recGetInstructionPtr(p.guestAddress) != nullptr;
-		virtualMapped &= mapped;
-		sameMapping &= mapped && currentPhysical == p.physicalAddress;
-		Console.WriteLn("EE-JIT-WITNESS-PAGE gen=%u blockPA=%08x guestStart=%08x compiledPA=%08x nowPA=%08x words=%u oldHash=%016llx physicalHash=%016llx mapped=%u bytesSame=%u",
+		const bool managed = p.guestAddress < 0x80000000u || p.guestAddress >= 0xc0000000u;
+		const auto mapping = architectural.find(p.guestAddress >> 12);
+		const bool mapped = !managed || (mapping != architectural.end() &&
+			!mapping->second.scratchpad);
+		const u32 currentPhysical = !mapped ? 0xffffffffu :
+			(managed ? mapping->second.physicalAddress + (p.guestAddress & 0xfffu) :
+			 HWADDR(p.guestAddress));
+		const bool currentWritable = managed ? (mapped && mapping->second.writable) : true;
+		const bool inRam = mapped && currentPhysical < Ps2MemSize::ExposedRam;
+		virtualMapped &= inRam;
+		sameMapping &= inRam && currentPhysical == p.physicalAddress &&
+			currentWritable == p.writable;
+		Console.WriteLn("EE-JIT-WITNESS-PAGE gen=%u blockPA=%08x guestStart=%08x compiledPA=%08x nowPA=%08x words=%u oldHash=%016llx physicalHash=%016llx mapped=%u bytesSame=%u oldWrite=%u nowWrite=%u",
 			s_recEvictionTraceGeneration, record.physicalPC, p.guestAddress,
-			p.physicalAddress, mapped ? currentPhysical : 0xffffffffu,
+			p.physicalAddress, inRam ? currentPhysical : 0xffffffffu,
 			p.words, static_cast<unsigned long long>(p.hash),
-			static_cast<unsigned long long>(currentHash), mapped ? 1u : 0u,
-			currentHash == p.hash ? 1u : 0u);
+			static_cast<unsigned long long>(currentHash), inRam ? 1u : 0u,
+			currentHash == p.hash ? 1u : 0u,
+			p.writable ? 1u : 0u, currentWritable ? 1u : 0u);
 	}
 	const auto verdict = EERecClassifySourceWitness(record.sources.complete,
 		physicalReadable, bytesSame, virtualMapped, sameMapping);
