@@ -312,18 +312,11 @@ static EERecSourceWitnessSnapshot recWitnessCaptureSource(u32 virtualStart, u32 
 			snapshot.complete = false;
 			break;
 		}
+		bool writable = snapshot.pageCount ?
+			snapshot.pages[snapshot.pageCount - 1].writable : true;
 		if (snapshot.pageCount == 0 ||
 			(snapshot.pages[snapshot.pageCount - 1].guestAddress >> 12) != (va >> 12))
 		{
-			if (snapshot.pageCount >= snapshot.pages.size())
-			{
-				snapshot.complete = false;
-				break;
-			}
-			auto& page = snapshot.pages[snapshot.pageCount++];
-			page.guestAddress = va;
-			page.physicalAddress = pa;
-			page.hash = 14695981039346656037ull;
 			const bool managed = va < 0x80000000u || va >= 0xc0000000u;
 			if (managed)
 			{
@@ -334,22 +327,18 @@ static EERecSourceWitnessSnapshot recWitnessCaptureSource(u32 virtualStart, u32 
 					snapshot.complete = false;
 					break;
 				}
-				page.writable = it->second.writable;
+				writable = it->second.writable;
 			}
 			else
 			{
-				page.writable = true;
+				writable = true;
 			}
 		}
-		auto& page = snapshot.pages[snapshot.pageCount - 1];
-		if (pa != page.physicalAddress + page.words * 4u)
+		if (!EERecWitnessAppendWord(snapshot, va, pa, *source, writable))
 		{
-			// A mapping changed while the source was being sampled.
 			snapshot.complete = false;
 			break;
 		}
-		page.hash = (page.hash ^ *source) * 1099511628211ull;
-		++page.words;
 	}
 	return snapshot;
 }
