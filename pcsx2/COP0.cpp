@@ -1181,7 +1181,7 @@ void ResetActiveTLBMappings()
 	for (const auto& [page, mapping] : s_active_tlb_pages)
 	{
 		memClearPageAddr(page << 12);
-		ClearActiveTLBCodePage(page, mapping, EEJitInvalidationCause::ProjectionReset);
+		ClearActiveTLBCodePage(page, mapping, EEJitInvalidationCause::ProjectionReset, "reset");
 #if defined(_M_X64) || defined(__x86_64__)
 		recUnmapTLBPage(page << 12);
 #endif
