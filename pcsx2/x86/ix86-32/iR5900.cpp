@@ -20,6 +20,7 @@
 #include "x86/EERecCodeCache.h"
 #include "x86/EERecCoherence.h"
 #include "x86/EERecSourceWitness.h"
+#include "x86/EERecLinkOwnershipWitness.h"
 #include "x86/EEJitCoherence.h"
 #include "x86/iR5900.h"
 #include "x86/iR5900Analysis.h"
@@ -226,6 +227,12 @@ static __fi const u32* recGetInstructionPtr(u32 virtualPC)
 }
 
 static BaseBlocks recBlocks;
+static EERecLinkOwnershipWitness s_recLinkOwnership;
+static bool s_recLinkOwnershipEnabled = false;
+static void recLinkOwnershipObserver(BaseBlocks::LinkEvent event, u32 targetPC,
+	uptr jumpSite, uptr destination, bool wrote, void* context);
+static void recCombinedRemovalObserver(const BASEBLOCKEX& block, void* context);
+static void recReportLinkOwnership(const char* reason);
 
 // Deliberately expensive, opt-in block-by-block source evidence.
 // The limit is PER VM SESSION, not per arena: otherwise a reset loop would
@@ -575,6 +582,7 @@ static void recTraceRemainingBlocks(const char* reason)
 
 static void recReportCoherence(const char* reason)
 {
+	recReportLinkOwnership(reason);
 	const auto live = recBlocks.GetLiveMetrics();
 	Console.WriteLn("EE-JIT-LIFETIME reason=%s resetReasons=%08x guestCycles=%llu liveBlocks=%llu liveHostBytes=%llu linkRecords=%llu compileUs=%llu repeatSourceFingerprints=%llu thunkBytes=%llu backpatches=%llu backpatchBytes=%llu linkAttempts=%llu linkWrites=%llu linkSkips=%llu",
 		reason, s_recResetReasons, static_cast<unsigned long long>(cpuRegs.cycle),
@@ -621,6 +629,75 @@ static u32 s_nInstCacheSize = 0;
 static BASEBLOCK* s_pCurBlock = nullptr;
 static BASEBLOCKEX* s_pCurBlockEx = nullptr;
 static u32 s_nStartBlock = 0; // virtual start; metadata startpc is physical
+
+static void recLinkOwnershipObserver(BaseBlocks::LinkEvent event, u32 targetPC,
+	uptr jumpSite, uptr destination, bool wrote, void* context)
+{
+	if (event == BaseBlocks::LinkEvent::Register)
+	{
+		s_recLinkOwnership.Register(targetPC, jumpSite,
+			s_pCurBlockEx ? s_pCurBlockEx->fnptr : 0,
+			s_pCurBlockEx ? s_pCurBlockEx->startpc : 0,
+			s_nStartBlock, static_cast<u8>(cpuRegs.CP0.n.EntryHi), wrote);
+	}
+	else
+	{
+		s_recLinkOwnership.Retarget(event, targetPC, jumpSite, destination, wrote);
+	}
+}
+
+static void recCombinedRemovalObserver(const BASEBLOCKEX& block, void* context)
+{
+	if (s_recLinkOwnershipEnabled)
+		s_recLinkOwnership.Retire(block, eeCpuExecuting);
+	if (s_recEvictionTraceEnabled || s_recWitnessEnabled)
+		recTraceRemovedBlock(block, context);
+}
+
+static void recReportLinkOwnership(const char* reason)
+{
+	if (!s_recLinkOwnershipEnabled)
+		return;
+	const auto& w = s_recLinkOwnership;
+	Console.WriteLn("EE-JIT-LINK-OWNER reason=%s gen=%u registrations=%llu registrationWrites=%llu trackedSites=%llu trackedOwners=%llu droppedSites=%llu unownedRegistrations=%llu finalizedOwners=%llu retiredOwners=%llu retiredDuringEEExecution=%llu invalidOffsets=%llu dispatcherTranslation=%llu dispatcherCrossPage=%llu",
+		reason, s_recEvictionTraceGeneration,
+		static_cast<unsigned long long>(w.registrations),
+		static_cast<unsigned long long>(w.registrationWrites),
+		static_cast<unsigned long long>(w.TrackedSites()),
+		static_cast<unsigned long long>(w.TrackedOwners()),
+		static_cast<unsigned long long>(w.droppedSites),
+		static_cast<unsigned long long>(w.unownedRegistrations),
+		static_cast<unsigned long long>(w.finalizedOwners),
+		static_cast<unsigned long long>(w.retiredOwners),
+		static_cast<unsigned long long>(w.retiredDuringEEExecution),
+		static_cast<unsigned long long>(w.invalidOffsets),
+		static_cast<unsigned long long>(w.dispatcherLinksTranslation),
+		static_cast<unsigned long long>(w.dispatcherLinksCrossPage));
+	for (size_t event = 0; event < 2; ++event)
+	{
+		const auto& c = w.patches[event];
+		Console.WriteLn("EE-JIT-LINK-REPATCH reason=%s gen=%u event=%s liveAttempts=%llu liveWrites=%llu retiredAttempts=%llu retiredWrites=%llu compilingAttempts=%llu compilingWrites=%llu unknownAttempts=%llu unknownWrites=%llu",
+			reason, s_recEvictionTraceGeneration,
+			event == 0 ? "target-compiled" : "target-removed",
+			static_cast<unsigned long long>(c[0].attempts), static_cast<unsigned long long>(c[0].writes),
+			static_cast<unsigned long long>(c[1].attempts), static_cast<unsigned long long>(c[1].writes),
+			static_cast<unsigned long long>(c[2].attempts), static_cast<unsigned long long>(c[2].writes),
+			static_cast<unsigned long long>(c[3].attempts), static_cast<unsigned long long>(c[3].writes));
+	}
+	// Samples are representative link records, not an instruction-pointer or
+	// host-stack proof that a retired caller has actually finished execution.
+	if (strcmp(reason, "65536-compiles") != 0)
+		for (size_t i = 0; i < w.SampleCount(); ++i)
+		{
+			const auto& e = w.GetSample(i);
+			Console.WriteLn("EE-JIT-LINK-SAMPLE gen=%u event=%s jumpSite=%p sourceHost=%p sourcePA=%08x sourceVA=%08x asid=%02x sourceHostBytes=%u targetPA=%08x destination=%p wrote=%u",
+				s_recEvictionTraceGeneration,
+				e.event == BaseBlocks::LinkEvent::TargetCompiled ? "target-compiled" : "target-removed",
+				reinterpret_cast<void*>(e.site), reinterpret_cast<void*>(e.ownerHost),
+				e.ownerPA, e.ownerVA, e.asid, e.hostBytes, e.targetPA,
+				reinterpret_cast<void*>(e.destination), e.wrote ? 1u : 0u);
+		}
+}
 
 namespace
 {
@@ -1150,10 +1227,16 @@ static void recLinkStaticBlock(u32 target, s32* jump)
 {
 	if (s_recBlockChangesTranslation)
 	{
+		if (s_recLinkOwnershipEnabled)
+			++s_recLinkOwnership.dispatcherLinksTranslation;
 		BaseBlocks::PatchLink(jump, reinterpret_cast<uptr>(DispatcherReg),
 			PSBBNTlbTraceEnabled() ? &s_recLinkMetrics : nullptr);
 		return;
 	}
+	if (s_recLinkOwnershipEnabled && g_recUseGuestTLBDispatch &&
+		(target < 0x80000000u || target >= 0xc0000000u) &&
+		(s_nStartBlock >> 12) != (target >> 12))
+		++s_recLinkOwnership.dispatcherLinksCrossPage;
 	EERecLinkStaticBlock(recBlocks, g_recUseGuestTLBDispatch != 0, s_nStartBlock,
 		target, HWADDR(target), jump, reinterpret_cast<uptr>(DispatcherReg),
 		PSBBNTlbTraceEnabled() ? &s_recLinkMetrics : nullptr);
@@ -1509,9 +1592,14 @@ static void recResetRaw()
 			Host::GetIntSettingValue("EmuCore", "EEJitEvictionTraceLimit", 20000), 0, 1000000));
 		s_recWitnessEnabled = Host::GetBoolSettingValue("EmuCore", "EEJitSourceWitness", false) &&
 			EEExecutionProfile::IsExtendedMMU();
+		s_recLinkOwnershipEnabled = Host::GetBoolSettingValue("EmuCore", "EEJitLinkOwnershipWitness", false) &&
+			EEExecutionProfile::IsExtendedMMU();
 		s_recWitnessLimit = static_cast<u32>(std::clamp(
 			Host::GetIntSettingValue("EmuCore", "EEJitSourceWitnessLimit", 2048), 1, 10000));
 		s_recEvictionTraceConfigured = true;
+		if (s_recLinkOwnershipEnabled)
+			Console.WriteLn("EE-JIT-LINK-OWNER-CONFIG enabled=1 maxSites=%llu (observation only)",
+				static_cast<unsigned long long>(EERecLinkOwnershipWitness::MaxSites));
 		if (s_recWitnessEnabled)
 			Console.WriteLn("EE-JIT-WITNESS-CONFIG enabled=1 watchPA=%08x watchVA=%08x maxEvents=%u maxLive=%u",
 				EERecWitnessPhysicalPage, EERecWitnessVirtualPage,
@@ -1539,6 +1627,8 @@ static void recResetRaw()
 			static_cast<unsigned long long>(SysMemory::GetEERecEnd() - SysMemory::GetEERec()));
 		recReportCoherence("reset");
 	}
+	else if (s_recLinkOwnershipEnabled)
+		recReportLinkOwnership("reset");
 	s_recCompiledBlocks = 0;
 	s_recCompiledBytes = 0;
 	s_recPhysicalClearCalls = 0;
@@ -1586,6 +1676,8 @@ static void recResetRaw()
 		memset(s_pInstCache, 0, sizeof(EEINST) * s_nInstCacheSize);
 
 	recBlocks.Reset();
+	s_recLinkOwnership.Reset();
+	recBlocks.SetLinkObserver(s_recLinkOwnershipEnabled ? &recLinkOwnershipObserver : nullptr, nullptr);
 	s_recCompiledPhysicalPages.Reset();
 	vtlb_ClearLoadStoreInfo();
 
@@ -1598,7 +1690,11 @@ static void recResetRaw()
 
 void recShutdown()
 {
+	recReportLinkOwnership("provider-shutdown");
 	recTraceRemainingBlocks("provider-shutdown");
+	recBlocks.SetLinkObserver(nullptr, nullptr);
+	s_recLinkOwnership.Reset();
+	s_recLinkOwnershipEnabled = false;
 	s_recEvictionTraceEnabled = false;
 	s_recEvictionTraceConfigured = false;
 	s_recWitnessEnabled = false;
@@ -1816,7 +1912,8 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause,
 		addr, size, triggeringVirtualPage, mappingAction};
 	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
 		reinterpret_cast<uptr>(JITCompile), addr, size, interval ? &interval->mutations : nullptr,
-		(s_recEvictionTraceEnabled || s_recWitnessEnabled) ? &recTraceRemovedBlock : nullptr,
+		(s_recEvictionTraceEnabled || s_recWitnessEnabled || s_recLinkOwnershipEnabled) ?
+			&recCombinedRemovalObserver : nullptr,
 		(s_recEvictionTraceEnabled || s_recWitnessEnabled) ? &evictionContext : nullptr);
 	if (interval)
 		interval->clearNanoseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -3928,6 +4025,8 @@ StartRecomp:
 	pxAssert(xGetPtr() < SysMemory::GetEERecEnd());
 
 	s_pCurBlockEx->x86size = static_cast<u32>(xGetPtr() - recPtr);
+	if (s_recLinkOwnershipEnabled)
+		s_recLinkOwnership.Finalize(s_pCurBlockEx->fnptr, s_pCurBlockEx->startpc, s_pCurBlockEx->x86size);
 	// Source and embedded host-data assumptions are sampled after emission;
 	// the witness is NEVER consulted by the code-cache invalidation policy.
 	if (s_recWitnessCollectData)
