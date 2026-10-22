@@ -4,6 +4,7 @@
 #include "Common.h"
 #include "MemoryTypes.h"
 #include "x86/EERecCodeCache.h"
+#include "x86/EERecSourceWitness.h"
 
 #include <gtest/gtest.h>
 
@@ -46,6 +47,29 @@ protected:
 		EERecClearPhysicalBlocks(blocks, physicalLUT.data(), compiling, compiler, address, words, metrics);
 	}
 };
+
+TEST(EERecSourceWitness, ClassifiesPhysicalByteChangesBeforeMappingStatus)
+{
+	EXPECT_EQ(EERecClassifySourceWitness(true, true, false, false, false),
+		EERecSourceWitnessVerdict::PhysicalBytesChanged);
+	EXPECT_EQ(EERecClassifySourceWitness(true, true, true, false, false),
+		EERecSourceWitnessVerdict::PhysicalBytesUnchangedVirtualUnmapped);
+	EXPECT_EQ(EERecClassifySourceWitness(true, true, true, true, false),
+		EERecSourceWitnessVerdict::PhysicalBytesUnchangedMappingChanged);
+	EXPECT_EQ(EERecClassifySourceWitness(true, true, true, true, true),
+		EERecSourceWitnessVerdict::PhysicalBytesUnchangedMappingSame);
+}
+
+TEST(EERecSourceWitness, IncompleteEvidenceNeverClaimsPhysicalBytesUnchanged)
+{
+	EXPECT_EQ(EERecClassifySourceWitness(false, true, true, true, true),
+		EERecSourceWitnessVerdict::Incomplete);
+	EXPECT_EQ(EERecClassifySourceWitness(true, false, true, true, true),
+		EERecSourceWitnessVerdict::Incomplete);
+	EXPECT_STREQ(EERecSourceWitnessVerdictName(
+		EERecSourceWitnessVerdict::PhysicalBytesUnchangedMappingSame),
+		"same-bytes-mapping-same");
+}
 
 TEST_F(EERecCodeCache, EvictionObserverReportsOnlyBlocksActuallyRemoved)
 {
