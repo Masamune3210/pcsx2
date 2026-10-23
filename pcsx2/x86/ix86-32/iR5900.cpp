@@ -1764,6 +1764,19 @@ void recShutdown()
 			static_cast<unsigned long long>(Read(neverCompiledSkips)),
 			static_cast<unsigned long long>(Read(jitResets.calls)),
 			static_cast<unsigned long long>(Read(jitResets.nanoseconds) / 1000));
+		Console.WriteLn("EE-PERF-TLB-ROUTES memoHits=%llu memoUs=%llu smallDeltas=%llu smallDeltaUs=%llu fullRebuilds=%llu fullRebuildUs=%llu asidSyncs=%llu deltaCandidatePages=%llu removed=%llu installed=%llu permissionOnly=%llu unchangedOrRetained=%llu",
+			static_cast<unsigned long long>(Read(tlbMemoHits.calls)),
+			static_cast<unsigned long long>(Read(tlbMemoHits.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbSmallDeltas.calls)),
+			static_cast<unsigned long long>(Read(tlbSmallDeltas.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbFullRebuilds.calls)),
+			static_cast<unsigned long long>(Read(tlbFullRebuilds.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbAsidSyncs)),
+			static_cast<unsigned long long>(Read(tlbDeltaCandidatePages)),
+			static_cast<unsigned long long>(Read(tlbRemovedMappings)),
+			static_cast<unsigned long long>(Read(tlbInstalledMappings)),
+			static_cast<unsigned long long>(Read(tlbPermissionUpdates)),
+			static_cast<unsigned long long>(Read(tlbUnchangedMappings)));
 	}
 	EEPerformanceProbe::enabled.store(false, std::memory_order_relaxed);
 	EEReportTLBFaultLogSummary();
