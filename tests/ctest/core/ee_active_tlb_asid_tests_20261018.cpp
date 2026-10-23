@@ -728,6 +728,76 @@ TEST(EEActiveTLB, LargeTLBChangeFallsBackAndMemoInvalidationRejectsDelta)
 	EXPECT_FALSE(memo.CollectChangedPages(entries.data(), entries.size(), 5, pages, count));
 }
 
+TEST(EEActiveTLB, BatchedSmallDeltaWinnerMatchesIndependentSinglePageOracle)
+{
+	std::array<tlbs, 48> entries{};
+	entries[0] = MakeEntry(0x10000000, 7, 0x00400000, 0x00404000);
+	entries[0].PageMask.UL = 0x00006000; // eight candidate VPNs
+	entries[1] = MakeEntry(0x10000000, 7, 0x00600000, 0x00604000);
+	entries[2] = MakeEntry(0x10000000, 8, 0x00800000, 0x00801000);
+	entries[3] = MakeEntry(0x20000000, 0x41, 0x00900000, 0x00901000, true);
+	entries[4] = MakeEntry(0x70000000, 7, 0, 0);
+	entries[4].EntryLo0.S = 1; // scratchpad
+	entries[5] = MakeEntry(0xffffe000, 7, 0x00a00000, 0x00a01000);
+	entries[6] = MakeEntry(0x30000000, 7, 0x00b00000, 0x00b01000);
+	entries[6].EntryLo1.V = 0;
+	entries[6].EntryLo0.D = 0;
+	// Later overlapping entries and a different-ASID slot must not
+	// supersede the first matching slot for a given VPN.
+	entries[40] = MakeEntry(0x20000000, 7, 0x00c00000, 0x00c01000);
+	std::array<u32, 64> candidates{};
+	std::size_t count = 0;
+	const auto add = [&](u32 page) { candidates[count++] = page; };
+	for (u32 i = 0; i < 12; ++i)
+		add(0x10000 + i);
+	for (u32 i = 0; i < 5; ++i)
+		add(0x70000 + i);
+	for (u32 i = 0; i < 5; ++i)
+		add(0x20000 + i);
+	for (u32 i = 0; i < 4; ++i)
+		add(0x30000 + i);
+	for (u32 page : {0xffffcu, 0xffffdu, 0xffffeu, 0xfffffu, 0u, 1u, 0x401u})
+		add(page);
+	for (u8 asid : {u8{7}, u8{8}, u8{9}})
+	{
+		std::array<std::optional<EEActiveTLBPage>, 64> batched{};
+		FindEEActiveTLBPages(entries.data(), entries.size(), asid, candidates, count, batched);
+		for (std::size_t i = 0; i < count; ++i)
+			EXPECT_EQ(batched[i],
+				FindEEActiveTLBPage(entries.data(), entries.size(), asid, candidates[i]))
+				<< "ASID=" << unsigned(asid) << " candidate=" << candidates[i];
+	}
+}
+
+TEST(EEActiveTLB, DeltaPublicationSkipsIdenticalAndAbsentPagesButPublishesPermissions)
+{
+	using Change = EEActiveTLBDelta;
+	const EEActiveTLBPage a{0x00100000, false, true};
+	const EEActiveTLBPage readOnly{0x00100000, false, false};
+	const EEActiveTLBPage b{0x00200000, false, true};
+	EEActiveTLBPageMap active{{0x100u, a}, {0x101u, a},
+		{0x102u, a}, {0x103u, a}};
+	const std::array<Change, 6> changes{{
+		{0x100u, a, a}, // full equality: skip
+		{0x101u, a, readOnly}, // permission only
+		{0x102u, a, b}, // PFN replacement
+		{0x103u, a, std::nullopt}, // remove
+		{0x104u, std::nullopt, std::nullopt}, // absent: skip
+		{0x105u, std::nullopt, b}, // install
+	}};
+	const auto unchanged = active.find(0x100u);
+	ASSERT_NE(unchanged, active.end());
+	const auto oldAddress = &unchanged->second;
+	EXPECT_EQ(PublishEEActiveTLBDelta(active, changes, changes.size()), 4u);
+	EXPECT_EQ(&active.at(0x100u), oldAddress);
+	EXPECT_EQ(active.at(0x100u), a);
+	EXPECT_EQ(active.at(0x101u), readOnly);
+	EXPECT_EQ(active.at(0x102u), b);
+	EXPECT_FALSE(active.contains(0x103u));
+	EXPECT_FALSE(active.contains(0x104u));
+	EXPECT_EQ(active.at(0x105u), b);
+}
+
 TEST(EEActiveTLB, SmallDeltaLookupMatchesFullProjectionForEverySelectedPage)
 {
 	std::array<tlbs, 48> entries{};
