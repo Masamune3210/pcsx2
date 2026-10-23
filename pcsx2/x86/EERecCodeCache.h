@@ -12,13 +12,14 @@
 // independently remappable target VPN must be resolved at execution, including
 // pending targets which have no BaseBlocks metadata to invalidate yet.
 inline void EERecLinkStaticBlock(BaseBlocks& blocks, bool useGuestTLB, u32 virtualStart,
-	u32 virtualTarget, u32 physicalTarget, s32* jump, uptr dispatcher, BaseBlocks::Metrics* metrics = nullptr)
+	u32 virtualTarget, u32 physicalTarget, s32* jump, uptr dispatcher, BaseBlocks::Metrics* metrics = nullptr,
+	uptr ownerHost = 0)
 {
 	const bool managedTarget = virtualTarget < 0x80000000u || virtualTarget >= 0xc0000000u;
 	if (useGuestTLB && managedTarget && (virtualStart >> 12) != (virtualTarget >> 12))
 		BaseBlocks::PatchLink(jump, dispatcher, metrics);
 	else
-		blocks.Link(physicalTarget, jump, metrics);
+		blocks.Link(physicalTarget, jump, metrics, ownerHost);
 }
 
 // A readable physical RAM pointer does not make an unmapped guest VPN executable.
