@@ -328,12 +328,16 @@ TEST_F(EERecCodeCache, FineSourceIndexDoesNotOutliveCodeArenaReset)
 	const uptr dispatcher = reinterpret_cast<uptr>(dispatcherCode.data());
 	AddBlock(0x3000, 4, source);
 	blocks.SetRetiredSourceDispatcher(dispatcher);
+	ASSERT_TRUE(blocks.HasRetiredSourceDispatcher());
 	s32 oldJump = 0;
 	blocks.Link(0x4000, &oldJump, nullptr, source);
 	ASSERT_EQ(blocks.GetLiveMetrics().linkRecords, 1u);
 	blocks.Reset();
 	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 0u);
+	// The runtime must arm its new dispatcher AFTER this reset.
+	EXPECT_FALSE(blocks.HasRetiredSourceDispatcher());
 	blocks.SetRetiredSourceDispatcher(dispatcher);
+	ASSERT_TRUE(blocks.HasRetiredSourceDispatcher());
 	AddBlock(0x3000, 4, source);
 	BaseBlocks::Metrics metrics;
 	blocks.Remove(0, 0, &metrics);
