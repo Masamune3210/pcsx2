@@ -72,6 +72,35 @@ TEST(EEPerformanceProbe, OptInCountersResetAndRecordOnlyWhenExplicitlyInvoked)
 	EXPECT_EQ(Read(compiledHostBytes), 0u);
 }
 
+TEST(EEPerformanceProbe, TLBSyncRouteAccountingIsDisjointAndResets)
+{
+	using namespace EEPerformanceProbe;
+	Configure(true);
+	const auto started = Clock::now();
+	RecordTLBSync(tlbMemoHits, started, false, 0, 0, 0, 0, 31);
+	RecordTLBSync(tlbSmallDeltas, started, true, 3, 1, 2, 0, 0);
+	RecordTLBSync(tlbFullRebuilds, started, false, 0, 3, 5, 1, 7);
+	EXPECT_EQ(Read(tlbSyncs.calls), 3u);
+	EXPECT_EQ(Read(tlbMemoHits.calls), 1u);
+	EXPECT_EQ(Read(tlbSmallDeltas.calls), 1u);
+	EXPECT_EQ(Read(tlbFullRebuilds.calls), 1u);
+	EXPECT_EQ(Read(tlbAsidSyncs), 1u);
+	EXPECT_EQ(Read(tlbDeltaCandidatePages), 3u);
+	EXPECT_EQ(Read(tlbRemovedMappings), 4u);
+	EXPECT_EQ(Read(tlbInstalledMappings), 7u);
+	EXPECT_EQ(Read(tlbPermissionUpdates), 1u);
+	EXPECT_EQ(Read(tlbUnchangedMappings), 38u);
+	EXPECT_EQ(Read(tlbMemoHits.nanoseconds) + Read(tlbSmallDeltas.nanoseconds) +
+		Read(tlbFullRebuilds.nanoseconds), Read(tlbSyncs.nanoseconds));
+	Configure(false);
+	EXPECT_EQ(Read(tlbSyncs.calls), 0u);
+	EXPECT_EQ(Read(tlbMemoHits.calls), 0u);
+	EXPECT_EQ(Read(tlbSmallDeltas.calls), 0u);
+	EXPECT_EQ(Read(tlbFullRebuilds.calls), 0u);
+	EXPECT_EQ(Read(tlbRemovedMappings), 0u);
+	EXPECT_EQ(Read(tlbAsidSyncs), 0u);
+}
+
 TEST(EERecCodeCacheCapacity, StandardPreservesOriginalLimitAndExtendedIsSelectable)
 {
 	for (const u32 setting : {64u, 128u, 256u, 512u, 1472u, 0u, 1024u, 2048u})
