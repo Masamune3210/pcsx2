@@ -239,6 +239,8 @@ static void recReportLinkOwnership(const char* reason);
 // produce unbounded multi-million-line logs even with a nominal cap.
 static bool s_recEvictionTraceEnabled = false;
 static bool s_recEvictionTraceConfigured = false;
+// Latched once per EE provider lifetime, together with the trace options.
+static u32 s_recExtendedCacheMiB = 256;
 static u32 s_recEvictionTraceLimit = 20000;
 static u64 s_recEvictionTraceSeen = 0;
 static u64 s_recEvictionTracePrinted = 0;
@@ -1580,7 +1582,7 @@ static void recReserve()
 {
 	recPtr = SysMemory::GetEERec();
 	recPtrEnd = SysMemory::GetEERec() +
-		HostMemoryMap::EErecGenerationSize(EEExecutionProfile::IsExtendedMMU()) - _64kb;
+		HostMemoryMap::EErecGenerationSize(EEExecutionProfile::IsExtendedMMU(), s_recExtendedCacheMiB) - _64kb;
 	recReserveRAM();
 
 	pxAssertRel(!s_pInstCache, "InstCache not allocated");
@@ -1612,6 +1614,9 @@ static void recResetRaw()
 			EEExecutionProfile::IsExtendedMMU();
 		s_recWitnessLimit = static_cast<u32>(std::clamp(
 			Host::GetIntSettingValue("EmuCore", "EEJitSourceWitnessLimit", 2048), 1, 10000));
+		const int cacheSetting = Host::GetIntSettingValue("EmuCore", "EEJitExtendedCacheMiB", 256);
+		s_recExtendedCacheMiB = (cacheSetting == 64 || cacheSetting == 128 ||
+			cacheSetting == 256 || cacheSetting == 512) ? static_cast<u32>(cacheSetting) : 256u;
 		s_recEvictionTraceConfigured = true;
 		if (s_recLinkOwnershipEnabled)
 			Console.WriteLn("EE-JIT-LINK-OWNER-CONFIG enabled=1 maxSites=%llu (observation only)",
@@ -1668,12 +1673,12 @@ static void recResetRaw()
 	// Refresh the code generation limit at every reset. Standard keeps the
 	// original 64 MiB window; Extended uses the whole 256 MiB reservation.
 	recPtrEnd = SysMemory::GetEERec() +
-		HostMemoryMap::EErecGenerationSize(EEExecutionProfile::IsExtendedMMU()) - _64kb;
+		HostMemoryMap::EErecGenerationSize(EEExecutionProfile::IsExtendedMMU(), s_recExtendedCacheMiB) - _64kb;
 	if (PSBBNTlbTraceEnabled())
-		Console.WriteLn("EE-JIT-CACHE-CONFIG mode=%s capacity=%llu reserve=%llu",
+		Console.WriteLn("EE-JIT-CACHE-CONFIG mode=%s capacity=%llu reserve=%llu configuredMiB=%u",
 			EEExecutionProfile::IsExtendedMMU() ? "extended" : "standard",
 			static_cast<unsigned long long>(recPtrEnd + _64kb - SysMemory::GetEERec()),
-			static_cast<unsigned long long>(HostMemoryMap::EErecSize));
+			static_cast<unsigned long long>(HostMemoryMap::EErecSize), s_recExtendedCacheMiB);
 	Console.WriteLn(Color_StrongBlack, "EE/iR5900 Recompiler Reset");
 
 	if (CHECK_EXTRAMEM != extraRam)
@@ -1736,6 +1741,7 @@ void recShutdown()
 	s_recLinkOwnershipEnabled = false;
 	s_recEvictionTraceEnabled = false;
 	s_recEvictionTraceConfigured = false;
+	s_recExtendedCacheMiB = 256;
 	s_recWitnessEnabled = false;
 	s_recWitnessCollectData = false;
 	for (auto& slot : s_recWitnessRecords)
