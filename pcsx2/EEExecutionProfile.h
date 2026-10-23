@@ -98,7 +98,7 @@ constexpr bool EEIsGuestDEV9RegisterTrace(std::string_view line)
 		if (!isHex(line[i]))
 			return false;
 	const std::string_view suffix = line.substr(end);
-	return suffix.empty() || suffix == "\\n" || suffix == "\\r" || suffix == "\\r\\n";
+	return suffix.empty() || suffix == "\n" || suffix == "\r" || suffix == "\r\n";
 }
 
 // Disc serial is evidence of the boot DISC, not proof about arbitrary HDD
