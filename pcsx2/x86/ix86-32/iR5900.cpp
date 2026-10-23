@@ -1616,8 +1616,12 @@ static void recResetRaw()
 		s_recWitnessLimit = static_cast<u32>(std::clamp(
 			Host::GetIntSettingValue("EmuCore", "EEJitSourceWitnessLimit", 2048), 1, 10000));
 		const int cacheSetting = Host::GetIntSettingValue("EmuCore", "EEJitExtendedCacheMiB", 256);
+		// Keep the standard 256 MiB default. 1536 MiB is a deliberately
+		// oversized experiment; the host code/data layout is statically
+		// constrained to remain within x64 signed-rel32 reach.
 		s_recExtendedCacheMiB = (cacheSetting == 64 || cacheSetting == 128 ||
-			cacheSetting == 256 || cacheSetting == 512) ? static_cast<u32>(cacheSetting) : 256u;
+			cacheSetting == 256 || cacheSetting == 512 || cacheSetting == 1536) ?
+			static_cast<u32>(cacheSetting) : 256u;
 		EEPerformanceProbe::Configure(EEExecutionProfile::IsExtendedMMU() &&
 			Host::GetBoolSettingValue("EmuCore", "EEPerformanceProbe", false));
 		if (EEPerformanceProbe::Enabled())
