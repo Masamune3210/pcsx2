@@ -105,6 +105,26 @@ TEST(EEPerformanceProbe, TLBSyncRouteAccountingIsDisjointAndResets)
 	EXPECT_EQ(Read(tlbDeltaNoopPages), 0u);
 }
 
+TEST(EEPerformanceProbe, TLBSyncStageBatchesAccumulateCallsAndReset)
+{
+	using namespace EEPerformanceProbe;
+	Configure(true);
+	RecordBatch(tlbProjectionWork, 2, 400);
+	RecordBatch(tlbVmapRemovals, 4, 2400);
+	RecordBatch(tlbVmapRemovals, 1, 1000);
+	RecordBatch(tlbMapPublications, 0, 0);
+	EXPECT_EQ(Read(tlbProjectionWork.calls), 2u);
+	EXPECT_EQ(Read(tlbProjectionWork.nanoseconds), 400u);
+	EXPECT_EQ(Read(tlbVmapRemovals.calls), 5u);
+	EXPECT_EQ(Read(tlbVmapRemovals.nanoseconds), 3400u);
+	EXPECT_EQ(Read(tlbMapPublications.calls), 0u);
+	EXPECT_EQ(Read(tlbSyncs.calls), 0u); // stages do not double-count syncs
+	Configure(false);
+	EXPECT_EQ(Read(tlbProjectionWork.calls), 0u);
+	EXPECT_EQ(Read(tlbVmapRemovals.calls), 0u);
+	EXPECT_EQ(Read(tlbVmapRemovals.nanoseconds), 0u);
+}
+
 TEST(EERecCodeCacheCapacity, StandardPreservesOriginalLimitAndExtendedIsSelectable)
 {
 	for (const u32 setting : {64u, 128u, 256u, 512u, 1472u, 0u, 1024u, 2048u})
