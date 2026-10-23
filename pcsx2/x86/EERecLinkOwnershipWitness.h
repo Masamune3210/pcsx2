@@ -18,7 +18,9 @@
 class EERecLinkOwnershipWitness
 {
 public:
-    static constexpr size_t MaxSites = 400000;
+    // Fourfold Extended JIT arena can emit over one million static links in
+    // one generation. Keep opt-in ownership diagnostics bounded but useful.
+    static constexpr size_t MaxSites = 1500000;
     enum class OwnerState : u8 { Live, Retired, Compiling, Unknown, Count };
     struct Tally
     {
