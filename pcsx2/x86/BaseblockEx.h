@@ -212,6 +212,8 @@ public:
 		retiredSourceDispatcher = dispatcher;
 	}
 
+	bool HasRetiredSourceDispatcher() const { return retiredSourceDispatcher != 0; }
+
 	void SetJITCompile(const void *recompiler_)
 	{
 		recompiler = reinterpret_cast<uptr>(recompiler_);
