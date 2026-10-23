@@ -33,6 +33,8 @@ inline std::atomic<std::uint64_t> physicalClearRequests{0};
 inline std::atomic<std::uint64_t> neverCompiledSkips{0};
 inline std::atomic<std::uint64_t> tlbAsidSyncs{0};
 inline std::atomic<std::uint64_t> tlbDeltaCandidatePages{0};
+inline std::atomic<std::uint64_t> tlbDeltaPublishedPages{0};
+inline std::atomic<std::uint64_t> tlbDeltaNoopPages{0};
 inline std::atomic<std::uint64_t> tlbRemovedMappings{0};
 inline std::atomic<std::uint64_t> tlbInstalledMappings{0};
 inline std::atomic<std::uint64_t> tlbPermissionUpdates{0};
@@ -51,7 +53,8 @@ inline void Configure(bool active)
 	compiledHostBytes.store(0, std::memory_order_relaxed);
 	physicalClearRequests.store(0, std::memory_order_relaxed);
 	neverCompiledSkips.store(0, std::memory_order_relaxed);
-	for (auto* counter : {&tlbAsidSyncs, &tlbDeltaCandidatePages, &tlbRemovedMappings,
+	for (auto* counter : {&tlbAsidSyncs, &tlbDeltaCandidatePages,
+		&tlbDeltaPublishedPages, &tlbDeltaNoopPages, &tlbRemovedMappings,
 		&tlbInstalledMappings, &tlbPermissionUpdates, &tlbUnchangedMappings})
 		counter->store(0, std::memory_order_relaxed);
 	enabled.store(active, std::memory_order_relaxed);
