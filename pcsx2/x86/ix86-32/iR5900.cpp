@@ -1253,7 +1253,8 @@ static void recLinkStaticBlock(u32 target, s32* jump)
 	EERecLinkStaticBlock(recBlocks, g_recUseGuestTLBDispatch != 0, s_nStartBlock,
 		target, HWADDR(target), jump, reinterpret_cast<uptr>(DispatcherReg),
 		PSBBNTlbTraceEnabled() ? &s_recLinkMetrics : nullptr,
-		g_recUseGuestTLBDispatch && s_pCurBlockEx ? s_pCurBlockEx->fnptr : 0);
+		g_recUseGuestTLBDispatch && EEExecutionProfile::IsExtendedMMU() && s_pCurBlockEx ?
+			s_pCurBlockEx->fnptr : 0);
 }
 static const void* JITCompile = nullptr;
 static const void* EnterRecompiledCode = nullptr;
@@ -1410,10 +1411,6 @@ static void _DynGen_Dispatchers()
 	UnmappedRecLUTPage = _DynGen_UnmappedRecLUTPage();
 
 	recBlocks.SetJITCompile(JITCompile);
-	// Only fine guest-TLB dispatch detaches retired outgoing links. Native
-	// and Standard retain the original lifetime and patch semantics.
-	recBlocks.SetRetiredSourceDispatcher(g_recUseGuestTLBDispatch ?
-		reinterpret_cast<uptr>(DispatcherReg) : 0);
 
 	Perf::any.Register(start, static_cast<u32>(xGetPtr() - start), "EE Dispatcher");
 }
@@ -1694,6 +1691,17 @@ static void recResetRaw()
 		memset(s_pInstCache, 0, sizeof(EEINST) * s_nInstCacheSize);
 
 	recBlocks.Reset();
+	// Reset clears BaseBlocks' outgoing-link policy as well as its indices.
+	// Install the freshly emitted DispatcherReg ONLY after that reset;
+	// setting it during _DynGen_Dispatchers() silently disabled detachment.
+	const bool detachRetiredLinks = EEExecutionProfile::IsExtendedMMU() &&
+		g_recUseGuestTLBDispatch != 0;
+	recBlocks.SetRetiredSourceDispatcher(detachRetiredLinks ?
+		reinterpret_cast<uptr>(DispatcherReg) : 0);
+	if (PSBBNTlbTraceEnabled() || s_recLinkOwnershipEnabled)
+		Console.WriteLn("EE-JIT-LINK-DETACH-CONFIG gen=%u enabled=%u mode=%u profileExtended=%u",
+			s_recEvictionTraceGeneration, detachRetiredLinks ? 1u : 0u,
+			g_recUseGuestTLBDispatch, EEExecutionProfile::IsExtendedMMU() ? 1u : 0u);
 	s_recLinkOwnership.Reset();
 	recBlocks.SetLinkObserver(s_recLinkOwnershipEnabled ? &recLinkOwnershipObserver : nullptr, nullptr);
 	s_recCompiledPhysicalPages.Reset();
