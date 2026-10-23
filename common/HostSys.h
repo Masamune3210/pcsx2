@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <memory_resource>
 #include <string>
 
 class Error;
@@ -162,11 +163,16 @@ private:
 	size_t m_num_mappings = 0;
 
 #ifdef _WIN32
-	using PlaceholderMap = std::map<size_t, size_t>;
+	// Fastmem ASID changes split and coalesce placeholders millions of
+	// times. Reuse tree nodes instead of allocating them from the general
+	// heap on every MapViewOfFile3/UnmapViewOfFile2 cycle.
+	// The pool must outlive the map and its remaining nodes.
+	std::pmr::unsynchronized_pool_resource m_placeholder_node_pool;
+	using PlaceholderMap = std::pmr::map<size_t, size_t>;
 
 	PlaceholderMap::iterator FindPlaceholder(size_t page);
 
-	PlaceholderMap m_placeholder_ranges;
+	PlaceholderMap m_placeholder_ranges{&m_placeholder_node_pool};
 #endif
 };
 
