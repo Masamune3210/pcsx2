@@ -1062,6 +1062,8 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 		// allocating a new unordered_map, and looking up every projected page.
 		// WriteTLB's descriptors and Random side effects have already occurred.
 		unchanged = static_cast<u32>(s_active_tlb_pages.size());
+		if (perfSync)
+			perfSyncRoute = &EEPerformanceProbe::tlbMemoHits;
 		if (profiling)
 		{
 			++s_ee_tlb_churn.projectionRebuildsSkipped;
@@ -1128,6 +1130,11 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	}
 	if (smallDelta)
 	{
+		if (perfSync)
+		{
+			perfSyncRoute = &EEPerformanceProbe::tlbSmallDeltas;
+			perfSyncCandidates = candidateCount;
+		}
 		PlanEEActiveTLBDelta(s_active_tlb_pages, tlb, std::size(tlb),
 			asid, candidatePages, candidateCount, delta);
 		if (profiling)
