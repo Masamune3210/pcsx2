@@ -89,6 +89,7 @@ static constexpr u32 NO_FASTMEM_MAPPING = 0xFFFFFFFFu;
 
 static std::unique_ptr<SharedMemoryMappingArea> s_fastmem_area;
 static std::vector<u32> s_fastmem_virtual_mapping; // maps vaddr -> mainmem offset
+static_assert(FastmemReverseIndex::PageSize == VTLB_PAGE_SIZE);
 static FastmemReverseIndex s_fastmem_physical_mapping; // O(1) backing offset -> guest virtual alias index
 static std::unordered_map<uptr, LoadstoreBackpatchInfo> s_fastmem_backpatch_info;
 static std::unordered_set<u32> s_fastmem_faulting_pcs;
