@@ -1580,8 +1580,7 @@ static void recReserve()
 {
 	recPtr = SysMemory::GetEERec();
 	recPtrEnd = SysMemory::GetEERec() +
-		(EEExecutionProfile::IsExtendedMMU() ? HostMemoryMap::EErecSize :
-			HostMemoryMap::EErecStandardSize) - _64kb;
+		HostMemoryMap::EErecGenerationSize(EEExecutionProfile::IsExtendedMMU()) - _64kb;
 	recReserveRAM();
 
 	pxAssertRel(!s_pInstCache, "InstCache not allocated");
@@ -1669,8 +1668,7 @@ static void recResetRaw()
 	// Refresh the code generation limit at every reset. Standard keeps the
 	// original 64 MiB window; Extended uses the whole 256 MiB reservation.
 	recPtrEnd = SysMemory::GetEERec() +
-		(EEExecutionProfile::IsExtendedMMU() ? HostMemoryMap::EErecSize :
-			HostMemoryMap::EErecStandardSize) - _64kb;
+		HostMemoryMap::EErecGenerationSize(EEExecutionProfile::IsExtendedMMU()) - _64kb;
 	if (PSBBNTlbTraceEnabled())
 		Console.WriteLn("EE-JIT-CACHE-CONFIG mode=%s capacity=%llu reserve=%llu",
 			EEExecutionProfile::IsExtendedMMU() ? "extended" : "standard",
