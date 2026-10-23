@@ -1779,6 +1779,21 @@ void recShutdown()
 			static_cast<unsigned long long>(Read(tlbInstalledMappings)),
 			static_cast<unsigned long long>(Read(tlbPermissionUpdates)),
 			static_cast<unsigned long long>(Read(tlbUnchangedMappings)));
+		Console.WriteLn("EE-PERF-TLB-STAGES projectionCalls=%llu projectionUs=%llu vmapRemoveCalls=%llu vmapRemoveUs=%llu vmapInstallCalls=%llu vmapInstallUs=%llu codeClearCalls=%llu codeClearUs=%llu lutRemoveCalls=%llu lutRemoveUs=%llu lutInstallCalls=%llu lutInstallUs=%llu publicationCalls=%llu publicationUs=%llu",
+			static_cast<unsigned long long>(Read(tlbProjectionWork.calls)),
+			static_cast<unsigned long long>(Read(tlbProjectionWork.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbVmapRemovals.calls)),
+			static_cast<unsigned long long>(Read(tlbVmapRemovals.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbVmapInstalls.calls)),
+			static_cast<unsigned long long>(Read(tlbVmapInstalls.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbCodeInvalidations.calls)),
+			static_cast<unsigned long long>(Read(tlbCodeInvalidations.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbLutRemovals.calls)),
+			static_cast<unsigned long long>(Read(tlbLutRemovals.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbLutInstalls.calls)),
+			static_cast<unsigned long long>(Read(tlbLutInstalls.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbMapPublications.calls)),
+			static_cast<unsigned long long>(Read(tlbMapPublications.nanoseconds) / 1000));
 	}
 	EEPerformanceProbe::enabled.store(false, std::memory_order_relaxed);
 	EEReportTLBFaultLogSummary();
