@@ -19,6 +19,7 @@
 #include "Common.h"
 #include "vtlb.h"
 #include "COP0.h"
+#include "FastmemReverseIndex.h"
 #include "Cache.h"
 #include "IopMem.h"
 #include "Host.h"
@@ -88,7 +89,7 @@ static constexpr u32 NO_FASTMEM_MAPPING = 0xFFFFFFFFu;
 
 static std::unique_ptr<SharedMemoryMappingArea> s_fastmem_area;
 static std::vector<u32> s_fastmem_virtual_mapping; // maps vaddr -> mainmem offset
-static std::unordered_multimap<u32, u32> s_fastmem_physical_mapping; // maps mainmem offset -> vaddr
+static FastmemReverseIndex s_fastmem_physical_mapping; // O(1) backing offset -> guest virtual alias index
 static std::unordered_map<uptr, LoadstoreBackpatchInfo> s_fastmem_backpatch_info;
 static std::unordered_set<u32> s_fastmem_faulting_pcs;
 
@@ -979,14 +980,10 @@ static void vtlb_CreateFastmemMapping(u32 vaddr, u32 mainmem_offset, const PageP
 		if (was_coalesced && !s_fastmem_area->Unmap(s_fastmem_area->PagePointer(vtlb_HostPage(page)), __pagesize))
 			Console.Error("Failed to unmap vaddr %08X", vaddr);
 
-		// remove reverse mapping
-		auto range = s_fastmem_physical_mapping.equal_range(mainmem_offset);
-		for (auto it = range.first; it != range.second;)
-		{
-			auto this_it = it++;
-			if (this_it->second == vaddr)
-				s_fastmem_physical_mapping.erase(this_it);
-		}
+		// Detach from the OLD backing, never from the destination offset.
+		// The previous unordered_multimap path erroneously looked up the
+		// *new* mainmem_offset and could leave stale reverse aliases.
+		s_fastmem_physical_mapping.Erase(page, s_fastmem_virtual_mapping[page]);
 	}
 
 	s_fastmem_virtual_mapping[page] = mainmem_offset;
@@ -1004,7 +1001,7 @@ static void vtlb_CreateFastmemMapping(u32 vaddr, u32 mainmem_offset, const PageP
 		}
 	}
 
-	s_fastmem_physical_mapping.emplace(mainmem_offset, vaddr);
+	s_fastmem_physical_mapping.Insert(page, mainmem_offset);
 }
 
 static void vtlb_RemoveFastmemMapping(u32 vaddr)
@@ -1021,14 +1018,8 @@ static void vtlb_RemoveFastmemMapping(u32 vaddr)
 	if (was_coalesced && !s_fastmem_area->Unmap(s_fastmem_area->PagePointer(vtlb_HostPage(page)), __pagesize))
 		Console.Error("Failed to unmap vaddr %08X", vtlb_HostAlignOffset(vaddr));
 
-	// remove from reverse map
-	auto range = s_fastmem_physical_mapping.equal_range(mainmem_offset);
-	for (auto it = range.first; it != range.second;)
-	{
-		auto this_it = it++;
-		if (this_it->second == vaddr)
-			s_fastmem_physical_mapping.erase(this_it);
-	}
+	// Every guest VPN has exactly one reverse-list node; unlink it in O(1).
+	s_fastmem_physical_mapping.Erase(page, mainmem_offset);
 }
 
 static void vtlb_RemoveFastmemMappings(u32 vaddr, u32 size)
@@ -1067,7 +1058,7 @@ static void vtlb_RemoveFastmemMappings()
 		s_fastmem_virtual_mapping[page] = NO_FASTMEM_MAPPING;
 	}
 
-	s_fastmem_physical_mapping.clear();
+	s_fastmem_physical_mapping.Clear();
 }
 
 bool vtlb_ResolveFastmemMapping(uptr* addr)
@@ -1125,14 +1116,12 @@ void vtlb_UpdateFastmemProtection(u32 paddr, u32 size, PageProtectionMode prot)
 	for (u32 i = 0; i < num_pages; i++, current_mainmem += VTLB_PAGE_SIZE)
 	{
 		// update virtual mapping mapping
-		auto range = s_fastmem_physical_mapping.equal_range(current_mainmem);
-		for (auto it = range.first; it != range.second; ++it)
-		{
-			FASTMEM_LOG("  valias %08X (size %u)", it->second, VTLB_PAGE_SIZE);
-
-			if (vtlb_IsHostAligned(it->second))
-				HostSys::MemProtect(s_fastmem_area->OffsetPointer(it->second), __pagesize, prot);
-		}
+		s_fastmem_physical_mapping.ForEach(current_mainmem, [&](u32 virtualPage) {
+			const u32 vaddr = virtualPage << VTLB_PAGE_BITS;
+			FASTMEM_LOG("  valias %08X (size %u)", vaddr, VTLB_PAGE_SIZE);
+			if (vtlb_IsHostAligned(vaddr))
+				HostSys::MemProtect(s_fastmem_area->OffsetPointer(vaddr), __pagesize, prot);
+		});
 	}
 }
 
@@ -1399,6 +1388,7 @@ bool vtlb_Core_Alloc()
 	}
 
 	s_fastmem_virtual_mapping.resize(FASTMEM_PAGE_COUNT, NO_FASTMEM_MAPPING);
+	s_fastmem_physical_mapping.Initialize(FASTMEM_PAGE_COUNT, HostMemoryMap::MainSize);
 	vtlbdata.fastmem_base = (uptr)s_fastmem_area->BasePointer();
 	DevCon.WriteLn(Color_StrongGreen, "Fastmem area: %p - %p",
 		vtlbdata.fastmem_base, vtlbdata.fastmem_base + (FASTMEM_AREA_SIZE - 1));
@@ -1439,7 +1429,7 @@ void vtlb_Core_Free()
 	vtlb_ClearLoadStoreInfo();
 
 	vtlbdata.fastmem_base = 0;
-	decltype(s_fastmem_physical_mapping)().swap(s_fastmem_physical_mapping);
+	s_fastmem_physical_mapping.Reset();
 	decltype(s_fastmem_virtual_mapping)().swap(s_fastmem_virtual_mapping);
 	s_fastmem_area.reset();
 }
