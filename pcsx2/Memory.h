@@ -54,15 +54,18 @@ namespace HostMemoryMap
 	// Code
 	//////////////////////////////////////////////////////////////////////////
 
-	// Reserve up to 256 MiB for the EE JIT. Standard execution retains
-	// its original 64 MiB generation limit; Extended MMU may use the
-	// full region to delay churn-driven code-cache exhaustion.
+	// Reserve enough space for a configurable Extended-MMU EE JIT cache.
+	// Standard retains the original 64 MiB active generation window.
 	static constexpr u32 EErecOffset = 0x00000000;
 	static constexpr u32 EErecStandardSize = 0x4000000;
-	static constexpr u32 EErecSize = 0x10000000;
-	constexpr u32 EErecGenerationSize(bool extendedMMU)
+	static constexpr u32 EErecSize = 0x20000000; // 512 MiB maximum reservation
+	constexpr u32 EErecGenerationSize(bool extendedMMU, u32 extendedMiB = 256)
 	{
-		return extendedMMU ? EErecSize : EErecStandardSize;
+		if (!extendedMMU)
+			return EErecStandardSize;
+		const u32 selectedMiB = (extendedMiB == 64 || extendedMiB == 128 ||
+			extendedMiB == 256 || extendedMiB == 512) ? extendedMiB : 256;
+		return selectedMiB * 0x100000u;
 	}
 
 	// IOP recompiler code cache area (32mb)
@@ -94,7 +97,7 @@ namespace HostMemoryMap
 	static constexpr u32 SWrecSize = 0x04000000;
 
 	// Overall size.
-	static constexpr u32 CodeSize = SWrecOffset + SWrecSize; // 497 mb
+	static constexpr u32 CodeSize = SWrecOffset + SWrecSize; // 753 mb
 } // namespace HostMemoryMap
 
 
