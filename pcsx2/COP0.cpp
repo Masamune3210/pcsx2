@@ -1215,14 +1215,7 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 		}
 		// Host-vTLB/code changes above are complete. Publish the new selected
 		// permissions and page ownership before the scratchpad batch setup.
-		for (std::size_t i = 0; i < candidateCount; ++i)
-		{
-			const auto& c = delta[i];
-			if (c.newMapping)
-				s_active_tlb_pages.insert_or_assign(c.page, *c.newMapping);
-			else
-				s_active_tlb_pages.erase(c.page);
-		}
+		PublishEEActiveTLBDelta(s_active_tlb_pages, delta, candidateCount);
 	}
 	else
 	{
