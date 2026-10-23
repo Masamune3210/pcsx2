@@ -5,6 +5,7 @@
 #include "COP0.h"
 #include "EEActiveTLB.h"
 #include "EEExecutionProfile.h"
+#include "EEPerformanceProbe.h"
 #include "vtlb.h"
 
 #include <algorithm>
@@ -1027,12 +1028,15 @@ static void ClearActiveTLBCodePage(u32 page, const EEActiveTLBPage& mapping,
 void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 {
 	const bool profiling = PSBBNTlbTraceEnabled();
+	const bool perfSync = EEPerformanceProbe::Enabled();
 	std::chrono::steady_clock::time_point started;
-	if (profiling)
+	if (profiling || perfSync)
 		started = std::chrono::steady_clock::now();
 	u32 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
 	auto finishSync = [&]()
 	{
+		if (perfSync)
+			EEPerformanceProbe::Record(EEPerformanceProbe::tlbSyncs, started);
 		if (!profiling)
 			return;
 		auto& s = s_ee_tlb_churn;
