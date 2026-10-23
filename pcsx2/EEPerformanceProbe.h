@@ -26,6 +26,15 @@ inline Event tlbSyncs;
 inline Event tlbMemoHits;
 inline Event tlbSmallDeltas;
 inline Event tlbFullRebuilds;
+// Inclusive-of-operation, disjoint by host-side activity. Individual wall
+// stages exclude the cost of taking the timestamp and record counters.
+inline Event tlbProjectionWork;
+inline Event tlbVmapRemovals;
+inline Event tlbVmapInstalls;
+inline Event tlbCodeInvalidations;
+inline Event tlbLutRemovals;
+inline Event tlbLutInstalls;
+inline Event tlbMapPublications;
 inline Event physicalClearWork;
 inline Event jitResets;
 inline std::atomic<std::uint64_t> compiledHostBytes{0};
@@ -45,7 +54,9 @@ inline void Configure(bool active)
 	// Only called at the start of a new EE recompiler provider lifetime.
 	enabled.store(false, std::memory_order_relaxed);
 	for (Event* event : {&compilations, &tlbSyncs, &tlbMemoHits, &tlbSmallDeltas,
-		&tlbFullRebuilds, &physicalClearWork, &jitResets})
+		&tlbFullRebuilds, &tlbProjectionWork, &tlbVmapRemovals,
+		&tlbVmapInstalls, &tlbCodeInvalidations, &tlbLutRemovals,
+		&tlbLutInstalls, &tlbMapPublications, &physicalClearWork, &jitResets})
 	{
 		event->calls.store(0, std::memory_order_relaxed);
 		event->nanoseconds.store(0, std::memory_order_relaxed);
@@ -89,6 +100,15 @@ inline void RecordTLBSync(Event& route, Clock::time_point started, bool asid,
 	tlbInstalledMappings.fetch_add(installed, std::memory_order_relaxed);
 	tlbPermissionUpdates.fetch_add(permissionOnly, std::memory_order_relaxed);
 	tlbUnchangedMappings.fetch_add(unchanged, std::memory_order_relaxed);
+}
+
+inline void RecordBatch(Event& event, std::uint64_t calls, std::uint64_t nanos)
+{
+	if (calls)
+	{
+		event.calls.fetch_add(calls, std::memory_order_relaxed);
+		event.nanoseconds.fetch_add(nanos, std::memory_order_relaxed);
+	}
 }
 
 inline std::uint64_t Read(const std::atomic<std::uint64_t>& value)
