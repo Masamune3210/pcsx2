@@ -1700,7 +1700,7 @@ static void recResetRaw()
 		reinterpret_cast<uptr>(DispatcherReg) : 0);
 	if (PSBBNTlbTraceEnabled() || s_recLinkOwnershipEnabled)
 		Console.WriteLn("EE-JIT-LINK-DETACH-CONFIG gen=%u enabled=%u mode=%u profileExtended=%u",
-			s_recEvictionTraceGeneration, detachRetiredLinks ? 1u : 0u,
+			s_recEvictionTraceGeneration, recBlocks.HasRetiredSourceDispatcher() ? 1u : 0u,
 			g_recUseGuestTLBDispatch, EEExecutionProfile::IsExtendedMMU() ? 1u : 0u);
 	s_recLinkOwnership.Reset();
 	recBlocks.SetLinkObserver(s_recLinkOwnershipEnabled ? &recLinkOwnershipObserver : nullptr, nullptr);
