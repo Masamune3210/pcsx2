@@ -5,6 +5,7 @@
 #include "DebugTools/SymbolGuardian.h"
 #include "IopBios.h"
 #include "IopMem.h"
+#include "IopHw.h"
 #include "R3000A.h"
 #include "R5900.h"
 #include "ps2/BiosTools.h"
@@ -900,7 +901,10 @@ namespace R3000A
 			if (fd == 1) // stdout
 			{
 				const std::string s = Ra1;
-				iopConLog(ShiftJIS_ConvertString(s.data(), a2));
+				const std::string_view guestText(s.data(), std::min<size_t>(s.size(), a2));
+				if (!IopMemory::ShouldSuppressGuestDEV9ConsoleTrace(guestText,
+						IopMemory::GuestDEV9ConsoleSource::IomanStdout))
+					iopConLog(ShiftJIS_ConvertString(s.data(), a2));
 				pc = ra;
 				v0 = a2;
 				return 1;
@@ -1059,7 +1063,13 @@ namespace R3000A
 			}
 			pxAssertRel(ptmp >= tmp && ptmp < std::end(tmp), "Overflowed tmp buffer");
 			*ptmp = 0;
-			iopConLog(ShiftJIS_ConvertString(tmp, 1023));
+			// Guest drivers commonly use BIOS Kprintf rather than the emulated
+			// hardware stdout register. Filter only the completed diagnostic
+			// string, after formatting and without altering guest execution.
+			if (!IopMemory::ShouldSuppressGuestDEV9ConsoleTrace(
+					std::string_view(tmp, static_cast<size_t>(ptmp - tmp)),
+					IopMemory::GuestDEV9ConsoleSource::Kprintf))
+				iopConLog(ShiftJIS_ConvertString(tmp, 1023));
 
 			return 1;
 		}
