@@ -7,23 +7,6 @@
 
 #include "common/StringUtil.h"
 
-#include <string_view>
-
-namespace IopMemory
-{
-	// The IOP can print through a hardware UART, ioman stdout or BIOS Kprintf.
-	// These are output sinks, not DEV9 register access paths.
-	enum class GuestDEV9ConsoleSource : u8
-	{
-		HardwareStdout,
-		IomanStdout,
-		Kprintf,
-		BiosCallStdout,
-	};
-	bool ShouldSuppressGuestDEV9ConsoleTrace(std::string_view text, GuestDEV9ConsoleSource source);
-	void ReportGuestDEV9ConsoleTraceSummary();
-}
-
 static const u32
 	HW_PS1_GPU_START = 0x1F8010A0,
 	HW_PS1_GPU_END   = 0x1F8010B0,
