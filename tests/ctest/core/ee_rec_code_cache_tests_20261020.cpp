@@ -3,6 +3,7 @@
 
 #include "Common.h"
 #include "MemoryTypes.h"
+#include "Memory.h"
 #include "x86/EERecCodeCache.h"
 #include "x86/EERecSourceWitness.h"
 
@@ -47,6 +48,18 @@ protected:
 		EERecClearPhysicalBlocks(blocks, physicalLUT.data(), compiling, compiler, address, words, metrics);
 	}
 };
+
+TEST(EERecCodeCacheCapacity, StandardPreservesOriginalLimitAndExtendedUsesReservedSpace)
+{
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(false), 0x04000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true), 0x10000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true), HostMemoryMap::EErecSize);
+	EXPECT_EQ(HostMemoryMap::IOPrecOffset,
+		HostMemoryMap::EErecOffset + HostMemoryMap::EErecSize);
+	EXPECT_LT(HostMemoryMap::EErecGenerationSize(false), HostMemoryMap::EErecSize);
+	EXPECT_LE(HostMemoryMap::SWrecOffset + HostMemoryMap::SWrecSize,
+		HostMemoryMap::CodeSize);
+}
 
 TEST(EERecSourceWitness, SeparateVirtualPagesMayHaveNoncontiguousPhysicalSource)
 {
