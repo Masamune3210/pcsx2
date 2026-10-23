@@ -14,6 +14,7 @@
 #include "R5900OpcodeTables.h"
 #include "EEActiveTLB.h"
 #include "EEExecutionProfile.h"
+#include "EEPerformanceProbe.h"
 #include "VMManager.h"
 #include "vtlb.h"
 #include "x86/BaseblockEx.h"
@@ -1617,6 +1618,10 @@ static void recResetRaw()
 		const int cacheSetting = Host::GetIntSettingValue("EmuCore", "EEJitExtendedCacheMiB", 256);
 		s_recExtendedCacheMiB = (cacheSetting == 64 || cacheSetting == 128 ||
 			cacheSetting == 256 || cacheSetting == 512) ? static_cast<u32>(cacheSetting) : 256u;
+		EEPerformanceProbe::Configure(EEExecutionProfile::IsExtendedMMU() &&
+			Host::GetBoolSettingValue("EmuCore", "EEPerformanceProbe", false));
+		if (EEPerformanceProbe::Enabled())
+			Console.WriteLn("EE-PERF-PROBE enabled=1 categories=compile,tlbSync,physicalClear,jitReset");
 		s_recEvictionTraceConfigured = true;
 		if (s_recLinkOwnershipEnabled)
 			Console.WriteLn("EE-JIT-LINK-OWNER-CONFIG enabled=1 maxSites=%llu (observation only)",
@@ -1629,6 +1634,9 @@ static void recResetRaw()
 			Console.WriteLn("EE-JIT-EVICT-CONFIG enabled=1 limit=%u (0 means unlimited)",
 				s_recEvictionTraceLimit);
 	}
+	const bool perfReset = EEPerformanceProbe::Enabled();
+	const auto perfResetStarted = perfReset ? EEPerformanceProbe::Clock::now() :
+		EEPerformanceProbe::Clock::time_point{};
 	// Internal code-cache exhaustion and the first guest-dispatch transition
 	// must retain the selected mode. The CPU-provider Reset callback retains
 	// its existing native policy (also used for settings/savestate cache clears).
@@ -1731,10 +1739,29 @@ static void recResetRaw()
 
 	memset(manual_page, 0, sizeof(manual_page));
 	memset(manual_counter, 0, sizeof(manual_counter));
+	if (perfReset)
+		EEPerformanceProbe::Record(EEPerformanceProbe::jitResets, perfResetStarted);
 }
 
 void recShutdown()
 {
+	if (EEPerformanceProbe::Enabled())
+	{
+		using namespace EEPerformanceProbe;
+		Console.WriteLn("EE-PERF-SUMMARY compiledBlocks=%llu compiledHostBytes=%llu compileUs=%llu tlbSyncs=%llu tlbSyncUs=%llu physicalClearRequests=%llu physicalClearCalls=%llu physicalClearUs=%llu noCodeSkips=%llu jitResets=%llu jitResetUs=%llu inclusive=1",
+			static_cast<unsigned long long>(Read(compilations.calls)),
+			static_cast<unsigned long long>(Read(compiledHostBytes)),
+			static_cast<unsigned long long>(Read(compilations.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(tlbSyncs.calls)),
+			static_cast<unsigned long long>(Read(tlbSyncs.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(physicalClearRequests)),
+			static_cast<unsigned long long>(Read(physicalClearWork.calls)),
+			static_cast<unsigned long long>(Read(physicalClearWork.nanoseconds) / 1000),
+			static_cast<unsigned long long>(Read(neverCompiledSkips)),
+			static_cast<unsigned long long>(Read(jitResets.calls)),
+			static_cast<unsigned long long>(Read(jitResets.nanoseconds) / 1000));
+	}
+	EEPerformanceProbe::enabled.store(false, std::memory_order_relaxed);
 	EEReportTLBFaultLogSummary();
 	recReportLinkOwnership("provider-shutdown");
 	recTraceRemainingBlocks("provider-shutdown");
@@ -1914,6 +1941,9 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause,
 	u32 triggeringVirtualPage, const char* mappingAction)
 {
 	const bool profiling = PSBBNTlbTraceEnabled();
+	const bool perfClear = EEPerformanceProbe::Enabled();
+	if (perfClear)
+		EEPerformanceProbe::physicalClearRequests.fetch_add(1, std::memory_order_relaxed);
 	if (static_cast<size_t>(cause) >= s_recInvalidations.size())
 		cause = EEJitInvalidationCause::Unknown;
 	auto* const interval = profiling ? &s_recInvalidations[static_cast<size_t>(cause)] : nullptr;
@@ -1941,6 +1971,8 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause,
 		EECanSkipPhysicalCodeClear(EEExecutionProfileMode::ExtendedMMU,
 			 s_recCompiledPhysicalPages.MayContainCode(addr, size)))
 	{
+		if (perfClear)
+			EEPerformanceProbe::neverCompiledSkips.fetch_add(1, std::memory_order_relaxed);
 		if (interval)
 		{
 			++s_recSkippedUncompiledPageClears;
@@ -1953,8 +1985,9 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause,
 	{
 		++s_recPhysicalClearCalls;
 		++interval->clearCalls;
-		started = EEJitClock::now();
 	}
+	if (interval || perfClear)
+		started = EEJitClock::now();
 	EERecEvictionTraceContext evictionContext{EEJitInvalidationCauseName(cause),
 		addr, size, triggeringVirtualPage, mappingAction};
 	EERecClearPhysicalBlocks(recBlocks, recLUT, s_pCurBlock,
@@ -1965,6 +1998,8 @@ void recClearPhysical(u32 addr, u32 size, EEJitInvalidationCause cause,
 	if (interval)
 		interval->clearNanoseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
 			EEJitClock::now() - started).count());
+	if (perfClear)
+		EEPerformanceProbe::Record(EEPerformanceProbe::physicalClearWork, started);
 }
 
 // CPU provider callback: fastmem-backpatch callers supply a guest virtual PC.
@@ -3428,13 +3463,15 @@ static void recRecompile(const u32 startpc)
 	}
 
 	const bool profileCompilation = PSBBNTlbTraceEnabled();
+	const bool perfCompilation = EEPerformanceProbe::Enabled();
 	s_recWitnessCollectData = s_recWitnessEnabled &&
 		((HWADDR(startpc) & ~0xfffu) == EERecWitnessPhysicalPage ||
 		 (startpc & ~0xfffu) == EERecWitnessVirtualPage) &&
 		s_recWitnessPrinted < s_recWitnessLimit;
 	s_recWitnessCurrentDataCount = 0;
 	s_recWitnessCurrentDataOverflow = false;
-	const auto compileStarted = profileCompilation ? EEJitClock::now() : EEJitClock::time_point{};
+	const auto compileStarted = (profileCompilation || perfCompilation) ?
+		EEJitClock::now() : EEJitClock::time_point{};
 	xSetTextPtr(R5900_TEXTPTR);
 	xSetPtr(recPtr);
 	recPtr = xGetAlignedCallTarget();
@@ -4089,6 +4126,11 @@ StartRecomp:
 	Perf::ee.RegisterPC((void*)s_pCurBlockEx->fnptr, s_pCurBlockEx->x86size, s_pCurBlockEx->startpc);
 
 	recPtr = xGetPtr();
+	if (perfCompilation)
+	{
+		EEPerformanceProbe::compiledHostBytes.fetch_add(s_pCurBlockEx->x86size, std::memory_order_relaxed);
+		EEPerformanceProbe::Record(EEPerformanceProbe::compilations, compileStarted);
+	}
 	if (profileCompilation)
 	{
 		++s_recCompiledBlocks;
