@@ -68,6 +68,28 @@ TEST(EERecCoherencePolicy, GuestTLBManagedConstantDataAddressesNeedDependenciesB
 	EXPECT_FALSE(EERecConstantAddressUsesGuestTLB(0xbfffffffu));
 }
 
+TEST(EEExecutionProfile, TlbFaultLogSuppressionKeepsStandardAndExplicitVerboseBehavior)
+{
+	// Standard mode must continue reporting its original recompiler
+	// and developer-build TLB exceptions without a new setting.
+	EXPECT_TRUE(EELogTLBFault(false, false, true));
+	EXPECT_TRUE(EELogTLBFault(false, true, true));
+	EXPECT_FALSE(EELogTLBFault(false, false, false));
+	// Extended guest TLB refill is routine: suppress logging by default.
+	EXPECT_FALSE(EELogTLBFault(true, false, true));
+	EXPECT_TRUE(EELogTLBFault(true, true, true));
+	EXPECT_FALSE(EELogTLBFault(true, true, false));
+}
+
+TEST(EEExecutionProfile, BranchDelayDiagnosticSuppressionIsOnlyForExtendedTlbExceptions)
+{
+	EXPECT_TRUE(EELogBranchDelayWarning(false, false, true));
+	EXPECT_TRUE(EELogBranchDelayWarning(false, false, false));
+	EXPECT_FALSE(EELogBranchDelayWarning(true, false, true));
+	EXPECT_TRUE(EELogBranchDelayWarning(true, true, true));
+	EXPECT_TRUE(EELogBranchDelayWarning(true, false, false));
+}
+
 TEST(EEExecutionProfile, AutomaticRecognitionRequiresVerifiedBootDiscSerial)
 {
 	EXPECT_EQ(ResolveEEExecutionProfile(EEExecutionProfilePreference::Auto, "SCPN-60160"),
