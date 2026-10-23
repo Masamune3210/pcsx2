@@ -609,7 +609,7 @@ static void recReportCoherence(const char* reason)
 		if (!s.requests)
 			continue;
 		const auto& m = s.mutations;
-		Console.WriteLn("EE-JIT-MUTATION cause=%s requests=%llu distinctRamPages=%llu clearCalls=%llu boundsRejected=%llu neverCompiled=%llu blocksEvicted=%llu retiredHostBytes=%llu dispatchAttempts=%llu dispatchWrites=%llu dispatchSkips=%llu linkAttempts=%llu linkWrites=%llu linkSkips=%llu clearUs=%llu",
+		Console.WriteLn("EE-JIT-MUTATION cause=%s requests=%llu distinctRamPages=%llu clearCalls=%llu boundsRejected=%llu neverCompiled=%llu blocksEvicted=%llu retiredHostBytes=%llu dispatchAttempts=%llu dispatchWrites=%llu dispatchSkips=%llu linkAttempts=%llu linkWrites=%llu linkSkips=%llu sourceDetaches=%llu sourceDispatchWrites=%llu clearUs=%llu",
 			EEJitInvalidationCauseName(static_cast<EEJitInvalidationCause>(i)),
 			static_cast<unsigned long long>(s.requests), static_cast<unsigned long long>(s.distinctRamPages),
 			static_cast<unsigned long long>(s.clearCalls), static_cast<unsigned long long>(s.boundsRejected),
@@ -617,7 +617,10 @@ static void recReportCoherence(const char* reason)
 			static_cast<unsigned long long>(m.retiredHostBytes), static_cast<unsigned long long>(m.dispatchWriteAttempts),
 			static_cast<unsigned long long>(m.dispatchWrites), static_cast<unsigned long long>(m.dispatchWriteSkips),
 			static_cast<unsigned long long>(m.linkPatchAttempts), static_cast<unsigned long long>(m.linkPatchWrites),
-			static_cast<unsigned long long>(m.linkPatchSkips), static_cast<unsigned long long>(s.clearNanoseconds / 1000));
+			static_cast<unsigned long long>(m.linkPatchSkips),
+			static_cast<unsigned long long>(m.retiredSourceLinksDetached),
+			static_cast<unsigned long long>(m.retiredSourceDispatchWrites),
+			static_cast<unsigned long long>(s.clearNanoseconds / 1000));
 	}
 }
 
@@ -639,6 +642,10 @@ static void recLinkOwnershipObserver(BaseBlocks::LinkEvent event, u32 targetPC,
 			s_pCurBlockEx ? s_pCurBlockEx->fnptr : 0,
 			s_pCurBlockEx ? s_pCurBlockEx->startpc : 0,
 			s_nStartBlock, static_cast<u8>(cpuRegs.CP0.n.EntryHi), wrote);
+	}
+	else if (event == BaseBlocks::LinkEvent::SourceDetached)
+	{
+		s_recLinkOwnership.Detach(jumpSite, wrote);
 	}
 	else
 	{
@@ -673,6 +680,12 @@ static void recReportLinkOwnership(const char* reason)
 		static_cast<unsigned long long>(w.invalidOffsets),
 		static_cast<unsigned long long>(w.dispatcherLinksTranslation),
 		static_cast<unsigned long long>(w.dispatcherLinksCrossPage));
+	Console.WriteLn("EE-JIT-LINK-DETACH reason=%s gen=%u attempts=%llu writes=%llu untracked=%llu postDetachRetargets=%llu",
+		reason, s_recEvictionTraceGeneration,
+		static_cast<unsigned long long>(w.sourceDetachAttempts),
+		static_cast<unsigned long long>(w.sourceDetachWrites),
+		static_cast<unsigned long long>(w.untrackedDetaches),
+		static_cast<unsigned long long>(w.postDetachRetargets));
 	for (size_t event = 0; event < 2; ++event)
 	{
 		const auto& c = w.patches[event];
@@ -1239,7 +1252,8 @@ static void recLinkStaticBlock(u32 target, s32* jump)
 		++s_recLinkOwnership.dispatcherLinksCrossPage;
 	EERecLinkStaticBlock(recBlocks, g_recUseGuestTLBDispatch != 0, s_nStartBlock,
 		target, HWADDR(target), jump, reinterpret_cast<uptr>(DispatcherReg),
-		PSBBNTlbTraceEnabled() ? &s_recLinkMetrics : nullptr);
+		PSBBNTlbTraceEnabled() ? &s_recLinkMetrics : nullptr,
+		g_recUseGuestTLBDispatch && s_pCurBlockEx ? s_pCurBlockEx->fnptr : 0);
 }
 static const void* JITCompile = nullptr;
 static const void* EnterRecompiledCode = nullptr;
@@ -1396,6 +1410,10 @@ static void _DynGen_Dispatchers()
 	UnmappedRecLUTPage = _DynGen_UnmappedRecLUTPage();
 
 	recBlocks.SetJITCompile(JITCompile);
+	// Only fine guest-TLB dispatch detaches retired outgoing links. Native
+	// and Standard retain the original lifetime and patch semantics.
+	recBlocks.SetRetiredSourceDispatcher(g_recUseGuestTLBDispatch ?
+		reinterpret_cast<uptr>(DispatcherReg) : 0);
 
 	Perf::any.Register(start, static_cast<u32>(xGetPtr() - start), "EE Dispatcher");
 }
