@@ -74,21 +74,27 @@ TEST(EEPerformanceProbe, OptInCountersResetAndRecordOnlyWhenExplicitlyInvoked)
 
 TEST(EERecCodeCacheCapacity, StandardPreservesOriginalLimitAndExtendedIsSelectable)
 {
-	for (const u32 setting : {64u, 128u, 256u, 512u, 0u, 1024u})
+	for (const u32 setting : {64u, 128u, 256u, 512u, 1536u, 0u, 1024u, 2048u})
 		EXPECT_EQ(HostMemoryMap::EErecGenerationSize(false, setting), 0x04000000u);
 	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true), 0x10000000u); // default
 	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 64), 0x04000000u);
 	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 128), 0x08000000u);
 	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 256), 0x10000000u);
 	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 512), 0x20000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 1536), 0x60000000u);
 	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 0), 0x10000000u);
 	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 1024), 0x10000000u);
-	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 512), HostMemoryMap::EErecSize);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 2048), 0x10000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 1536), HostMemoryMap::EErecSize);
 	EXPECT_EQ(HostMemoryMap::IOPrecOffset,
 		HostMemoryMap::EErecOffset + HostMemoryMap::EErecSize);
 	EXPECT_LT(HostMemoryMap::EErecGenerationSize(false), HostMemoryMap::EErecSize);
 	EXPECT_LE(HostMemoryMap::SWrecOffset + HostMemoryMap::SWrecSize,
 		HostMemoryMap::CodeSize);
+	EXPECT_LT(static_cast<u64>(HostMemoryMap::MainSize) + HostMemoryMap::CodeSize,
+		0x80000000ull);
+	EXPECT_GT(HostMemoryMap::IOPrecOffset, HostMemoryMap::EErecOffset +
+		HostMemoryMap::EErecGenerationSize(true, 512));
 }
 
 TEST(EERecSourceWitness, SeparateVirtualPagesMayHaveNoncontiguousPhysicalSource)
