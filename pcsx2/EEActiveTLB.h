@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -100,6 +101,31 @@ public:
 		m_valid = true;
 	}
 
+
+	// A changed TLB slot cannot affect a guest virtual page outside the union
+	// of its old and new selected-page projections. On a small edit, precisely
+	// enumerate that union instead of re-expanding/diffing all 48 slots' pages.
+	// Anything too broad or without a trusted old snapshot falls back to the
+	// established full projection algorithm. The output contains unique VPNs.
+	template <std::size_t N>
+	bool CollectChangedPages(const tlbs* entries, std::size_t count, u8 asid,
+		std::array<u32, N>& pages, std::size_t& pageCount) const
+	{
+		pageCount = 0;
+		if (!m_valid || count != m_count || count > m_slots.size())
+			return false;
+		for (std::size_t i = 0; i < count; ++i)
+		{
+			const SlotInput current = SelectInput(entries[i], asid);
+			if (m_slots[i] == current)
+				continue;
+			if (!AppendSlotPages(m_slots[i], pages, pageCount) ||
+				!AppendSlotPages(current, pages, pageCount))
+				return false;
+		}
+		return true;
+	}
+
 	// Host mapping/dispatch reset and state load must invalidate this memo.
 	void Invalidate() { m_valid = false; }
 
@@ -111,6 +137,50 @@ private:
 		u32 flags = 0;
 		bool operator==(const SlotInput&) const = default;
 	};
+
+
+	template <std::size_t N>
+	static bool AppendSlotPages(const SlotInput& slot, std::array<u32, N>& pages,
+		std::size_t& count)
+	{
+		const auto add = [&](u32 vpn) {
+			if (std::find(pages.begin(), pages.begin() + count, vpn) != pages.begin() + count)
+				return true;
+			if (count == N)
+				return false;
+			pages[count++] = vpn;
+			return true;
+		};
+		if (slot.flags & 0x10u)
+		{
+			for (u32 n = 0; n < 4; ++n)
+				if (!add((slot.vpn >> 12) + n))
+					return false;
+			return true;
+		}
+		if (!(slot.flags & (1u | 4u)))
+			return true;
+		const u32 halfPages = slot.mask + 1;
+		// Conservatively reject large masks before the enumeration loop.
+		if (halfPages > N)
+			return false;
+		const u32 firstPage = slot.vpn >> 12;
+		const u32 compareMask = ((~slot.mask) << 1) & 0xfffff;
+		const u32 compareVpn = firstPage & compareMask;
+		for (u32 half = 0; half < 2; ++half)
+		{
+			if (!(slot.flags & (half ? 4u : 1u)))
+				continue;
+			const u32 basePage = firstPage + half * halfPages;
+			for (u32 n = 0; n < halfPages; ++n)
+			{
+				const u32 page = basePage + n;
+				if ((page & compareMask) == compareVpn && !add(page))
+					return false;
+			}
+		}
+		return true;
+	}
 
 	static SlotInput SelectInput(const tlbs& t, u8 asid)
 	{
@@ -231,4 +301,79 @@ inline EEActiveTLBPageMap BuildEEActiveTLBPageMap(const tlbs* entries, std::size
 	// Multiple simultaneously matching entries for the *same* ASID/VPN have
 	// architecturally undefined priority. First TLB slot wins for determinism.
 	return result;
+}
+
+
+// Evaluate the selected first-slot TLB winner for exactly one VPN.
+// Must agree with BuildEEActiveTLBPageMap (including SPR and first-slot wins),
+// rather than assuming that the changed TLB slot owns its candidate pages.
+inline std::optional<EEActiveTLBPage> FindEEActiveTLBPage(
+	const tlbs* entries, std::size_t entryCount, u8 asid, u32 virtualPage)
+{
+	for (std::size_t i = 0; i < entryCount; ++i)
+	{
+		const tlbs& t = entries[i];
+		if (!t.isGlobal() && t.EntryHi.ASID != asid)
+			continue;
+		if (t.isSPR())
+		{
+			const u32 offset = virtualPage - (t.VPN2() >> 12);
+			if (offset < 4)
+				return EEActiveTLBPage{offset << 12, true};
+			continue;
+		}
+		const u32 halfPages = t.Mask() + 1;
+		const u32 firstPage = t.VPN2() >> 12;
+		const u32 compareMask = ((~t.Mask()) << 1) & 0xfffff;
+		if ((virtualPage & compareMask) != (firstPage & compareMask))
+			continue;
+		for (u32 half = 0; half < 2; ++half)
+		{
+			const EntryLo_t& lo = half ? t.EntryLo1 : t.EntryLo0;
+			if (!lo.V)
+				continue;
+			const u32 offset = virtualPage - (firstPage + half * halfPages);
+			if (offset < halfPages)
+			{
+				const u32 base = half ? t.PFN1() : t.PFN0();
+				return EEActiveTLBPage{base + (offset << 12), false, lo.D != 0};
+			}
+		}
+	}
+	return std::nullopt;
+}
+
+// Plan changes for a bounded candidate VPN set. Caller performs all removals
+// before installs and only publishes new map entries after the host side
+// effects, exactly as for the full-map projection. No shared state is mutated.
+struct EEActiveTLBDelta
+{
+	u32 page = 0;
+	std::optional<EEActiveTLBPage> oldMapping;
+	std::optional<EEActiveTLBPage> newMapping;
+	bool NeedsRemove() const
+	{
+		return oldMapping && (!newMapping || !oldMapping->HasSameBacking(*newMapping));
+	}
+	bool NeedsInstall() const
+	{
+		return newMapping && (!oldMapping || !oldMapping->HasSameBacking(*newMapping));
+	}
+};
+template <std::size_t N>
+inline std::size_t PlanEEActiveTLBDelta(const EEActiveTLBPageMap& active,
+	const tlbs* entries, std::size_t entryCount, u8 asid,
+	const std::array<u32, N>& pages, std::size_t pageCount,
+	std::array<EEActiveTLBDelta, N>& changes)
+{
+	for (std::size_t i = 0; i < pageCount; ++i)
+	{
+		EEActiveTLBDelta& change = changes[i];
+		change.page = pages[i];
+		const auto old = active.find(change.page);
+		change.oldMapping = old == active.end() ? std::nullopt :
+			std::optional<EEActiveTLBPage>(old->second);
+		change.newMapping = FindEEActiveTLBPage(entries, entryCount, asid, change.page);
+	}
+	return pageCount;
 }
