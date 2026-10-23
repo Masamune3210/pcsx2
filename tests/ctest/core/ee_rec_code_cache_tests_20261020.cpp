@@ -49,11 +49,18 @@ protected:
 	}
 };
 
-TEST(EERecCodeCacheCapacity, StandardPreservesOriginalLimitAndExtendedUsesReservedSpace)
+TEST(EERecCodeCacheCapacity, StandardPreservesOriginalLimitAndExtendedIsSelectable)
 {
-	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(false), 0x04000000u);
-	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true), 0x10000000u);
-	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true), HostMemoryMap::EErecSize);
+	for (const u32 setting : {64u, 128u, 256u, 512u, 0u, 1024u})
+		EXPECT_EQ(HostMemoryMap::EErecGenerationSize(false, setting), 0x04000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true), 0x10000000u); // default
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 64), 0x04000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 128), 0x08000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 256), 0x10000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 512), 0x20000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 0), 0x10000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 1024), 0x10000000u);
+	EXPECT_EQ(HostMemoryMap::EErecGenerationSize(true, 512), HostMemoryMap::EErecSize);
 	EXPECT_EQ(HostMemoryMap::IOPrecOffset,
 		HostMemoryMap::EErecOffset + HostMemoryMap::EErecSize);
 	EXPECT_LT(HostMemoryMap::EErecGenerationSize(false), HostMemoryMap::EErecSize);
