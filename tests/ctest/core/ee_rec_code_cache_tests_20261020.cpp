@@ -276,11 +276,11 @@ TEST_F(EERecCodeCache, BatchSourceRetirementHandlesSelfLinksAndMultipleOwners)
 	EXPECT_EQ(metrics.retiredSourceLinksDetached, 3u);
 	EXPECT_EQ(metrics.retiredSourceDispatchWrites, 3u);
 	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 0u);
-	for (const s32* site : {&aToTarget, &bToTarget, &aToSelf})
+	for (const s32* site : std::array<const s32*, 3>{&aToTarget, &bToTarget, &aToSelf})
 		EXPECT_EQ(*site, static_cast<s32>(safeDispatcher - (reinterpret_cast<uptr>(site) + sizeof(s32))));
 	blocks.Remove(0, 0, &metrics);
 	blocks.New(0x6000, sourceA, &metrics);
-	for (const s32* site : {&aToTarget, &bToTarget, &aToSelf})
+	for (const s32* site : std::array<const s32*, 3>{&aToTarget, &bToTarget, &aToSelf})
 		EXPECT_EQ(*site, static_cast<s32>(safeDispatcher - (reinterpret_cast<uptr>(site) + sizeof(s32))));
 }
 
