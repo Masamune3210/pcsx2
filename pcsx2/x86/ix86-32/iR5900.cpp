@@ -1674,11 +1674,12 @@ static void recResetRaw()
 	// original 64 MiB window; Extended uses the whole 256 MiB reservation.
 	recPtrEnd = SysMemory::GetEERec() +
 		HostMemoryMap::EErecGenerationSize(EEExecutionProfile::IsExtendedMMU(), s_recExtendedCacheMiB) - _64kb;
-	if (PSBBNTlbTraceEnabled())
-		Console.WriteLn("EE-JIT-CACHE-CONFIG mode=%s capacity=%llu reserve=%llu configuredMiB=%u",
-			EEExecutionProfile::IsExtendedMMU() ? "extended" : "standard",
-			static_cast<unsigned long long>(recPtrEnd + _64kb - SysMemory::GetEERec()),
-			static_cast<unsigned long long>(HostMemoryMap::EErecSize), s_recExtendedCacheMiB);
+	// Report the selected cache capacity without requiring verbose TLB traces.
+	// This is one line per JIT generation, including matched performance runs.
+	Console.WriteLn("EE-JIT-CACHE-CONFIG mode=%s capacity=%llu reserve=%llu configuredMiB=%u",
+		EEExecutionProfile::IsExtendedMMU() ? "extended" : "standard",
+		static_cast<unsigned long long>(recPtrEnd + _64kb - SysMemory::GetEERec()),
+		static_cast<unsigned long long>(HostMemoryMap::EErecSize), s_recExtendedCacheMiB);
 	Console.WriteLn(Color_StrongBlack, "EE/iR5900 Recompiler Reset");
 
 	if (CHECK_EXTRAMEM != extraRam)
