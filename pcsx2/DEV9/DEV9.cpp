@@ -7,6 +7,9 @@
 
 #include "IopDma.h"
 #include "R3000A.h"
+#include "IopHw.h"
+#include "EEExecutionProfile.h"
+#include "Host.h"
 
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
@@ -81,6 +84,12 @@ int mapping;
 #endif
 
 bool isRunning = false;
+
+// Keep distinct first-occurrence diagnostics for the unexplained IF_CTRL
+// bits while preventing routine PSBBN traffic from filling the error log.
+static u64 s_ifCtrlBit4Seen = 0;
+static u64 s_ifCtrlBit5Seen = 0;
+static bool s_verboseIFCtrlWarnings = false;
 
 std::string GetHDDPath()
 {
@@ -184,6 +193,8 @@ void DEV9shutdown()
 s32 DEV9open()
 {
 	DevCon.WriteLn("DEV9: DEV9open");
+	s_ifCtrlBit4Seen = s_ifCtrlBit5Seen = 0;
+	s_verboseIFCtrlWarnings = Host::GetBoolSettingValue("EmuCore", "DEV9VerboseIFCtrlWarnings", false);
 
 	std::string hddPath(GetHDDPath());
 
@@ -203,6 +214,15 @@ s32 DEV9open()
 void DEV9close()
 {
 	DevCon.WriteLn("DEV9: DEV9close");
+	IopMemory::ReportGuestDEV9ConsoleTraceSummary();
+	if (EEExecutionProfile::IsExtendedMMU() && !s_verboseIFCtrlWarnings &&
+		(s_ifCtrlBit4Seen > 1 || s_ifCtrlBit5Seen > 1))
+		Console.WriteLn("DEV9-IFCTRL-WARN-SUMMARY bit4=%llu bit5=%llu suppressed=%llu",
+			static_cast<unsigned long long>(s_ifCtrlBit4Seen),
+			static_cast<unsigned long long>(s_ifCtrlBit5Seen),
+			static_cast<unsigned long long>(
+				(s_ifCtrlBit4Seen > 0 ? s_ifCtrlBit4Seen - 1 : 0) +
+				(s_ifCtrlBit5Seen > 0 ? s_ifCtrlBit5Seen - 1 : 0)));
 
 	dev9.dma_iop_ptr = nullptr;
 	dev9.ata->Close();
@@ -820,9 +840,19 @@ void SpeedWrite(u32 addr, u16 value, int width)
 			//	DevCon.WriteLn("DEV9: IF_CTRL Wait for ATA register read Disabled");
 
 			if (value & (1 << 4))
-				Console.Error("DEV9: IF_CTRL Unknown Bit 4 Set");
+			{
+				++s_ifCtrlBit4Seen;
+				if (!EEExecutionProfile::IsExtendedMMU() ||
+					s_verboseIFCtrlWarnings || s_ifCtrlBit4Seen == 1)
+					Console.Error("DEV9: IF_CTRL Unknown Bit 4 Set");
+			}
 			if (value & (1 << 5))
-				Console.Error("DEV9: IF_CTRL Unknown Bit 5 Set");
+			{
+				++s_ifCtrlBit5Seen;
+				if (!EEExecutionProfile::IsExtendedMMU() ||
+					s_verboseIFCtrlWarnings || s_ifCtrlBit5Seen == 1)
+					Console.Error("DEV9: IF_CTRL Unknown Bit 5 Set");
+			}
 
 			if ((value & SPD_IF_HDD_RESET) == 0) //Maybe?
 			{
