@@ -975,6 +975,7 @@ static void vtlb_CreateFastmemMapping(u32 vaddr, u32 mainmem_offset, const PageP
 	{
 		// current mapping needs to be removed
 		const bool was_coalesced = vtlb_IsHostCoalesced(page);
+		const u32 old_mainmem_offset = s_fastmem_virtual_mapping[page];
 
 		s_fastmem_virtual_mapping[page] = NO_FASTMEM_MAPPING;
 		if (was_coalesced && !s_fastmem_area->Unmap(s_fastmem_area->PagePointer(vtlb_HostPage(page)), __pagesize))
@@ -983,7 +984,7 @@ static void vtlb_CreateFastmemMapping(u32 vaddr, u32 mainmem_offset, const PageP
 		// Detach from the OLD backing, never from the destination offset.
 		// The previous unordered_multimap path erroneously looked up the
 		// *new* mainmem_offset and could leave stale reverse aliases.
-		s_fastmem_physical_mapping.Erase(page, s_fastmem_virtual_mapping[page]);
+		s_fastmem_physical_mapping.Erase(page, old_mainmem_offset);
 	}
 
 	s_fastmem_virtual_mapping[page] = mainmem_offset;
