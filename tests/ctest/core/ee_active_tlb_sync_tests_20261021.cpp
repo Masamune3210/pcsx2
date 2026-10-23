@@ -156,6 +156,37 @@ TEST_F(EEActiveTLBSync, PFNRemapASIDReuseGlobalFallbackAndValidityReachRealVMap)
 	});
 }
 
+TEST_F(EEActiveTLBSync, SmallTLBSlotDeltaRemapsOnlyChangedRealHostPage)
+{
+	RunIsolated([this] {
+		static constexpr u32 OtherVirtual = VirtualAddress + 0x4000u;
+		cpuRegs.CP0.n.EntryHi = 5;
+		tlb[46] = Entry(5, PhysicalA);
+		tlb[47] = Entry(5, PhysicalC);
+		tlb[47].EntryHi.UL = OtherVirtual | 5u;
+		SyncActiveTLBMappings(); // initial full projection establishes memo
+		ExpectPage(pageA);
+		const auto otherBefore = vtlb_private::vtlbdata.vmap[OtherVirtual >> 12].raw();
+		const auto firstBefore = Mapping().raw();
+		// Only the first 4KB page changes, and the untouched unrelated
+		// mapping must never be cleared or redirected by the delta.
+		tlb[46] = Entry(5, PhysicalB);
+		SyncActiveTLBMappings();
+		ExpectPage(pageB);
+		EXPECT_NE(Mapping().raw(), firstBefore);
+		EXPECT_EQ(vtlb_private::vtlbdata.vmap[OtherVirtual >> 12].raw(), otherBefore);
+		// D-only changes update fault permissions without disturbing host
+		// backing or destroying the unaffected page.
+		const auto firstRemapped = Mapping().raw();
+		tlb[46].EntryLo0.D = 0;
+		SyncActiveTLBMappings();
+		EXPECT_EQ(Mapping().raw(), firstRemapped);
+		EXPECT_TRUE(EETLBStoreNeedsModification(VirtualAddress + 0x34));
+		EXPECT_FALSE(EETLBStoreNeedsModification(OtherVirtual + 0x34));
+		EXPECT_EQ(vtlb_private::vtlbdata.vmap[OtherVirtual >> 12].raw(), otherBefore);
+	});
+}
+
 TEST_F(EEActiveTLBSync, ResetAndVTLBInitReinstallIdenticalArchitecturalInputs)
 {
 	RunIsolated([this] {
