@@ -18,6 +18,7 @@ namespace IopMemory
 		HardwareStdout,
 		IomanStdout,
 		Kprintf,
+		BiosCallStdout,
 	};
 	bool ShouldSuppressGuestDEV9ConsoleTrace(std::string_view text, GuestDEV9ConsoleSource source);
 	void ReportGuestDEV9ConsoleTraceSummary();
