@@ -397,6 +397,8 @@ extern uint intcInterrupt();
 extern uint dmacInterrupt();
 
 extern void cpuReset();
+// Aggregate ordinary Extended-MMU TLB exception logging costs once at EE shutdown.
+extern void EEReportTLBFaultLogSummary();
 extern void cpuException(u32 code, u32 bd);
 extern void cpuTlbMissR(u32 addr, u32 bd);
 extern void cpuTlbMissW(u32 addr, u32 bd);
