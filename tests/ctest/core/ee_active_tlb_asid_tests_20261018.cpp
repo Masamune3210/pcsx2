@@ -747,10 +747,10 @@ TEST(EEActiveTLB, BatchedSmallDeltaWinnerMatchesIndependentSinglePageOracle)
 		add(page);
 	for (u8 asid : {u8{7}, u8{8}, u8{9}})
 	{
-		std::array<std::optional<EEActiveTLBPage>, 64> batched{};
+		std::array<EEActiveTLBDelta, 64> batched{};
 		FindEEActiveTLBPages(entries.data(), entries.size(), asid, candidates, count, batched);
 		for (std::size_t i = 0; i < count; ++i)
-			EXPECT_EQ(batched[i],
+			EXPECT_EQ(batched[i].newMapping,
 				FindEEActiveTLBPage(entries.data(), entries.size(), asid, candidates[i]))
 				<< "ASID=" << unsigned(asid) << " candidate=" << candidates[i];
 	}
