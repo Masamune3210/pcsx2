@@ -961,6 +961,7 @@ struct EETLBChurnStats
 	u64 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
 	u64 projectionRebuilds = 0, projectionRebuildsSkipped = 0, projectionPagesRetained = 0;
 	u64 smallDeltaSyncs = 0, smallDeltaPages = 0, fullDeltaFallbacks = 0;
+	u64 deltaValidationChecks = 0, deltaValidationMismatches = 0;
 	u64 physicalClearRequests = 0, duplicatePhysicalClearsAvoided = 0, scratchClearRequests = 0;
 	u64 syncMicroseconds = 0;
 };
@@ -972,7 +973,7 @@ void EEReportTLBChurn(const char* reason)
 	if (!PSBBNTlbTraceEnabled())
 		return;
 	const auto& s = s_ee_tlb_churn;
-	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu permissionOnlyUpdates=%llu projectionRebuilds=%llu projectionRebuildsSkipped=%llu projectionPagesRetained=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu smallDeltaSyncs=%llu smallDeltaPages=%llu fullDeltaFallbacks=%llu",
+	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu permissionOnlyUpdates=%llu projectionRebuilds=%llu projectionRebuildsSkipped=%llu projectionPagesRetained=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu smallDeltaSyncs=%llu smallDeltaPages=%llu fullDeltaFallbacks=%llu deltaChecks=%llu deltaMismatches=%llu",
 		reason, static_cast<unsigned long long>(s.syncs),
 		static_cast<unsigned long long>(s.tlbWrites),
 		static_cast<unsigned long long>(s.asidChanges),
@@ -989,7 +990,9 @@ void EEReportTLBChurn(const char* reason)
 		static_cast<unsigned long long>(s.syncMicroseconds),
 		static_cast<unsigned long long>(s.smallDeltaSyncs),
 		static_cast<unsigned long long>(s.smallDeltaPages),
-		static_cast<unsigned long long>(s.fullDeltaFallbacks));
+		static_cast<unsigned long long>(s.fullDeltaFallbacks),
+		static_cast<unsigned long long>(s.deltaValidationChecks),
+		static_cast<unsigned long long>(s.deltaValidationMismatches));
 }
 
 #if defined(_M_X64) || defined(__x86_64__)
@@ -1086,10 +1089,37 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	static constexpr std::size_t MaxDeltaPages = 64;
 	std::array<u32, MaxDeltaPages> candidatePages{};
 	std::size_t candidateCount = 0;
-	const bool smallDelta = EEExecutionProfile::IsExtendedMMU() &&
+	bool smallDelta = EEExecutionProfile::IsExtendedMMU() &&
 		s_active_tlb_projection.CollectChangedPages(tlb, std::size(tlb), asid,
 			candidatePages, candidateCount);
 	std::array<EEActiveTLBDelta, MaxDeltaPages> delta{};
+	// When COP0 tracing is active, periodically compare the bounded delta
+	// against the independent full projection BEFORE mutating any host state.
+	// On a mismatch fall back to the original full synchronization path.
+	// This safeguard does not add work to ordinary trace-free execution.
+	static u64 deltaCandidateChecks = 0;
+	if (smallDelta && profiling && (++deltaCandidateChecks & 0x3ffu) == 0)
+	{
+		++s_ee_tlb_churn.deltaValidationChecks;
+		EEActiveTLBPageMap expected = s_active_tlb_pages;
+		for (std::size_t i = 0; i < candidateCount; ++i)
+		{
+			const u32 page = candidatePages[i];
+			const auto mapping = FindEEActiveTLBPage(tlb, std::size(tlb), asid, page);
+			if (mapping)
+				expected.insert_or_assign(page, *mapping);
+			else
+				expected.erase(page);
+		}
+		if (expected != BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid))
+		{
+			++s_ee_tlb_churn.deltaValidationMismatches;
+			Console.WriteLn("EE-MMU-DELTA-MISMATCH sync=%llu asid=%u candidates=%llu; falling back to full projection",
+				static_cast<unsigned long long>(s_ee_tlb_churn.syncs),
+				static_cast<unsigned>(asid), static_cast<unsigned long long>(candidateCount));
+			smallDelta = false;
+		}
+	}
 	if (smallDelta)
 	{
 		PlanEEActiveTLBDelta(s_active_tlb_pages, tlb, std::size(tlb),
