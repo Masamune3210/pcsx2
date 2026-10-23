@@ -4,6 +4,7 @@
 #include "Common.h"
 #include "MemoryTypes.h"
 #include "Memory.h"
+#include "EEPerformanceProbe.h"
 #include "x86/EERecCodeCache.h"
 #include "x86/EERecSourceWitness.h"
 
@@ -48,6 +49,28 @@ protected:
 		EERecClearPhysicalBlocks(blocks, physicalLUT.data(), compiling, compiler, address, words, metrics);
 	}
 };
+
+TEST(EEPerformanceProbe, OptInCountersResetAndRecordOnlyWhenExplicitlyInvoked)
+{
+	using namespace EEPerformanceProbe;
+	Configure(true);
+	EXPECT_TRUE(Enabled());
+	EXPECT_EQ(Read(compilations.calls), 0u);
+	EXPECT_EQ(Read(tlbSyncs.calls), 0u);
+	const auto started = Clock::now();
+	compiledHostBytes.fetch_add(128, std::memory_order_relaxed);
+	Record(compilations, started);
+	Record(tlbSyncs, started);
+	EXPECT_EQ(Read(compilations.calls), 1u);
+	EXPECT_EQ(Read(tlbSyncs.calls), 1u);
+	EXPECT_EQ(Read(compiledHostBytes), 128u);
+	EXPECT_EQ(Read(physicalClearWork.calls), 0u);
+	Configure(false);
+	EXPECT_FALSE(Enabled());
+	EXPECT_EQ(Read(compilations.calls), 0u);
+	EXPECT_EQ(Read(tlbSyncs.calls), 0u);
+	EXPECT_EQ(Read(compiledHostBytes), 0u);
+}
 
 TEST(EERecCodeCacheCapacity, StandardPreservesOriginalLimitAndExtendedIsSelectable)
 {
