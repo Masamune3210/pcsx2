@@ -7,6 +7,12 @@
 
 #include "common/StringUtil.h"
 
+namespace IopMemory
+{
+	// Report/reset counts for suppressed IOP guest DEV9 register trace lines.
+	void ReportGuestDEV9ConsoleTraceSummary();
+}
+
 static const u32
 	HW_PS1_GPU_START = 0x1F8010A0,
 	HW_PS1_GPU_END   = 0x1F8010B0,
