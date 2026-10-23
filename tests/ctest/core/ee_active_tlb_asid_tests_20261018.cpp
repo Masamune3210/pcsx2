@@ -638,3 +638,115 @@ TEST(EEActiveTLB, IdenticalBackingAndPermissionNeverTriggersMappingMutation)
 	}
 	EXPECT_EQ(changes, 0u);
 }
+
+
+TEST(EEActiveTLB, SmallDeltaProjectionMatchesFullMapAcrossASIDsRemapsAndPermissions)
+{
+	std::array<tlbs, 48> entries{};
+	entries[0] = MakeEntry(0x00400000, 5, 0x00100000, 0x00101000);
+	entries[1] = MakeEntry(0x00400000, 6, 0x00200000, 0x00201000);
+	entries[2] = MakeEntry(0x00800000, 5, 0x00300000, 0x00301000, true);
+	entries[47] = MakeEntry(0x70000000, 5, 0, 0);
+	entries[47].EntryLo0.S = 1;
+	EEActiveTLBProjectionMemo memo;
+	EEActiveTLBPageMap active = BuildEEActiveTLBPageMap(entries.data(), entries.size(), 5);
+	memo.Remember(entries.data(), entries.size(), 5);
+	auto checkDelta = [&](u8 asid) {
+		std::array<u32, 64> pages{};
+		std::size_t count = 0;
+		ASSERT_TRUE(memo.CollectChangedPages(entries.data(), entries.size(), asid, pages, count));
+		std::array<EEActiveTLBDelta, 64> changes{};
+		EXPECT_EQ(PlanEEActiveTLBDelta(active, entries.data(), entries.size(),
+			asid, pages, count, changes), count);
+		for (std::size_t i = 0; i < count; ++i)
+		{
+			const auto& c = changes[i];
+			if (c.newMapping)
+				active.insert_or_assign(c.page, *c.newMapping);
+			else
+				active.erase(c.page);
+		}
+		EXPECT_EQ(active, BuildEEActiveTLBPageMap(entries.data(), entries.size(), asid));
+		memo.Remember(entries.data(), entries.size(), asid);
+	};
+	checkDelta(6);
+	checkDelta(5);
+	entries[0].EntryLo0.D = 0;
+	checkDelta(5);
+	entries[0].EntryLo0.PFN = 0x00400000 >> 12;
+	checkDelta(5);
+	entries[0].EntryLo1.V = 0;
+	checkDelta(5);
+	entries[47].EntryLo0.S = 0;
+	checkDelta(5);
+	entries[0].EntryLo1.V = 1;
+	checkDelta(5);
+	entries[0].EntryLo0.V = 0;
+	checkDelta(6);
+	checkDelta(5);
+}
+
+TEST(EEActiveTLB, SmallDeltaRespectsFirstEligibleOverlappingSlot)
+{
+	std::array<tlbs, 48> entries{};
+	entries[1] = MakeEntry(0x00400000, 5, 0x00100000, 0x00101000);
+	entries[7] = MakeEntry(0x00400000, 5, 0x00200000, 0x00201000);
+	EEActiveTLBProjectionMemo memo;
+	auto active = BuildEEActiveTLBPageMap(entries.data(), entries.size(), 5);
+	memo.Remember(entries.data(), entries.size(), 5);
+	entries[1].EntryLo0.V = 0; // previously shadowed slot 7 now wins
+	std::array<u32, 64> pages{};
+	std::size_t count = 0;
+	ASSERT_TRUE(memo.CollectChangedPages(entries.data(), entries.size(), 5, pages, count));
+	std::array<EEActiveTLBDelta, 64> changes{};
+	PlanEEActiveTLBDelta(active, entries.data(), entries.size(), 5, pages, count, changes);
+	for (std::size_t i = 0; i < count; ++i)
+	{
+		if (changes[i].newMapping)
+			active.insert_or_assign(changes[i].page, *changes[i].newMapping);
+		else
+			active.erase(changes[i].page);
+	}
+	EXPECT_EQ(active, BuildEEActiveTLBPageMap(entries.data(), entries.size(), 5));
+	EXPECT_EQ(active.at(0x00400).physicalAddress, 0x00200000u);
+	EXPECT_EQ(active.at(0x00401).physicalAddress, 0x00101000u);
+}
+
+TEST(EEActiveTLB, LargeTLBChangeFallsBackAndMemoInvalidationRejectsDelta)
+{
+	std::array<tlbs, 48> entries{};
+	entries[0] = MakeEntry(0x01000000, 5, 0x00100000, 0x00101000);
+	EEActiveTLBProjectionMemo memo;
+	std::array<u32, 64> pages{};
+	std::size_t count = 0;
+	EXPECT_FALSE(memo.CollectChangedPages(entries.data(), entries.size(), 5, pages, count));
+	memo.Remember(entries.data(), entries.size(), 5);
+	entries[0].PageMask.UL = 0x001fe000; // large half-page mask exceeds 64 candidates
+	EXPECT_FALSE(memo.CollectChangedPages(entries.data(), entries.size(), 5, pages, count));
+	memo.Remember(entries.data(), entries.size(), 5);
+	memo.Invalidate();
+	EXPECT_FALSE(memo.CollectChangedPages(entries.data(), entries.size(), 5, pages, count));
+}
+
+TEST(EEActiveTLB, SmallDeltaLookupMatchesFullProjectionForEverySelectedPage)
+{
+	std::array<tlbs, 48> entries{};
+	entries[0] = MakeEntry(0x10000000, 7, 0x00400000, 0x00404000);
+	entries[0].PageMask.UL = 0x00006000;
+	entries[1] = MakeEntry(0x10000000, 7, 0x00600000, 0x00604000);
+	entries[2] = MakeEntry(0x20000000, 8, 0x00700000, 0x00701000);
+	entries[47] = MakeEntry(0x70000000, 7, 0, 0);
+	entries[47].EntryLo0.S = 1;
+	for (u8 asid : {u8{7}, u8{8}})
+	{
+		const auto expected = BuildEEActiveTLBPageMap(entries.data(), entries.size(), asid);
+		for (const auto& [page, mapping] : expected)
+		{
+			const auto found = FindEEActiveTLBPage(entries.data(), entries.size(), asid, page);
+			ASSERT_TRUE(found.has_value());
+			EXPECT_EQ(*found, mapping);
+		}
+		for (u32 page : {0x10010u, 0x20010u, 0x70010u})
+			EXPECT_FALSE(FindEEActiveTLBPage(entries.data(), entries.size(), asid, page));
+	}
+}
