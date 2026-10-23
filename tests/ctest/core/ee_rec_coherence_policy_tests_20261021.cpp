@@ -72,18 +72,18 @@ TEST(EEExecutionProfile, GuestDEV9RegisterTraceClassifierPreservesOtherIOPMessag
 {
 	// Exact register records: eight hex address digits and width-sized value.
 	for (std::string_view line : {
-		"DEV9 read8 10000064: 7f\\n", "DEV9 read16 1000002a: 0001\\n",
-		"DEV9 read32 10001100: 12345678\\n",
-		"DEV9 write8 10000064: 7b\\n", "DEV9 write16 1000002a: 0000\\n",
-		"DEV9 write32 10001100: 12345678\\n",
-		"DEV9 read8 10000064: 7f", "DEV9 write8 10000064: 7B\\r\\n"})
+		"DEV9 read8 10000064: 7f\n", "DEV9 read16 1000002a: 0001\n",
+		"DEV9 read32 10001100: 12345678\n",
+		"DEV9 write8 10000064: 7b\n", "DEV9 write16 1000002a: 0000\n",
+		"DEV9 write32 10001100: 12345678\n",
+		"DEV9 read8 10000064: 7f", "DEV9 write8 10000064: 7B\r\n"})
 		EXPECT_TRUE(EEIsGuestDEV9RegisterTrace(line)) << line;
 	for (std::string_view line : {
 		"DEV9: IF_CTRL Unknown Bit 4 Set", "DEV9: ATA: File write error",
 		"DEV9 write error", "ATA: C_READ_SECTOR", "DEV9 ready",
 		"DEV9 read8foo", "DEV9 write32", "HDL:init ata", "kernel printk",
-		"DEV9 read8 10000064: GG\\n", "DEV9 write16 1000002a: 00012\\n",
-		"DEV9 write8 10000064: 7b\\nIMPORTANT ERROR",
+		"DEV9 read8 10000064: GG\n", "DEV9 write16 1000002a: 00012\n",
+		"DEV9 write8 10000064: 7b\nIMPORTANT ERROR",
 		"DEV9 read8 10000064: 7f and more", "DEV9 write32 addr: data"})
 		EXPECT_FALSE(EEIsGuestDEV9RegisterTrace(line)) << line;
 }
