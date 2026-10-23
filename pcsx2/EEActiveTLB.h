@@ -417,10 +417,6 @@ inline void FindEEActiveTLBPages(
 	}
 }
 
-// Plan changes for a bounded candidate VPN set. Caller performs all removals
-// before installs and only publishes new map entries after the host side
-// effects, exactly as for the full-map projection. No shared state is mutated.
-
 // Publish only changed selected mappings. The caller has already completed
 // remove-before-install host side effects, so identical old/new permissions
 // and backing need no unordered_map insertion or assignment.
@@ -444,6 +440,9 @@ inline std::size_t PublishEEActiveTLBDelta(
 	return updates;
 }
 
+// Plan changes for a bounded candidate VPN set. Caller performs all removals
+// before installs and only publishes new map entries after host side effects,
+// exactly as for the full-map projection. No shared state is mutated.
 template <std::size_t N>
 inline std::size_t PlanEEActiveTLBDelta(const EEActiveTLBPageMap& active,
 	const tlbs* entries, std::size_t entryCount, u8 asid,
