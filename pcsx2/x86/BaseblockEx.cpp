@@ -61,7 +61,7 @@ BASEBLOCKEX* BaseBlocks::GetByX86(uptr ip)
 }
 #endif
 
-void BaseBlocks::Link(u32 pc, s32* jumpptr, Metrics* metrics)
+void BaseBlocks::Link(u32 pc, s32* jumpptr, Metrics* metrics, uptr ownerHost)
 {
 	BASEBLOCKEX* targetblock = Get(pc);
 	const uptr destination = targetblock && targetblock->startpc == pc ?
@@ -70,5 +70,7 @@ void BaseBlocks::Link(u32 pc, s32* jumpptr, Metrics* metrics)
 	if (linkObserver)
 		linkObserver(LinkEvent::Register, pc, reinterpret_cast<uptr>(jumpptr),
 			destination, wrote, linkObserverContext);
-	links.insert(std::pair<u32, uptr>(pc, (uptr)jumpptr));
+	const linkiter_t entry = links.emplace(pc, reinterpret_cast<uptr>(jumpptr));
+	if (retiredSourceDispatcher && ownerHost)
+		outgoingByOwner.emplace(ownerHost, entry);
 }
