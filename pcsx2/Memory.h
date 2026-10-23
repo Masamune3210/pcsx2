@@ -60,6 +60,10 @@ namespace HostMemoryMap
 	static constexpr u32 EErecOffset = 0x00000000;
 	static constexpr u32 EErecStandardSize = 0x4000000;
 	static constexpr u32 EErecSize = 0x10000000;
+	constexpr u32 EErecGenerationSize(bool extendedMMU)
+	{
+		return extendedMMU ? EErecSize : EErecStandardSize;
+	}
 
 	// IOP recompiler code cache area (32mb)
 	static constexpr u32 IOPrecOffset = EErecOffset + EErecSize;
