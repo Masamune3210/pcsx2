@@ -5,6 +5,7 @@
 // vTLB mappings; they do not execute generated stores or JIT dispatch.
 #include "Common.h"
 #include "COP0.h"
+#include "EEExecutionProfile.h"
 #include "vtlb.h"
 
 #include <gtest/gtest.h>
@@ -159,6 +160,9 @@ TEST_F(EEActiveTLBSync, PFNRemapASIDReuseGlobalFallbackAndValidityReachRealVMap)
 TEST_F(EEActiveTLBSync, SmallTLBSlotDeltaRemapsOnlyChangedRealHostPage)
 {
 	RunIsolated([this] {
+		// Exercise the actual Extended-only delta path, not the Standard
+		// fallback used by the remaining vTLB synchronization tests.
+		ASSERT_TRUE(EEExecutionProfile::SelectAtBoot(EEExecutionProfileMode::ExtendedMMU));
 		static constexpr u32 OtherVirtual = VirtualAddress + 0x4000u;
 		cpuRegs.CP0.n.EntryHi = 5;
 		tlb[46] = Entry(5, PhysicalA);
