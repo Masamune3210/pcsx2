@@ -13,6 +13,10 @@
 #include "IopCounters.h"
 #include "IopDma.h"
 #include "R3000A.h"
+#include "EEExecutionProfile.h"
+#include "Host.h"
+
+#include <string_view>
 
 #include "ps2/pgif.h"
 #include "Mdec.h"
@@ -26,6 +30,22 @@
 namespace IopMemory {
 
 using namespace Internal;
+
+// This is an IOP *console-output* filter. It never intercepts DEV9 hardware
+// register reads/writes or changes what the IOP guest actually executes.
+static u64 s_dev9GuestConsoleLinesSuppressed = 0;
+static bool s_dev9GuestConsoleLogConfigured = false;
+static bool s_dev9GuestConsoleLogVerbose = false;
+
+void ReportGuestDEV9ConsoleTraceSummary()
+{
+	if (s_dev9GuestConsoleLinesSuppressed)
+		Console.WriteLn("IOP-DEV9-CONSOLE-SUMMARY suppressedRegisterLines=%llu",
+			static_cast<unsigned long long>(s_dev9GuestConsoleLinesSuppressed));
+	s_dev9GuestConsoleLinesSuppressed = 0;
+	s_dev9GuestConsoleLogConfigured = false;
+	s_dev9GuestConsoleLogVerbose = false;
+}
 
 // Template-compatible version of the psxHu macro.  Used for writing.
 #define psxHu(mem)	(*(u32*)&iopHw[(mem) & 0xffff])
@@ -148,7 +168,24 @@ void iopHwWrite8_Page3( u32 addr, mem8_t val )
 		if ((pidx == std::size(pbuf)-1) || (pbuf[pidx-1] == '\n'))
 		{
 			pbuf[pidx] = 0;
-			iopConLog( ShiftJIS_ConvertString(pbuf) );
+			bool suppress = false;
+			if (EEExecutionProfile::IsExtendedMMU() &&
+				EEIsGuestDEV9RegisterTrace(std::string_view(pbuf)))
+			{
+				if (!s_dev9GuestConsoleLogConfigured)
+				{
+					s_dev9GuestConsoleLogVerbose =
+						Host::GetBoolSettingValue("EmuCore", "IOPVerboseDEV9RegisterLog", false);
+					s_dev9GuestConsoleLogConfigured = true;
+					Console.WriteLn("IOP-DEV9-CONSOLE-TRACE verbose=%u profileExtended=1",
+						s_dev9GuestConsoleLogVerbose ? 1u : 0u);
+				}
+				suppress = !s_dev9GuestConsoleLogVerbose;
+				if (suppress)
+					++s_dev9GuestConsoleLinesSuppressed;
+			}
+			if (!suppress)
+				iopConLog(ShiftJIS_ConvertString(pbuf));
 			pidx = 0;
 		}
 	}
