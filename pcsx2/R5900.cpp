@@ -11,6 +11,8 @@
 #include "ps2/pgif.h" // pgif init
 #include "VUmicro.h"
 #include "COP0.h"
+#include "EEExecutionProfile.h"
+#include "Host.h"
 #include "MTVU.h"
 #include "VMManager.h"
 
@@ -57,8 +59,49 @@ const int kMaxArgs = 16;
 uptr g_argPtrs[kMaxArgs];
 #define DEBUG_LAUNCHARG 0 // show lots of helpful console messages as the launch arguments are passed to the game
 
+namespace
+{
+// Event counters are CPU-thread owned. Keep the original verbose diagnostic
+// available by explicit opt-in, but avoid tens of thousands of Console.Error
+// calls per second when PSBBN handles ordinary TLB misses.
+struct EETLBFaultLogging
+{
+	bool configured = false;
+	bool verbose = false;
+	u64 faults = 0;
+	u64 suppressedFaultMessages = 0;
+	u64 suppressedBranchWarnings = 0;
+};
+EETLBFaultLogging s_eeTlbFaultLogging;
+
+bool EEVerboseTLBFaultLoggingEnabled()
+{
+	if (!s_eeTlbFaultLogging.configured)
+	{
+		s_eeTlbFaultLogging.verbose =
+			Host::GetBoolSettingValue("EmuCore", "EEVerboseTLBFaultLog", false);
+		s_eeTlbFaultLogging.configured = true;
+		Console.WriteLn("EE-TLB-FAULT-LOG enabled=%u profileExtended=1",
+			s_eeTlbFaultLogging.verbose ? 1u : 0u);
+	}
+	return s_eeTlbFaultLogging.verbose;
+}
+} // namespace
+
+void EEReportTLBFaultLogSummary()
+{
+	if (!s_eeTlbFaultLogging.faults)
+		return;
+	Console.WriteLn("EE-TLB-FAULT-SUMMARY faults=%llu suppressedFaultMessages=%llu suppressedBranchWarnings=%llu verbose=%u",
+		static_cast<unsigned long long>(s_eeTlbFaultLogging.faults),
+		static_cast<unsigned long long>(s_eeTlbFaultLogging.suppressedFaultMessages),
+		static_cast<unsigned long long>(s_eeTlbFaultLogging.suppressedBranchWarnings),
+		s_eeTlbFaultLogging.verbose ? 1u : 0u);
+}
+
 void cpuReset()
 {
+	s_eeTlbFaultLogging = {};
 	PSBBNResetTlbTrace();
 	std::memset(&cpuRegs, 0, sizeof(cpuRegs));
 	std::memset(&fpuRegs, 0, sizeof(fpuRegs));
@@ -149,7 +192,15 @@ static __ri void cpuExceptionInternal(u32 code, u32 bd, bool tlbRefill)
 		cpuRegs.CP0.n.Status.b.EXL = 1;
 		if (bd)
 		{
-			Console.Warning("branch delay!!");
+			const bool guestTLBFault = trace_cause == EXC_CODE_Mod ||
+				trace_cause == EXC_CODE_TLBL || trace_cause == EXC_CODE_TLBS;
+			const bool extended = EEExecutionProfile::IsExtendedMMU();
+			const bool verbose = extended && guestTLBFault ?
+				EEVerboseTLBFaultLoggingEnabled() : false;
+			if (EELogBranchDelayWarning(extended, verbose, guestTLBFault))
+				Console.Warning("branch delay!!");
+			else
+				++s_eeTlbFaultLogging.suppressedBranchWarnings;
 			cpuRegs.CP0.n.EPC = cpuRegs.pc - 4;
 			cpuRegs.CP0.n.Cause |= 0x80000000;
 		}
@@ -205,11 +256,19 @@ static bool cpuTlbMissIsInvalid(u32 addr)
 
 void cpuTlbMiss(u32 addr, u32 bd, u32 excode)
 {
-	// Avoid too much spamming on the interpreter
-	if (Cpu != &intCpu || IsDebugBuild) {
+	const bool extended = EEExecutionProfile::IsExtendedMMU();
+	if (extended)
+		++s_eeTlbFaultLogging.faults;
+	// Preserve Standard's original interpreter/debug logging policy, but
+	// avoid formatting/writing ordinary Extended guest TLB exceptions by default.
+	const bool originalLogCondition = Cpu != &intCpu || IsDebugBuild;
+	const bool verbose = extended && originalLogCondition ?
+		EEVerboseTLBFaultLoggingEnabled() : false;
+	if (EELogTLBFault(extended, verbose, originalLogCondition))
 		Console.Error("cpuTlbMiss pc:%x, cycl:%llx, addr: %x, status=%x, code=%x",
-				cpuRegs.pc, cpuRegs.cycle, addr, cpuRegs.CP0.n.Status.val, excode);
-	}
+			cpuRegs.pc, cpuRegs.cycle, addr, cpuRegs.CP0.n.Status.val, excode);
+	else if (extended && originalLogCondition)
+		++s_eeTlbFaultLogging.suppressedFaultMessages;
 
 	cpuRegs.CP0.n.BadVAddr = addr;
 	cpuRegs.CP0.n.Context &= 0xFF80000F;
