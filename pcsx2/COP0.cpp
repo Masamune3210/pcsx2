@@ -960,6 +960,7 @@ struct EETLBChurnStats
 	u64 syncs = 0, tlbWrites = 0, asidChanges = 0;
 	u64 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
 	u64 projectionRebuilds = 0, projectionRebuildsSkipped = 0, projectionPagesRetained = 0;
+	u64 smallDeltaSyncs = 0, smallDeltaPages = 0, fullDeltaFallbacks = 0;
 	u64 physicalClearRequests = 0, duplicatePhysicalClearsAvoided = 0, scratchClearRequests = 0;
 	u64 syncMicroseconds = 0;
 };
@@ -971,7 +972,7 @@ void EEReportTLBChurn(const char* reason)
 	if (!PSBBNTlbTraceEnabled())
 		return;
 	const auto& s = s_ee_tlb_churn;
-	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu permissionOnlyUpdates=%llu projectionRebuilds=%llu projectionRebuildsSkipped=%llu projectionPagesRetained=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu",
+	Console.WriteLn("EE-MMU-CHURN reason=%s syncs=%llu tlbWrites=%llu asidSwitches=%llu removed=%llu installed=%llu unchanged=%llu permissionOnlyUpdates=%llu projectionRebuilds=%llu projectionRebuildsSkipped=%llu projectionPagesRetained=%llu physicalClearRequests=%llu duplicatePhysicalClearsAvoided=%llu scratchClearRequests=%llu syncUs=%llu smallDeltaSyncs=%llu smallDeltaPages=%llu fullDeltaFallbacks=%llu",
 		reason, static_cast<unsigned long long>(s.syncs),
 		static_cast<unsigned long long>(s.tlbWrites),
 		static_cast<unsigned long long>(s.asidChanges),
@@ -985,7 +986,10 @@ void EEReportTLBChurn(const char* reason)
 		static_cast<unsigned long long>(s.physicalClearRequests),
 		static_cast<unsigned long long>(s.duplicatePhysicalClearsAvoided),
 		static_cast<unsigned long long>(s.scratchClearRequests),
-		static_cast<unsigned long long>(s.syncMicroseconds));
+		static_cast<unsigned long long>(s.syncMicroseconds),
+		static_cast<unsigned long long>(s.smallDeltaSyncs),
+		static_cast<unsigned long long>(s.smallDeltaPages),
+		static_cast<unsigned long long>(s.fullDeltaFallbacks));
 }
 
 #if defined(_M_X64) || defined(__x86_64__)
@@ -1075,14 +1079,38 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 #endif
 		ClearActiveTLBCodePage(page, mapping, cause, mappingAction);
 	};
-	EEActiveTLBPageMap desired =
-		BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid);
+
+	// Only touch the guest VPNs contributed by changed selected TLB slots when
+	// their combined old/new extent is small. The full planner below remains
+	// the fallback for large page masks, absent snapshots and broad ASID shifts.
+	static constexpr std::size_t MaxDeltaPages = 64;
+	std::array<u32, MaxDeltaPages> candidatePages{};
+	std::size_t candidateCount = 0;
+	const bool smallDelta = EEExecutionProfile::IsExtendedMMU() &&
+		s_active_tlb_projection.CollectChangedPages(tlb, std::size(tlb), asid,
+			candidatePages, candidateCount);
+	std::array<EEActiveTLBDelta, MaxDeltaPages> delta{};
+	if (smallDelta)
+	{
+		PlanEEActiveTLBDelta(s_active_tlb_pages, tlb, std::size(tlb),
+			asid, candidatePages, candidateCount, delta);
+		if (profiling)
+		{
+			++s_ee_tlb_churn.smallDeltaSyncs;
+			s_ee_tlb_churn.smallDeltaPages += candidateCount;
+		}
+	}
+	else if (profiling)
+		++s_ee_tlb_churn.fullDeltaFallbacks;
+	EEActiveTLBPageMap desired;
+	if (!smallDelta)
+		desired = BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid);
 
 	// Remove obsolete mappings first. Every removal also invalidates generated
 	// guest code and fastmem aliases through the existing PCSX2 machinery.
 	std::unordered_set<u32> scratchBasesToUpdate;
-	PlanEEActiveTLBMappingChanges(s_active_tlb_pages, desired,
-		[&](EEActiveTLBMappingAction action, u32 page, const EEActiveTLBPage& mapping)
+	auto applyMappingAction = [&](EEActiveTLBMappingAction action, u32 page,
+		const EEActiveTLBPage& mapping)
 		{
 			if (action == EEActiveTLBMappingAction::Remove)
 			{
@@ -1118,14 +1146,51 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 #if defined(_M_X64) || defined(__x86_64__)
 			recMapTLBPage(page << 12, mapping.physicalAddress);
 #endif
-		}, EEExecutionProfile::IsExtendedMMU());
+		};
+	if (smallDelta)
+	{
+		// Match the full diff's two-phase ordering. This matters for aliases
+		// with old/new PFNs swapped in one architectural TLB update.
+		for (std::size_t i = 0; i < candidateCount; ++i)
+		{
+			const auto& c = delta[i];
+			if (c.NeedsRemove())
+				applyMappingAction(EEActiveTLBMappingAction::Remove, c.page, *c.oldMapping);
+		}
+		for (std::size_t i = 0; i < candidateCount; ++i)
+		{
+			const auto& c = delta[i];
+			if (c.NeedsInstall())
+				applyMappingAction(EEActiveTLBMappingAction::Install, c.page, *c.newMapping);
+			else if (c.newMapping)
+				applyMappingAction(c.oldMapping->writable == c.newMapping->writable ?
+					EEActiveTLBMappingAction::Unchanged : EEActiveTLBMappingAction::PermissionOnly,
+					c.page, *c.newMapping);
+		}
+		// Host-vTLB/code changes above are complete. Publish the new selected
+		// permissions and page ownership before the scratchpad batch setup.
+		for (std::size_t i = 0; i < candidateCount; ++i)
+		{
+			const auto& c = delta[i];
+			if (c.newMapping)
+				s_active_tlb_pages.insert_or_assign(c.page, *c.newMapping);
+			else
+				s_active_tlb_pages.erase(c.page);
+		}
+	}
+	else
+	{
+		PlanEEActiveTLBMappingChanges(s_active_tlb_pages, desired, applyMappingAction,
+			EEExecutionProfile::IsExtendedMMU());
+		s_active_tlb_pages.swap(desired);
+	}
 	for (const u32 basePage : scratchBasesToUpdate)
 	{
 		bool contiguous = true;
 		for (u32 i = 0; i < Ps2MemSize::Scratch / 0x1000; i++)
 		{
-			const auto it = desired.find(basePage + i);
-			if (it == desired.end() || !it->second.scratchpad ||
+			const auto it = s_active_tlb_pages.find(basePage + i);
+			if (it == s_active_tlb_pages.end() || !it->second.scratchpad ||
 				it->second.physicalAddress != (i << 12))
 			{
 				contiguous = false;
@@ -1143,7 +1208,7 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			// Multiple matching TLB entries are architecturally undefined.
 			// Preserve the selected per-page view without assuming a contiguous
 			// scratchpad fastmem mapping in that exceptional case.
-			for (const auto& [page, now] : desired)
+			for (const auto& [page, now] : s_active_tlb_pages)
 			{
 				if (now.scratchpad && page - (now.physicalAddress >> 12) == basePage)
 				{
@@ -1153,7 +1218,6 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			}
 		}
 	}
-	s_active_tlb_pages.swap(desired);
 	s_active_tlb_projection.Remember(tlb, std::size(tlb), asid);
 	finishSync();
 }
