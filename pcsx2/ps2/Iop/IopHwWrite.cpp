@@ -13,10 +13,6 @@
 #include "IopCounters.h"
 #include "IopDma.h"
 #include "R3000A.h"
-#include "EEExecutionProfile.h"
-#include "Host.h"
-
-#include <string_view>
 
 #include "ps2/pgif.h"
 #include "Mdec.h"
@@ -30,55 +26,6 @@
 namespace IopMemory {
 
 using namespace Internal;
-
-// This is an IOP *console-output* filter. It never intercepts DEV9 hardware
-// register reads/writes or changes what the IOP guest actually executes.
-static u64 s_dev9GuestConsoleLinesSuppressed[4] = {};
-static bool s_dev9GuestConsoleLogConfigured = false;
-static bool s_dev9GuestConsoleLogVerbose = false;
-
-bool ShouldSuppressGuestDEV9ConsoleTrace(std::string_view text, GuestDEV9ConsoleSource source)
-{
-	if (!EEExecutionProfile::IsExtendedMMU() || !EEIsGuestDEV9RegisterTrace(text))
-		return false;
-
-	if (!s_dev9GuestConsoleLogConfigured)
-	{
-		s_dev9GuestConsoleLogVerbose =
-			Host::GetBoolSettingValue("EmuCore", "IOPVerboseDEV9RegisterLog", false);
-		s_dev9GuestConsoleLogConfigured = true;
-		const char* const sourceName = (source == GuestDEV9ConsoleSource::BiosCallStdout) ? "bios-call-stdout" :
-			(source == GuestDEV9ConsoleSource::Kprintf) ? "Kprintf" :
-			(source == GuestDEV9ConsoleSource::IomanStdout) ? "ioman-stdout" : "hardware-stdout";
-		Console.WriteLn("IOP-DEV9-CONSOLE-TRACE verbose=%u profileExtended=1 firstSource=%s",
-			s_dev9GuestConsoleLogVerbose ? 1u : 0u, sourceName);
-	}
-
-	if (s_dev9GuestConsoleLogVerbose)
-		return false;
-
-	++s_dev9GuestConsoleLinesSuppressed[static_cast<unsigned int>(source)];
-	return true;
-}
-
-void ReportGuestDEV9ConsoleTraceSummary()
-{
-	const u64 hw = s_dev9GuestConsoleLinesSuppressed[0];
-	const u64 ioman = s_dev9GuestConsoleLinesSuppressed[1];
-	const u64 kprintf = s_dev9GuestConsoleLinesSuppressed[2];
-	const u64 bios = s_dev9GuestConsoleLinesSuppressed[3];
-	if (hw + ioman + kprintf + bios)
-		Console.WriteLn("IOP-DEV9-CONSOLE-SUMMARY suppressedRegisterLines=%llu hardwareStdout=%llu iomanStdout=%llu kprintf=%llu biosCallStdout=%llu",
-			static_cast<unsigned long long>(hw + ioman + kprintf + bios),
-			static_cast<unsigned long long>(hw),
-			static_cast<unsigned long long>(ioman),
-			static_cast<unsigned long long>(kprintf),
-			static_cast<unsigned long long>(bios));
-	for (u64& count : s_dev9GuestConsoleLinesSuppressed)
-		count = 0;
-	s_dev9GuestConsoleLogConfigured = false;
-	s_dev9GuestConsoleLogVerbose = false;
-}
 
 // Template-compatible version of the psxHu macro.  Used for writing.
 #define psxHu(mem)	(*(u32*)&iopHw[(mem) & 0xffff])
@@ -201,9 +148,7 @@ void iopHwWrite8_Page3( u32 addr, mem8_t val )
 		if ((pidx == std::size(pbuf)-1) || (pbuf[pidx-1] == '\n'))
 		{
 			pbuf[pidx] = 0;
-			if (!ShouldSuppressGuestDEV9ConsoleTrace(std::string_view(pbuf),
-					GuestDEV9ConsoleSource::HardwareStdout))
-				iopConLog(ShiftJIS_ConvertString(pbuf));
+			iopConLog( ShiftJIS_ConvertString(pbuf) );
 			pidx = 0;
 		}
 	}
