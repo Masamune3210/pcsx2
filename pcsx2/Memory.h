@@ -54,9 +54,12 @@ namespace HostMemoryMap
 	// Code
 	//////////////////////////////////////////////////////////////////////////
 
-	// EE recompiler code cache area (64mb)
+	// Reserve up to 256 MiB for the EE JIT. Standard execution retains
+	// its original 64 MiB generation limit; Extended MMU may use the
+	// full region to delay churn-driven code-cache exhaustion.
 	static constexpr u32 EErecOffset = 0x00000000;
-	static constexpr u32 EErecSize = 0x4000000;
+	static constexpr u32 EErecStandardSize = 0x4000000;
+	static constexpr u32 EErecSize = 0x10000000;
 
 	// IOP recompiler code cache area (32mb)
 	static constexpr u32 IOPrecOffset = EErecOffset + EErecSize;
@@ -87,7 +90,7 @@ namespace HostMemoryMap
 	static constexpr u32 SWrecSize = 0x04000000;
 
 	// Overall size.
-	static constexpr u32 CodeSize = SWrecOffset + SWrecSize; // 305 mb
+	static constexpr u32 CodeSize = SWrecOffset + SWrecSize; // 497 mb
 } // namespace HostMemoryMap
 
 
