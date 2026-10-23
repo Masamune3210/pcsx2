@@ -419,6 +419,29 @@ struct EEActiveTLBDelta
 		return newMapping && (!oldMapping || !oldMapping->HasSameBacking(*newMapping));
 	}
 };
+// Publish only changed selected mappings. The caller has already completed
+// remove-before-install host side effects, so identical old/new permissions
+// and backing need no unordered_map insertion or assignment.
+template <std::size_t N>
+inline std::size_t PublishEEActiveTLBDelta(
+	EEActiveTLBPageMap& active, const std::array<EEActiveTLBDelta, N>& changes,
+	std::size_t pageCount)
+{
+	std::size_t updates = 0;
+	for (std::size_t i = 0; i < pageCount; ++i)
+	{
+		const EEActiveTLBDelta& change = changes[i];
+		if (change.oldMapping == change.newMapping)
+			continue;
+		if (change.newMapping)
+			active.insert_or_assign(change.page, *change.newMapping);
+		else
+			active.erase(change.page);
+		++updates;
+	}
+	return updates;
+}
+
 template <std::size_t N>
 inline std::size_t PlanEEActiveTLBDelta(const EEActiveTLBPageMap& active,
 	const tlbs* entries, std::size_t entryCount, u8 asid,
