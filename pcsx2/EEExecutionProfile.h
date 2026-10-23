@@ -40,6 +40,20 @@ constexpr bool EECanSkipPhysicalCodeClear(EEExecutionProfileMode profile, bool m
 	return profile == EEExecutionProfileMode::ExtendedMMU && !mayContainCompiledCode;
 }
 
+// The EE exception path is hot during guest OS TLB refill. Console.Error
+// for each ordinary miss is not an architectural effect, and can stall
+// heavily faulting Extended-MMU sessions. Standard keeps legacy diagnostics;
+// Extended requires an explicit verbose opt-in.
+constexpr bool EELogTLBFault(bool extendedMMU, bool verbose, bool originalLogCondition)
+{
+	return originalLogCondition && (!extendedMMU || verbose);
+}
+
+constexpr bool EELogBranchDelayWarning(bool extendedMMU, bool verbose, bool isTLBException)
+{
+	return !extendedMMU || verbose || !isTLBException;
+}
+
 // Disc serial is evidence of the boot DISC, not proof about arbitrary HDD
 // contents. The known BB Navigator serial can enable the profile for an ISO
 // boot; a direct no-disc HDD boot must use the explicit Extended override
