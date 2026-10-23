@@ -49,6 +49,9 @@ struct MgVerifiedHeaderState {
     MagicGateCrypto::HeaderResult verified;
 };
 static MgVerifiedHeaderState s_mgHeader;
+// Full MagicGate SCMD byte streams are useful for protocol RE but prohibitively
+// noisy during normal HDD execution. The trace setting is latched at CDVD reset.
+static bool s_mgProtocolTraceEnabled = false;
 
 // A per-BIOS .mgkeys file supplies published keys; source and logs never contain them.
 static bool cdvdLoadMagicGateKeys(MagicGateCrypto::Keys& keys, bool cardOnly = false)
@@ -960,6 +963,7 @@ static uint cdvdBlockReadTime(CDVD_MODE_TYPE mode) noexcept
 
 void cdvdReset()
 {
+	s_mgProtocolTraceEnabled = Host::GetBoolSettingValue("EmuCore", "MagicGateProtocolTrace", false);
 	s_mgHeader = {};
     MagicGateCardAuth::g_runtime.Reset();
 	std::memset(&cdvd, 0, sizeof(cdvd));
@@ -2491,7 +2495,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 
 		CDVD_LOG("cdvdWrite16: SCMD %s (%x) (ParamP = %x)", sCmdName[rt], rt, cdvd.SCMDParamPos);
 		// Record complete MagicGate protocol requests, responses, and buffered data.
-		const bool trace_mg = (rt >= 0x80 && rt <= 0x97);
+		const bool trace_mg = s_mgProtocolTraceEnabled && (rt >= 0x80 && rt <= 0x97);
 		if (trace_mg)
 		{
 			Console.WriteLn("[MGFLOW] CALL scmd=%02X inputLength=%u dataType=%d buffered=0x%X expected=0x%X",
