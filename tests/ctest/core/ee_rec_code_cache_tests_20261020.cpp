@@ -6,6 +6,7 @@
 #include "Memory.h"
 #include "EEPerformanceProbe.h"
 #include "FastmemReverseIndex.h"
+#include "common/HostSys.h"
 #include "x86/EERecCodeCache.h"
 #include "x86/EERecSourceWitness.h"
 
@@ -50,6 +51,30 @@ protected:
 		EERecClearPhysicalBlocks(blocks, physicalLUT.data(), compiling, compiler, address, words, metrics);
 	}
 };
+
+#if defined(_WIN32)
+TEST(SharedMemoryMappingArea, PooledPlaceholderNodesSurviveRepeatedSplitAndCoalesce)
+{
+	// Exercise real Windows placeholder replacement and coalescing, including
+	// splitting a single placeholder into several disjoint mappings.
+	auto area = SharedMemoryMappingArea::Create(8u * __pagesize);
+	ASSERT_NE(area, nullptr);
+	const PageProtectionMode rw = PageProtectionMode().Read().Write();
+	const std::array<size_t, 8> order{3, 1, 5, 0, 7, 6, 2, 4};
+	for (unsigned pass = 0; pass < 32; ++pass)
+	{
+		for (const size_t page : order)
+		{
+			u8* const mapped = area->Map(nullptr, 0, area->PagePointer(page), __pagesize, rw);
+			ASSERT_NE(mapped, nullptr);
+			mapped[0] = static_cast<u8>(page + pass);
+			EXPECT_EQ(mapped[0], static_cast<u8>(page + pass));
+		}
+		for (auto it = order.rbegin(); it != order.rend(); ++it)
+			ASSERT_TRUE(area->Unmap(area->PagePointer(*it), __pagesize, false));
+	}
+}
+#endif
 
 TEST(FastmemReverseIndex, RemapUsesOldBackingAndNeverKeepsStaleAlias)
 {
