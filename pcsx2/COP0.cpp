@@ -1212,15 +1212,17 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	{
 		PlanEEActiveTLBMappingChanges(s_active_tlb_pages, desired, applyMappingAction,
 			EEExecutionProfile::IsExtendedMMU());
-		s_active_tlb_pages.swap(desired);
 	}
+	// Preserve the legacy full path's delayed publication while the scratch
+	// backing is installed. Small deltas already published their changed VPNs.
+	const EEActiveTLBPageMap& installedPages = smallDelta ? s_active_tlb_pages : desired;
 	for (const u32 basePage : scratchBasesToUpdate)
 	{
 		bool contiguous = true;
 		for (u32 i = 0; i < Ps2MemSize::Scratch / 0x1000; i++)
 		{
-			const auto it = s_active_tlb_pages.find(basePage + i);
-			if (it == s_active_tlb_pages.end() || !it->second.scratchpad ||
+			const auto it = installedPages.find(basePage + i);
+			if (it == installedPages.end() || !it->second.scratchpad ||
 				it->second.physicalAddress != (i << 12))
 			{
 				contiguous = false;
@@ -1238,7 +1240,7 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			// Multiple matching TLB entries are architecturally undefined.
 			// Preserve the selected per-page view without assuming a contiguous
 			// scratchpad fastmem mapping in that exceptional case.
-			for (const auto& [page, now] : s_active_tlb_pages)
+			for (const auto& [page, now] : installedPages)
 			{
 				if (now.scratchpad && page - (now.physicalAddress >> 12) == basePage)
 				{
@@ -1248,6 +1250,8 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			}
 		}
 	}
+	if (!smallDelta)
+		s_active_tlb_pages.swap(desired);
 	s_active_tlb_projection.Remember(tlb, std::size(tlb), asid);
 	finishSync();
 }
