@@ -658,14 +658,7 @@ TEST(EEActiveTLB, SmallDeltaProjectionMatchesFullMapAcrossASIDsRemapsAndPermissi
 		std::array<EEActiveTLBDelta, 64> changes{};
 		EXPECT_EQ(PlanEEActiveTLBDelta(active, entries.data(), entries.size(),
 			asid, pages, count, changes), count);
-		for (std::size_t i = 0; i < count; ++i)
-		{
-			const auto& c = changes[i];
-			if (c.newMapping)
-				active.insert_or_assign(c.page, *c.newMapping);
-			else
-				active.erase(c.page);
-		}
+		PublishEEActiveTLBDelta(active, changes, count);
 		EXPECT_EQ(active, BuildEEActiveTLBPageMap(entries.data(), entries.size(), asid));
 		memo.Remember(entries.data(), entries.size(), asid);
 	};
@@ -700,13 +693,7 @@ TEST(EEActiveTLB, SmallDeltaRespectsFirstEligibleOverlappingSlot)
 	ASSERT_TRUE(memo.CollectChangedPages(entries.data(), entries.size(), 5, pages, count));
 	std::array<EEActiveTLBDelta, 64> changes{};
 	PlanEEActiveTLBDelta(active, entries.data(), entries.size(), 5, pages, count, changes);
-	for (std::size_t i = 0; i < count; ++i)
-	{
-		if (changes[i].newMapping)
-			active.insert_or_assign(changes[i].page, *changes[i].newMapping);
-		else
-			active.erase(changes[i].page);
-	}
+	PublishEEActiveTLBDelta(active, changes, count);
 	EXPECT_EQ(active, BuildEEActiveTLBPageMap(entries.data(), entries.size(), 5));
 	EXPECT_EQ(active.at(0x00400).physicalAddress, 0x00200000u);
 	EXPECT_EQ(active.at(0x00401).physicalAddress, 0x00101000u);
