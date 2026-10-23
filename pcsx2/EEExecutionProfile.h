@@ -59,9 +59,46 @@ constexpr bool EELogBranchDelayWarning(bool extendedMMU, bool verbose, bool isTL
 // prefixes, never device access, guest I/O, or other guest console messages.
 constexpr bool EEIsGuestDEV9RegisterTrace(std::string_view line)
 {
-	return line.starts_with("DEV9 read8 ") || line.starts_with("DEV9 read16 ") ||
-		line.starts_with("DEV9 read32 ") || line.starts_with("DEV9 write8 ") ||
-		line.starts_with("DEV9 write16 ") || line.starts_with("DEV9 write32 ");
+	size_t prefixLength = 0;
+	size_t valueDigits = 0;
+	if (line.starts_with("DEV9 read8 ") || line.starts_with("DEV9 write8 "))
+	{
+		prefixLength = line.starts_with("DEV9 read8 ") ? 11 : 12;
+		valueDigits = 2;
+	}
+	else if (line.starts_with("DEV9 read16 ") || line.starts_with("DEV9 write16 "))
+	{
+		prefixLength = line.starts_with("DEV9 read16 ") ? 12 : 13;
+		valueDigits = 4;
+	}
+	else if (line.starts_with("DEV9 read32 ") || line.starts_with("DEV9 write32 "))
+	{
+		prefixLength = line.starts_with("DEV9 read32 ") ? 12 : 13;
+		valueDigits = 8;
+	}
+	else
+	{
+		return false;
+	}
+
+	// Suppress only one complete register diagnostic, not a multi-line
+	// message which happens to begin with the same prefix.
+	line.remove_prefix(prefixLength);
+	const size_t end = 8 + 2 + valueDigits;
+	if (line.size() < end || line.substr(8, 2) != ": ")
+		return false;
+	const auto isHex = [](char c) {
+		return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+			(c >= 'A' && c <= 'F');
+	};
+	for (size_t i = 0; i < 8; i++)
+		if (!isHex(line[i]))
+			return false;
+	for (size_t i = 10; i < end; i++)
+		if (!isHex(line[i]))
+			return false;
+	const std::string_view suffix = line.substr(end);
+	return suffix.empty() || suffix == "\\n" || suffix == "\\r" || suffix == "\\r\\n";
 }
 
 // Disc serial is evidence of the boot DISC, not proof about arbitrary HDD
