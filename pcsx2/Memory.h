@@ -58,13 +58,17 @@ namespace HostMemoryMap
 	// Standard retains the original 64 MiB active generation window.
 	static constexpr u32 EErecOffset = 0x00000000;
 	static constexpr u32 EErecStandardSize = 0x4000000;
-	static constexpr u32 EErecSize = 0x20000000; // 512 MiB maximum reservation
+	// 1536 MiB is an intentionally oversized stress-test option. A full 2 GiB
+	// EE reservation would push other generated code and data outside x64's
+	// signed rel32 reach. Keep the entire contiguous VM mapping below 2 GiB.
+	static constexpr u32 EErecSize = 0x60000000; // 1536 MiB maximum reservation
 	constexpr u32 EErecGenerationSize(bool extendedMMU, u32 extendedMiB = 256)
 	{
 		if (!extendedMMU)
 			return EErecStandardSize;
 		const u32 selectedMiB = (extendedMiB == 64 || extendedMiB == 128 ||
-			extendedMiB == 256 || extendedMiB == 512) ? extendedMiB : 256;
+			extendedMiB == 256 || extendedMiB == 512 ||
+			extendedMiB == 1536) ? extendedMiB : 256;
 		return selectedMiB * 0x100000u;
 	}
 
@@ -97,7 +101,12 @@ namespace HostMemoryMap
 	static constexpr u32 SWrecSize = 0x04000000;
 
 	// Overall size.
-	static constexpr u32 CodeSize = SWrecOffset + SWrecSize; // 753 mb
+	static constexpr u32 CodeSize = SWrecOffset + SWrecSize;
+	// The x64 emitters and BaseBlocks use signed 32-bit RIP-relative/rel32
+	// displacements. Preserve reachability across main memory, EE dispatcher,
+	// EE cache and other JIT regions; widening only the EE code region is unsafe.
+	static_assert(static_cast<u64>(MainSize) + CodeSize < 0x80000000ull,
+		"Host code/data mapping must remain within signed 32-bit relative reach");
 } // namespace HostMemoryMap
 
 
