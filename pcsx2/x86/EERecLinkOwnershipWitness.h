@@ -54,6 +54,7 @@ private:
     {
         uptr ownerHost = 0;
         u32 targetPA = 0;
+        bool detached = false;
     };
 
     std::unordered_map<uptr, Owner> m_owners;
@@ -70,6 +71,10 @@ public:
     u64 finalizedOwners = 0;
     u64 retiredOwners = 0;
     u64 retiredDuringEEExecution = 0;
+    u64 sourceDetachAttempts = 0;
+    u64 sourceDetachWrites = 0;
+    u64 untrackedDetaches = 0;
+    u64 postDetachRetargets = 0;
     u64 dispatcherLinksTranslation = 0;
     u64 dispatcherLinksCrossPage = 0;
     // [TargetCompiled, TargetRemoved][OwnerState]
@@ -82,6 +87,7 @@ public:
         m_sampleCount = 0;
         registrations = registrationWrites = droppedSites = unownedRegistrations = 0;
         invalidOffsets = finalizedOwners = retiredOwners = retiredDuringEEExecution = 0;
+        sourceDetachAttempts = sourceDetachWrites = untrackedDetaches = postDetachRetargets = 0;
         dispatcherLinksTranslation = dispatcherLinksCrossPage = 0;
         patches = {};
     }
@@ -149,6 +155,19 @@ public:
         retiredDuringEEExecution += eeExecuting ? 1 : 0;
     }
 
+    void Detach(uptr site, bool wrote)
+    {
+        ++sourceDetachAttempts;
+        sourceDetachWrites += wrote ? 1 : 0;
+        auto it = m_sites.find(site);
+        if (it == m_sites.end() || it->second.detached)
+        {
+            ++untrackedDetaches;
+            return;
+        }
+        it->second.detached = true;
+    }
+
     void Retarget(BaseBlocks::LinkEvent event, u32 targetPA, uptr site,
         uptr destination, bool wrote)
     {
@@ -159,6 +178,7 @@ public:
         const auto s = m_sites.find(site);
         if (s != m_sites.end())
         {
+            postDetachRetargets += s->second.detached ? 1 : 0;
             ownerHost = s->second.ownerHost;
             const auto o = m_owners.find(ownerHost);
             if (o != m_owners.end())
