@@ -284,6 +284,23 @@ TEST_F(EERecCodeCache, BatchSourceRetirementHandlesSelfLinksAndMultipleOwners)
 		EXPECT_EQ(*site, static_cast<s32>(safeDispatcher - (reinterpret_cast<uptr>(site) + sizeof(s32))));
 }
 
+TEST_F(EERecCodeCache, FineStaticLinkHelperForwardsOwnerToRetirementIndex)
+{
+	const uptr source = reinterpret_cast<uptr>(firstCode.data());
+	const uptr target = reinterpret_cast<uptr>(secondCode.data());
+	const uptr dispatcher = reinterpret_cast<uptr>(dispatcherCode.data());
+	AddBlock(0x3000, 4, source);
+	AddBlock(0x6000, 4, target);
+	blocks.SetRetiredSourceDispatcher(dispatcher);
+	s32 jump = 0;
+	EERecLinkStaticBlock(blocks, true, 0x00403000, 0x00403040, 0x6000, &jump,
+		dispatcher, nullptr, source);
+	ASSERT_EQ(blocks.GetLiveMetrics().linkRecords, 1u);
+	blocks.Remove(0, 0);
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 0u);
+	EXPECT_EQ(jump, static_cast<s32>(dispatcher - (reinterpret_cast<uptr>(&jump) + sizeof(s32))));
+}
+
 TEST_F(EERecCodeCache, NativeOwnerHintsDoNotChangeOriginalLinkLifetime)
 {
 	const uptr source = reinterpret_cast<uptr>(firstCode.data());
