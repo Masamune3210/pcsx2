@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <initializer_list>
 
 namespace EEPerformanceProbe
 {
