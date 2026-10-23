@@ -343,68 +343,6 @@ inline std::optional<EEActiveTLBPage> FindEEActiveTLBPage(
 	return std::nullopt;
 }
 
-// Resolve a bounded set of VPNs in one slot-major walk. The original
-// FindEEActiveTLBPage() is the independent single-page correctness oracle.
-// First matching TLB slot wins, exactly as in the full projection builder.
-// Avoid re-decoding a slot's mask/ASID/EntryLo for every candidate VPN.
-template <std::size_t N>
-inline void FindEEActiveTLBPages(
-	const tlbs* entries, std::size_t entryCount, u8 asid,
-	const std::array<u32, N>& pages, std::size_t pageCount,
-	std::array<std::optional<EEActiveTLBPage>, N>& resolved)
-{
-	for (std::size_t j = 0; j < pageCount; ++j)
-		resolved[j].reset();
-	std::size_t unresolved = pageCount;
-	for (std::size_t i = 0; i < entryCount && unresolved; ++i)
-	{
-		const tlbs& t = entries[i];
-		if (!t.isGlobal() && t.EntryHi.ASID != asid)
-			continue;
-		const u32 firstPage = t.VPN2() >> 12;
-		if (t.isSPR())
-		{
-			for (std::size_t j = 0; j < pageCount; ++j)
-			{
-				if (resolved[j])
-					continue;
-				const u32 offset = pages[j] - firstPage;
-				if (offset < 4)
-				{
-					resolved[j] = EEActiveTLBPage{offset << 12, true};
-					--unresolved;
-				}
-			}
-			continue;
-		}
-		const u32 halfPages = t.Mask() + 1;
-		const u32 compareMask = ((~t.Mask()) << 1) & 0xfffff;
-		const u32 compareVpn = firstPage & compareMask;
-		for (std::size_t j = 0; j < pageCount; ++j)
-		{
-			if (resolved[j] || (pages[j] & compareMask) != compareVpn)
-				continue;
-			for (u32 half = 0; half < 2; ++half)
-			{
-				const EntryLo_t& lo = half ? t.EntryLo1 : t.EntryLo0;
-				if (!lo.V)
-					continue;
-				const u32 offset = pages[j] - (firstPage + half * halfPages);
-				if (offset < halfPages)
-				{
-					const u32 physical = half ? t.PFN1() : t.PFN0();
-					resolved[j] = EEActiveTLBPage{physical + (offset << 12), false, lo.D != 0};
-					--unresolved;
-					break;
-				}
-			}
-		}
-	}
-}
-
-// Plan changes for a bounded candidate VPN set. Caller performs all removals
-// before installs and only publishes new map entries after the host side
-// effects, exactly as for the full-map projection. No shared state is mutated.
 struct EEActiveTLBDelta
 {
 	u32 page = 0;
@@ -419,6 +357,70 @@ struct EEActiveTLBDelta
 		return newMapping && (!oldMapping || !oldMapping->HasSameBacking(*newMapping));
 	}
 };
+
+// Resolve a bounded set of VPNs in one slot-major walk. The original
+// FindEEActiveTLBPage() is the independent single-page correctness oracle.
+// First matching TLB slot wins, exactly as in the full projection builder.
+// Avoid re-decoding a slot's mask/ASID/EntryLo for every candidate VPN.
+template <std::size_t N>
+inline void FindEEActiveTLBPages(
+	const tlbs* entries, std::size_t entryCount, u8 asid,
+	const std::array<u32, N>& pages, std::size_t pageCount,
+	std::array<EEActiveTLBDelta, N>& resolved)
+{
+	for (std::size_t j = 0; j < pageCount; ++j)
+		resolved[j].newMapping.reset();
+	std::size_t unresolved = pageCount;
+	for (std::size_t i = 0; i < entryCount && unresolved; ++i)
+	{
+		const tlbs& t = entries[i];
+		if (!t.isGlobal() && t.EntryHi.ASID != asid)
+			continue;
+		const u32 firstPage = t.VPN2() >> 12;
+		if (t.isSPR())
+		{
+			for (std::size_t j = 0; j < pageCount; ++j)
+			{
+				if (resolved[j].newMapping)
+					continue;
+				const u32 offset = pages[j] - firstPage;
+				if (offset < 4)
+				{
+					resolved[j].newMapping = EEActiveTLBPage{offset << 12, true};
+					--unresolved;
+				}
+			}
+			continue;
+		}
+		const u32 halfPages = t.Mask() + 1;
+		const u32 compareMask = ((~t.Mask()) << 1) & 0xfffff;
+		const u32 compareVpn = firstPage & compareMask;
+		for (std::size_t j = 0; j < pageCount; ++j)
+		{
+			if (resolved[j].newMapping || (pages[j] & compareMask) != compareVpn)
+				continue;
+			for (u32 half = 0; half < 2; ++half)
+			{
+				const EntryLo_t& lo = half ? t.EntryLo1 : t.EntryLo0;
+				if (!lo.V)
+					continue;
+				const u32 offset = pages[j] - (firstPage + half * halfPages);
+				if (offset < halfPages)
+				{
+					const u32 physical = half ? t.PFN1() : t.PFN0();
+					resolved[j].newMapping = EEActiveTLBPage{physical + (offset << 12), false, lo.D != 0};
+					--unresolved;
+					break;
+				}
+			}
+		}
+	}
+}
+
+// Plan changes for a bounded candidate VPN set. Caller performs all removals
+// before installs and only publishes new map entries after the host side
+// effects, exactly as for the full-map projection. No shared state is mutated.
+
 // Publish only changed selected mappings. The caller has already completed
 // remove-before-install host side effects, so identical old/new permissions
 // and backing need no unordered_map insertion or assignment.
@@ -448,8 +450,6 @@ inline std::size_t PlanEEActiveTLBDelta(const EEActiveTLBPageMap& active,
 	const std::array<u32, N>& pages, std::size_t pageCount,
 	std::array<EEActiveTLBDelta, N>& changes)
 {
-	std::array<std::optional<EEActiveTLBPage>, N> resolved{};
-	FindEEActiveTLBPages(entries, entryCount, asid, pages, pageCount, resolved);
 	for (std::size_t i = 0; i < pageCount; ++i)
 	{
 		EEActiveTLBDelta& change = changes[i];
@@ -457,7 +457,9 @@ inline std::size_t PlanEEActiveTLBDelta(const EEActiveTLBPageMap& active,
 		const auto old = active.find(change.page);
 		change.oldMapping = old == active.end() ? std::nullopt :
 			std::optional<EEActiveTLBPage>(old->second);
-		change.newMapping = resolved[i];
 	}
+	// Reuse the existing delta records as the batch-result buffer.
+	// Avoid zeroing and copying a second 64-element optional array per sync.
+	FindEEActiveTLBPages(entries, entryCount, asid, pages, pageCount, changes);
 	return pageCount;
 }
