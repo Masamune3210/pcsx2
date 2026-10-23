@@ -5,6 +5,7 @@
 #include "MemoryTypes.h"
 #include "Memory.h"
 #include "EEPerformanceProbe.h"
+#include "FastmemReverseIndex.h"
 #include "x86/EERecCodeCache.h"
 #include "x86/EERecSourceWitness.h"
 
@@ -49,6 +50,84 @@ protected:
 		EERecClearPhysicalBlocks(blocks, physicalLUT.data(), compiling, compiler, address, words, metrics);
 	}
 };
+
+TEST(FastmemReverseIndex, RemapUsesOldBackingAndNeverKeepsStaleAlias)
+{
+	FastmemReverseIndex reverse;
+	reverse.Initialize(64, 8 * FastmemReverseIndex::PageSize);
+	const auto aliases = [&](u32 offset) {
+		std::vector<u32> results;
+		reverse.ForEach(offset, [&](u32 page) { results.push_back(page); });
+		std::sort(results.begin(), results.end());
+		return results;
+	};
+	reverse.Insert(7, 0x1000);
+	reverse.Insert(9, 0x1000);
+	reverse.Insert(11, 0x1000);
+	EXPECT_EQ(aliases(0x1000), (std::vector<u32>{7, 9, 11}));
+	// Change backing for a middle entry. Original code removed from the
+	// *new* bucket by mistake, leaking a stale alias for old backing.
+	reverse.Erase(9, 0x1000);
+	reverse.Insert(9, 0x3000);
+	EXPECT_EQ(aliases(0x1000), (std::vector<u32>{7, 11}));
+	EXPECT_EQ(aliases(0x3000), (std::vector<u32>{9}));
+	reverse.Erase(11, 0x1000); // current bucket head
+	reverse.Erase(7, 0x1000); // last remaining node
+	EXPECT_TRUE(aliases(0x1000).empty());
+	reverse.Erase(9, 0x3000);
+	EXPECT_TRUE(aliases(0x3000).empty());
+	reverse.Insert(23, 0x0000);
+	reverse.Insert(25, 0x0000);
+	reverse.Clear();
+	EXPECT_TRUE(aliases(0x0000).empty());
+	reverse.Insert(23, 0x7000);
+	EXPECT_EQ(aliases(0x7000), (std::vector<u32>{23}));
+	reverse.Reset();
+}
+
+TEST(FastmemReverseIndex, RepeatedASIDStyleAliasChurnMatchesIndependentMap)
+{
+	FastmemReverseIndex reverse;
+	static constexpr u32 VirtualPages = 1024;
+	static constexpr u32 PhysicalPages = 64;
+	reverse.Initialize(VirtualPages, PhysicalPages * FastmemReverseIndex::PageSize);
+	std::vector<u32> expected(VirtualPages, FastmemReverseIndex::Unmapped);
+	u32 state = 0x53cb9e21u;
+	for (u32 iteration = 0; iteration < 12000; ++iteration)
+	{
+		state = state * 1664525u + 1013904223u;
+		const u32 virtualPage = (state >> 8) % VirtualPages;
+		if (expected[virtualPage] != FastmemReverseIndex::Unmapped)
+			reverse.Erase(virtualPage, expected[virtualPage]);
+		state = state * 1664525u + 1013904223u;
+		const u32 physicalPage = (state >> 10) % (PhysicalPages + 4);
+		expected[virtualPage] = (physicalPage >= PhysicalPages) ?
+			FastmemReverseIndex::Unmapped : (physicalPage * FastmemReverseIndex::PageSize);
+		if (expected[virtualPage] != FastmemReverseIndex::Unmapped)
+			reverse.Insert(virtualPage, expected[virtualPage]);
+		if (iteration % 503 == 0 || iteration == 11999)
+		{
+			std::vector<u32> seen(VirtualPages, 0);
+			for (u32 physical = 0; physical < PhysicalPages; ++physical)
+			{
+				reverse.ForEach(physical * FastmemReverseIndex::PageSize, [&](u32 page) {
+					ASSERT_LT(page, VirtualPages);
+					if (page < VirtualPages)
+					{
+						EXPECT_EQ(expected[page], physical * FastmemReverseIndex::PageSize);
+						++seen[page];
+					}
+				});
+			}
+			for (u32 page = 0; page < VirtualPages; ++page)
+				EXPECT_EQ(seen[page], expected[page] == FastmemReverseIndex::Unmapped ? 0u : 1u);
+		}
+	}
+	reverse.Clear();
+	for (u32 physical = 0; physical < PhysicalPages; ++physical)
+		reverse.ForEach(physical * FastmemReverseIndex::PageSize,
+			[&](u32) { ADD_FAILURE() << "Stale alias after full reset"; });
+}
 
 TEST(EEPerformanceProbe, OptInCountersResetAndRecordOnlyWhenExplicitlyInvoked)
 {
