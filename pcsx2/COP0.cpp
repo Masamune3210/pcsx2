@@ -1062,8 +1062,6 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 		finishSync();
 		return;
 	}
-	if (profiling)
-		++s_ee_tlb_churn.projectionRebuilds;
 	// Invalidation is keyed by compiled guest *physical* code. Removing an
 	// alias and installing a replacement can touch the same physical page
 	// several times in one synchronous TLB projection. It is sufficient to
@@ -1131,7 +1129,10 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 		}
 	}
 	else if (profiling)
+	{
+		++s_ee_tlb_churn.projectionRebuilds;
 		++s_ee_tlb_churn.fullDeltaFallbacks;
+	}
 	EEActiveTLBPageMap desired;
 	if (!smallDelta)
 		desired = BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid);
