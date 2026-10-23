@@ -54,6 +54,16 @@ constexpr bool EELogBranchDelayWarning(bool extendedMMU, bool verbose, bool isTL
 	return !extendedMMU || verbose || !isTLBException;
 }
 
+// Guest IOP stdout can include extremely high-volume per-register
+// instrumentation from an IOP driver. Filter only these exact diagnostic
+// prefixes, never device access, guest I/O, or other guest console messages.
+constexpr bool EEIsGuestDEV9RegisterTrace(std::string_view line)
+{
+	return line.starts_with("DEV9 read8 ") || line.starts_with("DEV9 read16 ") ||
+		line.starts_with("DEV9 read32 ") || line.starts_with("DEV9 write8 ") ||
+		line.starts_with("DEV9 write16 ") || line.starts_with("DEV9 write32 ");
+}
+
 // Disc serial is evidence of the boot DISC, not proof about arbitrary HDD
 // contents. The known BB Navigator serial can enable the profile for an ISO
 // boot; a direct no-disc HDD boot must use the explicit Extended override
