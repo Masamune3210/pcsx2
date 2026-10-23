@@ -7,7 +7,6 @@
 
 #include "IopDma.h"
 #include "R3000A.h"
-#include "IopHw.h"
 #include "EEExecutionProfile.h"
 #include "Host.h"
 
@@ -214,7 +213,6 @@ s32 DEV9open()
 void DEV9close()
 {
 	DevCon.WriteLn("DEV9: DEV9close");
-	IopMemory::ReportGuestDEV9ConsoleTraceSummary();
 	if (EEExecutionProfile::IsExtendedMMU() && !s_verboseIFCtrlWarnings &&
 		(s_ifCtrlBit4Seen > 1 || s_ifCtrlBit5Seen > 1))
 		Console.WriteLn("DEV9-IFCTRL-WARN-SUMMARY bit4=%llu bit5=%llu suppressed=%llu",
