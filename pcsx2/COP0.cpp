@@ -1038,7 +1038,9 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	auto finishSync = [&]()
 	{
 		if (perfSync)
-			EEPerformanceProbe::Record(EEPerformanceProbe::tlbSyncs, started);
+			EEPerformanceProbe::RecordTLBSync(*perfSyncRoute, started,
+				cause == EEJitInvalidationCause::ASIDProjection,
+				perfSyncCandidates, removed, installed, permissionOnlyUpdates, unchanged);
 		if (!profiling)
 			return;
 		auto& s = s_ee_tlb_churn;
