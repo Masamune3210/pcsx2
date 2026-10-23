@@ -1035,8 +1035,39 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	u32 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
 	EEPerformanceProbe::Event* perfSyncRoute = &EEPerformanceProbe::tlbFullRebuilds;
 	std::size_t perfSyncCandidates = 0;
+	struct PerfStage
+	{
+		u64 calls = 0;
+		u64 nanos = 0;
+	};
+	PerfStage perfProjection, perfVmapRemove, perfVmapInstall, perfCodeClear;
+	PerfStage perfLutRemove, perfLutInstall, perfPublish;
+	auto measureStage = [&](PerfStage& stage, auto&& work)
+	{
+		if (!perfSync)
+		{
+			work();
+			return;
+		}
+		const auto began = EEPerformanceProbe::Clock::now();
+		work();
+		stage.nanos += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+			EEPerformanceProbe::Clock::now() - began).count());
+		++stage.calls;
+	};
 	auto finishSync = [&]()
 	{
+		if (perfSync)
+		{
+			using EEPerformanceProbe::RecordBatch;
+			RecordBatch(EEPerformanceProbe::tlbProjectionWork, perfProjection.calls, perfProjection.nanos);
+			RecordBatch(EEPerformanceProbe::tlbVmapRemovals, perfVmapRemove.calls, perfVmapRemove.nanos);
+			RecordBatch(EEPerformanceProbe::tlbVmapInstalls, perfVmapInstall.calls, perfVmapInstall.nanos);
+			RecordBatch(EEPerformanceProbe::tlbCodeInvalidations, perfCodeClear.calls, perfCodeClear.nanos);
+			RecordBatch(EEPerformanceProbe::tlbLutRemovals, perfLutRemove.calls, perfLutRemove.nanos);
+			RecordBatch(EEPerformanceProbe::tlbLutInstalls, perfLutInstall.calls, perfLutInstall.nanos);
+			RecordBatch(EEPerformanceProbe::tlbMapPublications, perfPublish.calls, perfPublish.nanos);
+		}
 		if (perfSync)
 			EEPerformanceProbe::RecordTLBSync(*perfSyncRoute, started,
 				cause == EEJitInvalidationCause::ASIDProjection,
@@ -1088,7 +1119,8 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			return;
 		}
 #endif
-		ClearActiveTLBCodePage(page, mapping, cause, mappingAction);
+		measureStage(perfCodeClear,
+			[&] { ClearActiveTLBCodePage(page, mapping, cause, mappingAction); });
 	};
 
 	// Only touch the guest VPNs contributed by changed selected TLB slots when
@@ -1097,9 +1129,12 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	static constexpr std::size_t MaxDeltaPages = 64;
 	std::array<u32, MaxDeltaPages> candidatePages{};
 	std::size_t candidateCount = 0;
-	bool smallDelta = EEExecutionProfile::IsExtendedMMU() &&
-		s_active_tlb_projection.CollectChangedPages(tlb, std::size(tlb), asid,
-			candidatePages, candidateCount);
+	bool smallDelta = false;
+	measureStage(perfProjection, [&] {
+		smallDelta = EEExecutionProfile::IsExtendedMMU() &&
+			s_active_tlb_projection.CollectChangedPages(tlb, std::size(tlb), asid,
+				candidatePages, candidateCount);
+	});
 	std::array<EEActiveTLBDelta, MaxDeltaPages> delta{};
 	// When COP0 tracing is active, periodically compare the bounded delta
 	// against the independent full projection BEFORE mutating any host state.
@@ -1135,8 +1170,10 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			perfSyncRoute = &EEPerformanceProbe::tlbSmallDeltas;
 			perfSyncCandidates = candidateCount;
 		}
-		PlanEEActiveTLBDelta(s_active_tlb_pages, tlb, std::size(tlb),
-			asid, candidatePages, candidateCount, delta);
+		measureStage(perfProjection, [&] {
+			PlanEEActiveTLBDelta(s_active_tlb_pages, tlb, std::size(tlb),
+				asid, candidatePages, candidateCount, delta);
+		});
 		if (profiling)
 		{
 			++s_ee_tlb_churn.smallDeltaSyncs;
@@ -1150,7 +1187,9 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	}
 	EEActiveTLBPageMap desired;
 	if (!smallDelta)
-		desired = BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid);
+		measureStage(perfProjection, [&] {
+			desired = BuildEEActiveTLBPageMap(tlb, std::size(tlb), asid);
+		});
 
 	// Remove obsolete mappings first. Every removal also invalidates generated
 	// guest code and fastmem aliases through the existing PCSX2 machinery.
@@ -1161,10 +1200,10 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 			if (action == EEActiveTLBMappingAction::Remove)
 			{
 				++removed;
-				memClearPageAddr(page << 12);
+				measureStage(perfVmapRemove, [&] { memClearPageAddr(page << 12); });
 				clearCodeForMapping(page, mapping, "remove");
 #if defined(_M_X64) || defined(__x86_64__)
-				recUnmapTLBPage(page << 12);
+				measureStage(perfLutRemove, [&] { recUnmapTLBPage(page << 12); });
 #endif
 				return;
 			}
@@ -1187,10 +1226,12 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 				scratchBasesToUpdate.insert(page - (mapping.physicalAddress >> 12));
 				return;
 			}
-			memSetPageAddr(page << 12, mapping.physicalAddress);
+			measureStage(perfVmapInstall,
+				[&] { memSetPageAddr(page << 12, mapping.physicalAddress); });
 			clearCodeForMapping(page, mapping, "install");
 #if defined(_M_X64) || defined(__x86_64__)
-			recMapTLBPage(page << 12, mapping.physicalAddress);
+			measureStage(perfLutInstall,
+				[&] { recMapTLBPage(page << 12, mapping.physicalAddress); });
 #endif
 		};
 	if (smallDelta)
@@ -1215,7 +1256,10 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 		}
 		// Host-vTLB/code changes above are complete. Publish the new selected
 		// permissions and page ownership before the scratchpad batch setup.
-		const std::size_t published = PublishEEActiveTLBDelta(s_active_tlb_pages, delta, candidateCount);
+		std::size_t published = 0;
+		measureStage(perfPublish, [&] {
+			published = PublishEEActiveTLBDelta(s_active_tlb_pages, delta, candidateCount);
+		});
 		if (perfSync)
 		{
 			EEPerformanceProbe::tlbDeltaPublishedPages.fetch_add(published, std::memory_order_relaxed);
