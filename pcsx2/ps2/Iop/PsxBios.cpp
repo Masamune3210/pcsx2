@@ -4,7 +4,6 @@
 #include "Common.h"
 #include "R3000A.h"
 #include "IopMem.h"
-#include "IopHw.h"
 
 #include "fmt/format.h"
 
@@ -32,12 +31,7 @@ static void flush_stdout(bool closing = false)
                     psxout_repeat = 0;
                 }
                 psxout_last = psxout_buf.substr(0, linelen);
-                // PSX BIOS syscall output bypasses IopBios Kprintf, ioman
-                // and hardware stdout. This is a guest diagnostic sink only.
-                if (!IopMemory::ShouldSuppressGuestDEV9ConsoleTrace(
-                        std::string_view(psxout_last),
-                        IopMemory::GuestDEV9ConsoleSource::BiosCallStdout))
-                    iopConLog(ShiftJIS_ConvertString(psxout_last.data()));
+                iopConLog(ShiftJIS_ConvertString(psxout_last.data()));
             }
         }
         psxout_buf.erase(0, linelen);
