@@ -1033,6 +1033,8 @@ void SyncActiveTLBMappings(EEJitInvalidationCause cause)
 	if (profiling || perfSync)
 		started = std::chrono::steady_clock::now();
 	u32 removed = 0, installed = 0, unchanged = 0, permissionOnlyUpdates = 0;
+	EEPerformanceProbe::Event* perfSyncRoute = &EEPerformanceProbe::tlbFullRebuilds;
+	std::size_t perfSyncCandidates = 0;
 	auto finishSync = [&]()
 	{
 		if (perfSync)
