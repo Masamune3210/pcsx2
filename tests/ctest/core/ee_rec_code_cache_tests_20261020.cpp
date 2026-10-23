@@ -86,6 +86,8 @@ TEST(EEPerformanceProbe, TLBSyncRouteAccountingIsDisjointAndResets)
 	EXPECT_EQ(Read(tlbFullRebuilds.calls), 1u);
 	EXPECT_EQ(Read(tlbAsidSyncs), 1u);
 	EXPECT_EQ(Read(tlbDeltaCandidatePages), 3u);
+	EXPECT_EQ(Read(tlbDeltaPublishedPages), 0u);
+	EXPECT_EQ(Read(tlbDeltaNoopPages), 0u);
 	EXPECT_EQ(Read(tlbRemovedMappings), 4u);
 	EXPECT_EQ(Read(tlbInstalledMappings), 7u);
 	EXPECT_EQ(Read(tlbPermissionUpdates), 1u);
@@ -99,6 +101,8 @@ TEST(EEPerformanceProbe, TLBSyncRouteAccountingIsDisjointAndResets)
 	EXPECT_EQ(Read(tlbFullRebuilds.calls), 0u);
 	EXPECT_EQ(Read(tlbRemovedMappings), 0u);
 	EXPECT_EQ(Read(tlbAsidSyncs), 0u);
+	EXPECT_EQ(Read(tlbDeltaPublishedPages), 0u);
+	EXPECT_EQ(Read(tlbDeltaNoopPages), 0u);
 }
 
 TEST(EERecCodeCacheCapacity, StandardPreservesOriginalLimitAndExtendedIsSelectable)
