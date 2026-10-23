@@ -1579,7 +1579,9 @@ static void recReserveRAM()
 static void recReserve()
 {
 	recPtr = SysMemory::GetEERec();
-	recPtrEnd = SysMemory::GetEERecEnd() - _64kb;
+	recPtrEnd = SysMemory::GetEERec() +
+		(EEExecutionProfile::IsExtendedMMU() ? HostMemoryMap::EErecSize :
+			HostMemoryMap::EErecStandardSize) - _64kb;
 	recReserveRAM();
 
 	pxAssertRel(!s_pInstCache, "InstCache not allocated");
@@ -1639,7 +1641,8 @@ static void recResetRaw()
 			static_cast<unsigned long long>(s_recPhysicalClearCalls),
 			static_cast<unsigned long long>(s_recSkippedUncompiledPageClears),
 			static_cast<unsigned long long>(cachedBytes),
-			static_cast<unsigned long long>(SysMemory::GetEERecEnd() - SysMemory::GetEERec()));
+			static_cast<unsigned long long>(recPtrEnd && SysMemory::GetEERec() ?
+			recPtrEnd + _64kb - SysMemory::GetEERec() : 0));
 		recReportCoherence("reset");
 	}
 	else if (s_recLinkOwnershipEnabled)
@@ -1661,6 +1664,18 @@ static void recResetRaw()
 	s_recResetReasons = 0;
 	EERecResetDispatchMode(g_recUseGuestTLBDispatch, eeRecResetToNative);
 	eeRecResetToNative = false;
+	// The profile is boot-latched, but the JIT arena is mapped at emulator
+	// startup before the guest's execution policy is necessarily selected.
+	// Refresh the code generation limit at every reset. Standard keeps the
+	// original 64 MiB window; Extended uses the whole 256 MiB reservation.
+	recPtrEnd = SysMemory::GetEERec() +
+		(EEExecutionProfile::IsExtendedMMU() ? HostMemoryMap::EErecSize :
+			HostMemoryMap::EErecStandardSize) - _64kb;
+	if (PSBBNTlbTraceEnabled())
+		Console.WriteLn("EE-JIT-CACHE-CONFIG mode=%s capacity=%llu reserve=%llu",
+			EEExecutionProfile::IsExtendedMMU() ? "extended" : "standard",
+			static_cast<unsigned long long>(recPtrEnd + _64kb - SysMemory::GetEERec()),
+			static_cast<unsigned long long>(HostMemoryMap::EErecSize));
 	Console.WriteLn(Color_StrongBlack, "EE/iR5900 Recompiler Reset");
 
 	if (CHECK_EXTRAMEM != extraRam)
