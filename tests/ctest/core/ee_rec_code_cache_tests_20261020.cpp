@@ -219,6 +219,111 @@ TEST_F(EERecCodeCache, LinkMutationMetricsCoverPendingPublishRemoveAndRepeatedPa
 	EXPECT_EQ(metrics.linkPatchSkips, 4U);
 }
 
+// Extended fine mode: do not leave retired-source rel32 sites in the
+// target's relink multimap, but do make their bytes safe for in-flight returns.
+// DispatcherReg is essential here: JITCompile requires an invalid target LUT
+// entry, which is NOT guaranteed when only the source was retired.
+TEST_F(EERecCodeCache, RetiredSourceDetachesToDispatcherButLiveOrUnknownSourcesStillRelink)
+{
+	const uptr source = reinterpret_cast<uptr>(firstCode.data());
+	const uptr target = reinterpret_cast<uptr>(secondCode.data());
+	const uptr dispatcher = reinterpret_cast<uptr>(dispatcherCode.data());
+	AddBlock(0x3000, 4, source);
+	AddBlock(0x6000, 4, target);
+	blocks.SetRetiredSourceDispatcher(dispatcher);
+
+	BaseBlocks::Metrics metrics;
+	s32 owned = 0, unknownOwner = 0;
+	blocks.Link(0x6000, &owned, &metrics, source);
+	blocks.Link(0x6000, &unknownOwner, &metrics);
+	ASSERT_EQ(blocks.GetLiveMetrics().linkRecords, 2u);
+	EXPECT_EQ(owned, static_cast<s32>(target - (reinterpret_cast<uptr>(&owned) + sizeof(s32))));
+	blocks.Remove(0, 0, &metrics); // Retire only the 0x3000 source.
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 1u);
+	EXPECT_EQ(metrics.retiredSourceLinksDetached, 1u);
+	EXPECT_EQ(metrics.retiredSourceDispatchWrites, 1u);
+	EXPECT_EQ(owned, static_cast<s32>(dispatcher - (reinterpret_cast<uptr>(&owned) + sizeof(s32))));
+	EXPECT_EQ(unknownOwner, static_cast<s32>(target - (reinterpret_cast<uptr>(&unknownOwner) + sizeof(s32))));
+
+	blocks.Remove(0, 0, &metrics); // Retire the target.
+	EXPECT_EQ(unknownOwner, static_cast<s32>(compiler - (reinterpret_cast<uptr>(&unknownOwner) + sizeof(s32))));
+	const uptr replacement = reinterpret_cast<uptr>(firstCode.data() + 8);
+	blocks.New(0x6000, replacement, &metrics);
+	EXPECT_EQ(unknownOwner, static_cast<s32>(replacement - (reinterpret_cast<uptr>(&unknownOwner) + sizeof(s32))));
+	EXPECT_EQ(owned, static_cast<s32>(dispatcher - (reinterpret_cast<uptr>(&owned) + sizeof(s32))));
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 1u);
+	EXPECT_EQ(metrics.retiredSourceLinksDetached, 1u);
+}
+
+TEST_F(EERecCodeCache, BatchSourceRetirementHandlesSelfLinksAndMultipleOwners)
+{
+	const uptr sourceA = reinterpret_cast<uptr>(firstCode.data());
+	const uptr sourceB = reinterpret_cast<uptr>(secondCode.data());
+	const uptr target = reinterpret_cast<uptr>(dispatcherCode.data());
+	const uptr safeDispatcher = reinterpret_cast<uptr>(compilerCode.data() + 8);
+	AddBlock(0x3000, 4, sourceA);
+	AddBlock(0x3010, 4, sourceB);
+	AddBlock(0x6000, 4, target);
+	blocks.SetRetiredSourceDispatcher(safeDispatcher);
+
+	s32 aToTarget = 0, bToTarget = 0, aToSelf = 0;
+	BaseBlocks::Metrics metrics;
+	blocks.Link(0x6000, &aToTarget, &metrics, sourceA);
+	blocks.Link(0x6000, &bToTarget, &metrics, sourceB);
+	blocks.Link(0x3000, &aToSelf, &metrics, sourceA);
+	ASSERT_EQ(blocks.GetLiveMetrics().linkRecords, 3u);
+	blocks.Remove(0, 1, &metrics);
+	EXPECT_EQ(metrics.retiredSourceLinksDetached, 3u);
+	EXPECT_EQ(metrics.retiredSourceDispatchWrites, 3u);
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 0u);
+	for (const s32* site : {&aToTarget, &bToTarget, &aToSelf})
+		EXPECT_EQ(*site, static_cast<s32>(safeDispatcher - (reinterpret_cast<uptr>(site) + sizeof(s32))));
+	blocks.Remove(0, 0, &metrics);
+	blocks.New(0x6000, sourceA, &metrics);
+	for (const s32* site : {&aToTarget, &bToTarget, &aToSelf})
+		EXPECT_EQ(*site, static_cast<s32>(safeDispatcher - (reinterpret_cast<uptr>(site) + sizeof(s32))));
+}
+
+TEST_F(EERecCodeCache, NativeOwnerHintsDoNotChangeOriginalLinkLifetime)
+{
+	const uptr source = reinterpret_cast<uptr>(firstCode.data());
+	const uptr target = reinterpret_cast<uptr>(secondCode.data());
+	AddBlock(0x3000, 4, source);
+	AddBlock(0x6000, 4, target);
+	BaseBlocks::Metrics metrics;
+	s32 jump = 0;
+	blocks.Link(0x6000, &jump, &metrics, source);
+	blocks.Remove(0, 0, &metrics);
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 1u);
+	EXPECT_EQ(metrics.retiredSourceLinksDetached, 0u);
+	EXPECT_EQ(jump, static_cast<s32>(target - (reinterpret_cast<uptr>(&jump) + sizeof(s32))));
+	blocks.Remove(0, 0, &metrics);
+	EXPECT_EQ(jump, static_cast<s32>(compiler - (reinterpret_cast<uptr>(&jump) + sizeof(s32))));
+	const uptr replacement = reinterpret_cast<uptr>(dispatcherCode.data());
+	blocks.New(0x6000, replacement, &metrics);
+	EXPECT_EQ(jump, static_cast<s32>(replacement - (reinterpret_cast<uptr>(&jump) + sizeof(s32))));
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 1u);
+}
+
+TEST_F(EERecCodeCache, FineSourceIndexDoesNotOutliveCodeArenaReset)
+{
+	const uptr source = reinterpret_cast<uptr>(firstCode.data());
+	const uptr dispatcher = reinterpret_cast<uptr>(dispatcherCode.data());
+	AddBlock(0x3000, 4, source);
+	blocks.SetRetiredSourceDispatcher(dispatcher);
+	s32 oldJump = 0;
+	blocks.Link(0x4000, &oldJump, nullptr, source);
+	ASSERT_EQ(blocks.GetLiveMetrics().linkRecords, 1u);
+	blocks.Reset();
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 0u);
+	blocks.SetRetiredSourceDispatcher(dispatcher);
+	AddBlock(0x3000, 4, source);
+	BaseBlocks::Metrics metrics;
+	blocks.Remove(0, 0, &metrics);
+	EXPECT_EQ(metrics.retiredSourceLinksDetached, 0u);
+	EXPECT_EQ(blocks.GetLiveMetrics().linkRecords, 0u);
+}
+
 TEST_F(EERecCodeCache, DispatcherLinkUsesSameIdempotentPatchAccounting)
 {
 	BaseBlocks::Metrics metrics;
