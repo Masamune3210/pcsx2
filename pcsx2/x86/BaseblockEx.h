@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <map>
+#include <unordered_map>
 
 #include "common/Assertions.h"
 
@@ -143,7 +144,7 @@ class BaseBlocks
 public:
 	// Optional observational callbacks. A link site is an x86 rel32 displacement;
 	// notifications never participate in deciding whether it can be patched.
-	enum class LinkEvent : u8 { Register, TargetCompiled, TargetRemoved };
+	enum class LinkEvent : u8 { Register, TargetCompiled, TargetRemoved, SourceDetached };
 	using LinkObserver = void (*)(LinkEvent event, u32 targetPC, uptr jumpSite,
 		uptr destination, bool wrote, void* context);
 protected:
@@ -151,6 +152,10 @@ protected:
 
 	// switch to a hash map later?
 	std::multimap<u32, uptr> links;
+	// Only populated in Extended fine dispatch. Iterator stability is guaranteed
+	// by std::multimap, including insertion of other incoming target links.
+	std::unordered_multimap<uptr, linkiter_t> outgoingByOwner;
+	uptr retiredSourceDispatcher = 0;
 	uptr recompiler;
 	BaseBlockArray blocks;
 	LinkObserver linkObserver = nullptr;
@@ -173,6 +178,8 @@ public:
 		u64 linkPatchAttempts = 0;
 		u64 linkPatchWrites = 0;
 		u64 linkPatchSkips = 0;
+		u64 retiredSourceLinksDetached = 0;
+		u64 retiredSourceDispatchWrites = 0;
 
 		void Reset() { *this = {}; }
 	};
@@ -194,6 +201,15 @@ public:
 	{
 		linkObserver = observer;
 		linkObserverContext = context;
+	}
+
+	// DispatcherReg performs an active guest-virtual lookup. A retired source
+	// must NOT branch directly to JITCompile: its target may already be live.
+	// Setting zero preserves the original native/Standard linking lifetime.
+	void SetRetiredSourceDispatcher(uptr dispatcher)
+	{
+		pxAssert(outgoingByOwner.empty());
+		retiredSourceDispatcher = dispatcher;
 	}
 
 	void SetJITCompile(const void *recompiler_)
@@ -268,6 +284,34 @@ public:
 		RemovalObserver observer = nullptr, void* observerContext = nullptr)
 	{
 		pxAssert(first <= last);
+		// Redirect the retiring source's outgoing rel32 jumps to *virtual*
+		// dispatch before unindexing their link records. Generated host code
+		// may still resume after a helper returns: its branch must remain
+		// executable and resolve the current ASID/VPN, not target stale code.
+		// Do this before patching incoming links: self-links may be present.
+		if (retiredSourceDispatcher)
+		{
+			for (int sourceIdx = first; sourceIdx <= last; ++sourceIdx)
+			{
+				const auto range = outgoingByOwner.equal_range(blocks[sourceIdx].fnptr);
+				for (auto it = range.first; it != range.second; ++it)
+				{
+					const linkiter_t record = it->second;
+					const bool wrote = PatchLink(reinterpret_cast<s32*>(record->second),
+						retiredSourceDispatcher, metrics);
+					if (metrics)
+					{
+						++metrics->retiredSourceLinksDetached;
+						metrics->retiredSourceDispatchWrites += wrote ? 1 : 0;
+					}
+					if (linkObserver)
+						linkObserver(LinkEvent::SourceDetached, record->first, record->second,
+							retiredSourceDispatcher, wrote, linkObserverContext);
+					links.erase(record);
+				}
+				outgoingByOwner.erase(range.first, range.second);
+			}
+		}
 		int idx = first;
 		do
 		{
@@ -308,12 +352,16 @@ public:
 		blocks.erase(first, last + 1);
 	}
 
-	void Link(u32 pc, s32* jumpptr, Metrics* metrics = nullptr);
+	// ownerHost is the start of the emitting compiled block, not the target.
+	// Only Extended fine dispatch supplies it; existing callers pass zero.
+	void Link(u32 pc, s32* jumpptr, Metrics* metrics = nullptr, uptr ownerHost = 0);
 
 	__fi void Reset()
 	{
 		blocks.clear();
+		outgoingByOwner.clear();
 		links.clear();
+		retiredSourceDispatcher = 0;
 	}
 };
 
