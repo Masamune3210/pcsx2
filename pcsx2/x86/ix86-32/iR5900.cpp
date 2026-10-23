@@ -1735,6 +1735,7 @@ static void recResetRaw()
 
 void recShutdown()
 {
+	EEReportTLBFaultLogSummary();
 	recReportLinkOwnership("provider-shutdown");
 	recTraceRemainingBlocks("provider-shutdown");
 	recBlocks.SetLinkObserver(nullptr, nullptr);
