@@ -147,7 +147,7 @@ void MemcardBusy::SetBusy()
 
 bool MemcardBusy::IsBusy()
 {
-	return (currentBusyTicks.load(std::memory_order_acquire) > 0);
+	return (currentBusyTicks.load(std::memory_order_acquire) > 0) || FileMcd_HasPendingWrites();
 }
 
 void MemcardBusy::ClearBusy()

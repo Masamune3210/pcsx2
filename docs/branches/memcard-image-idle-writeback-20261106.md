@@ -12,13 +12,15 @@ Direct memory-card image reads, read/modify/writes, and erases block emulation o
 - All guest reads use the buffer. Save and erase retain existing PS2 bit-clear/erase behavior.
 - Every guest write checks the backing file's size and timestamps before mutating RAM.
 - Before a batch is written, read and hash the complete backing file to detect changes missed by timestamp granularity.
-- Write back only dirty 528-byte pages after two seconds without card access, with a 15-second maximum dirty duration.
+- Write back only dirty 528-byte pages after five seconds without card access, with a 15-second maximum dirty duration.
 - Flush on close/eject. Stop writing on conflicts or I/O failure, reporting and attempting to preserve an image copy under the local PCSX2 cache directory.
+- Expose pending image writeback to the existing `MemcardBusy::IsBusy()` shutdown/reset/savestate guard. The pending flag remains set until `fflush()` and the final size check succeed; failed writebacks stay guarded until the user explicitly overrides shutdown.
+- Include the legacy checksum header update in each successful idle batch rather than leaving it pending until close.
 - Never reject intermediate PS2 filesystem states just because a game is mid-format/save; sanity checking verifies safe image shape and bounds instead.
 - Keep the existing non-ECC conversion path and legacy checksum behavior.
 
 ## Current state / verification
-- Implemented on this branch only (initial commit dd7eab7e; follow-up fixes for save notifications, recovery checksum and partial-write errors). Do not merge into testing before compilation and an end-to-end save/load test.
+- Implemented on this branch only (initial commit dd7eab7e; follow-up fixes for save notifications, recovery checksum, partial-write errors, five-second idle timing and exit protection). Do not merge into testing before compilation and an end-to-end save/load test.
 - Static review only. No local Windows/PCSX2 compiler or rclone mount available in this environment.
 - Important limitation: deferred flush occurs on the emulation thread and can still cause one stall per batch. It removes repeated tiny filesystem reads/writes, but fully asynchronous writeback is a possible subsequent improvement. Emulation pause stops the per-frame timer; close/eject flush still runs. On rclone VFS mounts, fflush may reach the VFS cache rather than the remote backend until the file is closed.
 - Metadata verification on every write may still be expensive on some remote mounts. Existing Win32 write-share denial only protects other writers using the same local mount, not remote-side changes. Remote VFS caching may also hide direct remote edits.

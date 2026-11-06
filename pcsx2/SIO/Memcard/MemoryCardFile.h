@@ -40,6 +40,8 @@ uint FileMcd_ConvertToSlot(uint port, uint slot);
 void FileMcd_SetType();
 void FileMcd_EmuOpen();
 void FileMcd_EmuClose();
+// True while any file-based memory card contains data not yet flushed to its image.
+bool FileMcd_HasPendingWrites();
 void FileMcd_CancelEject();
 void FileMcd_Reopen(std::string new_serial);
 void FileMcd_Swap();

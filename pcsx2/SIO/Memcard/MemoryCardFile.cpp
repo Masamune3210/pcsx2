@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 
 #include "Config.h"
@@ -173,6 +174,8 @@ protected:
 	bool m_dirty[8] = {};
 	bool m_failed[8] = {};
 	bool m_checksumChanged[8] = {};
+	// Readable by the UI thread while the VM is paused. Cleared only on successful writeback/close.
+	std::atomic_uint32_t m_pendingFlushMask{0};
 	std::chrono::steady_clock::time_point m_lastAccess[8] = {};
 	std::chrono::steady_clock::time_point m_firstDirty[8] = {};
 	u64 m_chksum[8] = {};
@@ -189,6 +192,7 @@ public:
 	void Open();
 	void Close();
 	void NextFrame(uint slot);
+	bool HasPendingWrites() const { return m_pendingFlushMask.load(std::memory_order_acquire) != 0; }
 
 	s32 IsPresent(uint slot);
 	void GetSizeInfo(uint slot, McdSizeInfo& outways);
@@ -200,7 +204,7 @@ public:
 
 protected:
 	static constexpr size_t DIRTY_PAGE_SIZE = 528;
-	static constexpr auto WRITEBACK_IDLE = std::chrono::seconds(2);
+	static constexpr auto WRITEBACK_IDLE = std::chrono::seconds(5);
 	static constexpr auto WRITEBACK_MAX_DELAY = std::chrono::seconds(15);
 
 	static u64 HashBytes(const u8* data, size_t size, u64 hash = 14695981039346656037ull);
@@ -287,6 +291,7 @@ FileMemoryCard::~FileMemoryCard() = default;
 
 void FileMemoryCard::Open()
 {
+	m_pendingFlushMask.store(0, std::memory_order_release);
 	for (int slot = 0; slot < 8; ++slot)
 	{
 		m_filenames[slot] = {};
@@ -393,6 +398,7 @@ void FileMemoryCard::Close()
 
 		std::fclose(m_file[slot]);
 		m_file[slot] = nullptr;
+		m_pendingFlushMask.fetch_and(~(1u << slot), std::memory_order_release);
 
 		// Never overwrite the non-ECC source if persistence has failed.
 		if (!m_failed[slot] && (m_filenames[slot].ends_with(".bin") || m_filenames[slot].ends_with(".mc2")))
@@ -568,6 +574,7 @@ void FileMemoryCard::MarkDirty(uint slot, size_t offset, size_t length)
 	const size_t first = offset / DIRTY_PAGE_SIZE;
 	const size_t last = (offset + length - 1) / DIRTY_PAGE_SIZE;
 	std::fill(m_dirtyPages[slot].begin() + first, m_dirtyPages[slot].begin() + last + 1, 1);
+	m_pendingFlushMask.fetch_or(1u << slot, std::memory_order_release);
 }
 
 void FileMemoryCard::FailCard(uint slot, const char* reason)
@@ -611,6 +618,16 @@ bool FileMemoryCard::Flush(uint slot)
 	{
 		FailCard(slot, "Pending memory card image is not structurally valid");
 		return false;
+	}
+
+	// The legacy header checksum was previously saved only on close.
+	// Fold it into this batch so that a successful idle flush really leaves
+	// no outstanding image data to protect.
+	if (m_checksumChanged[slot] && !m_ispsx[slot] &&
+		m_image[slot].size() >= m_chkaddr + sizeof(m_chksum[slot]))
+	{
+		std::memcpy(m_image[slot].data() + m_chkaddr, &m_chksum[slot], sizeof(m_chksum[slot]));
+		MarkDirty(slot, m_chkaddr, sizeof(m_chksum[slot]));
 	}
 
 	// Detect external modifications even if timestamps have only one-second resolution.
@@ -659,6 +676,8 @@ bool FileMemoryCard::Flush(uint slot)
 	m_diskHashes[slot] = HashBytes(image.data(), image.size());
 	std::fill(m_dirtyPages[slot].begin(), m_dirtyPages[slot].end(), 0);
 	m_dirty[slot] = false;
+	m_checksumChanged[slot] = false;
+	m_pendingFlushMask.fetch_and(~(1u << slot), std::memory_order_release);
 
 	static auto lastNotification = std::chrono::time_point<std::chrono::system_clock>();
 	const auto currentTime = std::chrono::system_clock::now();
@@ -840,6 +859,11 @@ void FileMcd_EmuOpen()
 	Mcd::impl.Open();
 	Mcd::implFolder.SetFiltering(EmuConfig.McdFolderAutoManage);
 	Mcd::implFolder.Open();
+}
+
+bool FileMcd_HasPendingWrites()
+{
+	return Mcd::impl.HasPendingWrites();
 }
 
 void FileMcd_EmuClose()
