@@ -14,6 +14,7 @@
 #include "common/Path.h"
 #include "common/StringUtil.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 
@@ -162,7 +163,18 @@ protected:
 	std::FILE* m_file[8] = {};
 	s64 m_fileSize[8] = {};
 	std::string m_filenames[8] = {};
-	std::vector<u8> m_currentdata;
+	// The image is loaded lazily once per open session. Only the emulation thread mutates it.
+	std::vector<u8> m_image[8];
+	std::vector<u8> m_dirtyPages[8];
+	std::string m_diskPaths[8];
+	FILESYSTEM_STAT_DATA m_diskStat[8] = {};
+	u64 m_diskHashes[8] = {};
+	bool m_loaded[8] = {};
+	bool m_dirty[8] = {};
+	bool m_failed[8] = {};
+	bool m_checksumChanged[8] = {};
+	std::chrono::steady_clock::time_point m_lastAccess[8] = {};
+	std::chrono::steady_clock::time_point m_firstDirty[8] = {};
 	u64 m_chksum[8] = {};
 	bool m_ispsx[8] = {};
 	u32 m_chkaddr = 0;
@@ -176,6 +188,7 @@ public:
 
 	void Open();
 	void Close();
+	void NextFrame(uint slot);
 
 	s32 IsPresent(uint slot);
 	void GetSizeInfo(uint slot, McdSizeInfo& outways);
@@ -186,6 +199,18 @@ public:
 	u64 GetCRC(uint slot);
 
 protected:
+	static constexpr size_t DIRTY_PAGE_SIZE = 528;
+	static constexpr auto WRITEBACK_IDLE = std::chrono::seconds(2);
+	static constexpr auto WRITEBACK_MAX_DELAY = std::chrono::seconds(15);
+
+	static u64 HashBytes(const u8* data, size_t size, u64 hash = 14695981039346656037ull);
+	bool EnsureLoaded(uint slot);
+	bool CheckBackingUnchanged(uint slot);
+	bool CheckBackingContents(uint slot);
+	bool IsImageSane(uint slot) const;
+	void MarkDirty(uint slot, size_t offset, size_t length);
+	void FailCard(uint slot, const char* reason);
+	bool Flush(uint slot);
 	bool Seek(std::FILE* f, u32 adr);
 	bool Create(const char* mcdFile, uint sizeInMB);
 };
@@ -265,6 +290,14 @@ void FileMemoryCard::Open()
 	for (int slot = 0; slot < 8; ++slot)
 	{
 		m_filenames[slot] = {};
+		m_diskPaths[slot].clear();
+		m_image[slot].clear();
+		m_dirtyPages[slot].clear();
+		m_loaded[slot] = false;
+		m_dirty[slot] = false;
+		m_failed[slot] = false;
+		m_checksumChanged[slot] = false;
+		m_chksum[slot] = 0;
 
 		if (EmuConfig.Mcd[slot].Type != MemoryCardType::File)
 			continue;
@@ -307,10 +340,12 @@ void FileMemoryCard::Open()
 
 			// store the original filename
 			m_file[slot] = FileSystem::OpenSharedCFile(newname.c_str(), "r+b", FileSystem::FileShareMode::DenyWrite);
+			m_diskPaths[slot] = std::move(newname);
 		}
 		else
 		{
 			m_file[slot] = FileSystem::OpenSharedCFile(fname.c_str(), "r+b", FileSystem::FileShareMode::DenyWrite);
+			m_diskPaths[slot] = fname;
 		}
 
 		if (!m_file[slot])
@@ -333,13 +368,7 @@ void FileMemoryCard::Open()
 			m_filenames[slot] = std::move(fname);
 			m_ispsx[slot] = m_fileSize[slot] == 0x20000;
 			m_chkaddr = 0x210;
-
-			if (!m_ispsx[slot] && FileSystem::FSeek64(m_file[slot], m_chkaddr, SEEK_SET) == 0)
-			{
-				const size_t read_result = std::fread(&m_chksum[slot], sizeof(m_chksum[slot]), 1, m_file[slot]);
-				if (read_result == 0)
-					Host::ReportErrorAsync("Memory Card Read Failed", "Error reading memory card.");
-			}
+			// The full image and checksum are loaded on first guest access.
 		}
 	}
 }
@@ -351,14 +380,22 @@ void FileMemoryCard::Close()
 		if (!m_file[slot])
 			continue;
 
-		// Store checksum
-		if (!m_ispsx[slot] && FileSystem::FSeek64(m_file[slot], m_chkaddr, SEEK_SET) == 0)
-			std::fwrite(&m_chksum[slot], sizeof(m_chksum[slot]), 1, m_file[slot]);
+		// Preserve the legacy checksum write, but include it in the final batched flush.
+		if (m_loaded[slot] && m_checksumChanged[slot] && !m_ispsx[slot] &&
+			m_image[slot].size() >= (m_chkaddr + sizeof(m_chksum[slot])))
+		{
+			std::memcpy(m_image[slot].data() + m_chkaddr, &m_chksum[slot], sizeof(m_chksum[slot]));
+			MarkDirty(slot, m_chkaddr, sizeof(m_chksum[slot]));
+		}
+
+		if (m_dirty[slot] && !m_failed[slot])
+			Flush(slot);
 
 		std::fclose(m_file[slot]);
 		m_file[slot] = nullptr;
 
-		if (m_filenames[slot].ends_with(".bin") || m_filenames[slot].ends_with(".mc2"))
+		// Never overwrite the non-ECC source if persistence has failed.
+		if (!m_failed[slot] && (m_filenames[slot].ends_with(".bin") || m_filenames[slot].ends_with(".mc2")))
 		{
 			const std::string name_in(m_filenames[slot] + 'x');
 			if (ConvertRAWtoNoECC(name_in.c_str(), m_filenames[slot].c_str()))
@@ -366,6 +403,13 @@ void FileMemoryCard::Close()
 		}
 
 		m_filenames[slot] = {};
+		m_diskPaths[slot].clear();
+		m_image[slot].clear();
+		m_dirtyPages[slot].clear();
+		m_loaded[slot] = false;
+		m_dirty[slot] = false;
+		m_failed[slot] = false;
+		m_checksumChanged[slot] = false;
 		m_fileSize[slot] = -1;
 	}
 }
@@ -424,144 +468,317 @@ bool FileMemoryCard::IsPSX(uint slot)
 	return m_ispsx[slot];
 }
 
+u64 FileMemoryCard::HashBytes(const u8* data, size_t size, u64 hash)
+{
+	for (size_t i = 0; i < size; ++i)
+		hash = (hash ^ data[i]) * 1099511628211ull;
+	return hash;
+}
+
+bool FileMemoryCard::EnsureLoaded(uint slot)
+{
+	if (m_loaded[slot])
+		return true;
+	if (!m_file[slot] || m_failed[slot] || m_fileSize[slot] <= 0 ||
+		m_fileSize[slot] > (64ll * MC2_MBSIZE))
+		return false;
+
+	FILESYSTEM_STAT_DATA before, after;
+	if (!FileSystem::StatFile(m_diskPaths[slot].c_str(), &before) || before.Size != m_fileSize[slot] ||
+		!Seek(m_file[slot], 0))
+	{
+		FailCard(slot, "Could not inspect the backing image before loading");
+		return false;
+	}
+
+	std::vector<u8> image(static_cast<size_t>(m_fileSize[slot]));
+	if (std::fread(image.data(), 1, image.size(), m_file[slot]) != image.size() ||
+		!FileSystem::StatFile(m_diskPaths[slot].c_str(), &after) ||
+		before.Size != after.Size || before.CreationTime != after.CreationTime ||
+		before.ModificationTime != after.ModificationTime)
+	{
+		FailCard(slot, "Backing image changed or could not be read during initial load");
+		return false;
+	}
+
+	m_diskHashes[slot] = HashBytes(image.data(), image.size());
+	m_diskStat[slot] = after;
+	m_image[slot] = std::move(image);
+	m_dirtyPages[slot].assign((m_image[slot].size() + DIRTY_PAGE_SIZE - 1) / DIRTY_PAGE_SIZE, 0);
+	m_loaded[slot] = true;
+	m_lastAccess[slot] = std::chrono::steady_clock::now();
+
+	if (!m_ispsx[slot] && m_image[slot].size() >= m_chkaddr + sizeof(m_chksum[slot]))
+		std::memcpy(&m_chksum[slot], m_image[slot].data() + m_chkaddr, sizeof(m_chksum[slot]));
+
+	return true;
+}
+
+bool FileMemoryCard::CheckBackingUnchanged(uint slot)
+{
+	// Metadata checks are inexpensive enough to perform before every guest write.
+	// The entire image is independently checked again immediately before writeback.
+	FILESYSTEM_STAT_DATA now;
+	return FileSystem::StatFile(m_diskPaths[slot].c_str(), &now) &&
+		now.Size == m_diskStat[slot].Size &&
+		now.CreationTime == m_diskStat[slot].CreationTime &&
+		now.ModificationTime == m_diskStat[slot].ModificationTime;
+}
+
+bool FileMemoryCard::CheckBackingContents(uint slot)
+{
+	if (!Seek(m_file[slot], 0))
+		return false;
+
+	std::array<u8, 64 * 1024> buffer;
+	u64 hash = 14695981039346656037ull;
+	size_t remaining = m_image[slot].size();
+	while (remaining != 0)
+	{
+		const size_t len = std::min(buffer.size(), remaining);
+		if (std::fread(buffer.data(), 1, len, m_file[slot]) != len)
+			return false;
+		hash = HashBytes(buffer.data(), len, hash);
+		remaining -= len;
+	}
+	return hash == m_diskHashes[slot];
+}
+
+bool FileMemoryCard::IsImageSane(uint slot) const
+{
+	// Check structural safety, not full filesystem consistency: games legitimately
+	// leave intermediate FAT/directory states while formatting or saving a card.
+	const size_t size = m_image[slot].size();
+	return m_loaded[slot] && m_fileSize[slot] > 0 &&
+		size == static_cast<size_t>(m_fileSize[slot]) &&
+		(m_ispsx[slot] ? size == MCD_SIZE : (size % 528 == 0)) &&
+		m_dirtyPages[slot].size() == ((size + DIRTY_PAGE_SIZE - 1) / DIRTY_PAGE_SIZE);
+}
+
+void FileMemoryCard::MarkDirty(uint slot, size_t offset, size_t length)
+{
+	if (length == 0)
+		return;
+
+	const auto now = std::chrono::steady_clock::now();
+	if (!m_dirty[slot])
+		m_firstDirty[slot] = now;
+	m_dirty[slot] = true;
+	m_lastAccess[slot] = now;
+	const size_t first = offset / DIRTY_PAGE_SIZE;
+	const size_t last = (offset + length - 1) / DIRTY_PAGE_SIZE;
+	std::fill(m_dirtyPages[slot].begin() + first, m_dirtyPages[slot].begin() + last + 1, 1);
+}
+
+void FileMemoryCard::FailCard(uint slot, const char* reason)
+{
+	if (m_failed[slot])
+		return;
+	m_failed[slot] = true;
+
+	// A conflicted/failed image must not be written over the existing card.
+	// Save a standalone recovery image in the local cache if guest writes are pending.
+	std::string recovery;
+	if (m_dirty[slot] && !m_image[slot].empty() && !EmuFolders::Cache.empty() &&
+		FileSystem::CreateDirectoryPath(EmuFolders::Cache.c_str(), false))
+	{
+		const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
+		recovery = Path::Combine(EmuFolders::Cache,
+			fmt::format("memcard-recovery-slot{}-{}{}", slot + 1, stamp, m_ispsx[slot] ? ".mcr" : ".ps2"));
+		if (!FileSystem::WriteBinaryFile(recovery.c_str(), m_image[slot].data(), m_image[slot].size()))
+			recovery.clear();
+	}
+	Host::ReportErrorAsync("Memory Card Image Writeback Stopped",
+		fmt::format("{}: {}. The backing image has not been intentionally overwritten.{}",
+			m_filenames[slot], reason,
+			recovery.empty() ? " No local recovery image could be created." :
+			fmt::format(" A recovery copy was saved to: {}", recovery)));
+}
+
+bool FileMemoryCard::Flush(uint slot)
+{
+	if (!m_dirty[slot])
+		return true;
+	if (m_failed[slot] || !IsImageSane(slot))
+	{
+		FailCard(slot, "Pending memory card image is not structurally valid");
+		return false;
+	}
+
+	// Detect external modifications even if timestamps have only one-second resolution.
+	// This is a sequential read, once per batch, rather than per guest command.
+	if (!CheckBackingUnchanged(slot) || !CheckBackingContents(slot))
+	{
+		FailCard(slot, "Backing image was externally modified or could not be verified");
+		return false;
+	}
+
+	const auto& image = m_image[slot];
+	const auto& dirty = m_dirtyPages[slot];
+	for (size_t page = 0; page < dirty.size();)
+	{
+		if (!dirty[page])
+		{
+			++page;
+			continue;
+		}
+		const size_t begin = page++;
+		while (page < dirty.size() && dirty[page])
+			++page;
+		const size_t offset = begin * DIRTY_PAGE_SIZE;
+		const size_t count = std::min(page * DIRTY_PAGE_SIZE, image.size()) - offset;
+		if (FileSystem::FSeek64(m_file[slot], static_cast<s64>(offset), SEEK_SET) != 0 ||
+			std::fwrite(image.data() + offset, 1, count, m_file[slot]) != count)
+		{
+			FailCard(slot, "Could not write dirty memory card sectors");
+			return false;
+		}
+	}
+	if (std::fflush(m_file[slot]) != 0)
+	{
+		FailCard(slot, "Could not flush memory card sectors to the filesystem");
+		return false;
+	}
+
+	FILESYSTEM_STAT_DATA now;
+	if (!FileSystem::StatFile(m_diskPaths[slot].c_str(), &now) || now.Size != m_fileSize[slot])
+	{
+		FailCard(slot, "Could not verify the card size after writeback");
+		return false;
+	}
+
+	m_diskStat[slot] = now;
+	m_diskHashes[slot] = HashBytes(image.data(), image.size());
+	std::fill(m_dirtyPages[slot].begin(), m_dirtyPages[slot].end(), 0);
+	m_dirty[slot] = false;
+	return true;
+}
+
+void FileMemoryCard::NextFrame(uint slot)
+{
+	if (!m_dirty[slot] || m_failed[slot])
+		return;
+	const auto now = std::chrono::steady_clock::now();
+	if (now - m_lastAccess[slot] >= WRITEBACK_IDLE ||
+		now - m_firstDirty[slot] >= WRITEBACK_MAX_DELAY)
+		Flush(slot);
+}
+
 s32 FileMemoryCard::Read(uint slot, u8* dest, u32 adr, int size)
 {
-	std::FILE* mcfp = m_file[slot];
-	if (!mcfp)
+	if (!m_file[slot])
 	{
 		DevCon.Error("(FileMcd) Ignoring attempted read from disabled slot.");
-		memset(dest, 0, size);
+		if (size > 0)
+			std::memset(dest, 0, size);
 		return 1;
 	}
-	if (!Seek(mcfp, adr))
+	if (size < 0 || !EnsureLoaded(slot) ||
+		static_cast<u64>(adr) + static_cast<u64>(size) > m_image[slot].size())
 		return 0;
-	return std::fread(dest, size, 1, mcfp) == 1;
+
+	if (size > 0)
+		std::memcpy(dest, m_image[slot].data() + adr, size);
+	m_lastAccess[slot] = std::chrono::steady_clock::now();
+	return 1;
 }
 
 s32 FileMemoryCard::Save(uint slot, const u8* src, u32 adr, int size)
 {
-	std::FILE* mcfp = m_file[slot];
-
-	if (!mcfp)
+	if (!m_file[slot])
 	{
 		DevCon.Error("(FileMcd) Ignoring attempted save/write to disabled slot.");
 		return 1;
 	}
+	if (size < 0 || !EnsureLoaded(slot) || m_failed[slot] ||
+		static_cast<u64>(adr) + static_cast<u64>(size) > m_image[slot].size())
+		return 0;
+	if (size == 0)
+		return 1;
+	if (!CheckBackingUnchanged(slot))
+	{
+		FailCard(slot, "Backing image changed before a guest write");
+		return 0;
+	}
 
+	u8* data = m_image[slot].data() + adr;
 	if (m_ispsx[slot])
 	{
-		if (static_cast<int>(m_currentdata.size()) < size)
-			m_currentdata.resize(size);
-		for (int i = 0; i < size; i++)
-			m_currentdata[i] = src[i];
+		std::memcpy(data, src, size);
 	}
 	else
 	{
-		if (!Seek(mcfp, adr))
-			return 0;
-		if (static_cast<int>(m_currentdata.size()) < size)
-			m_currentdata.resize(size);
-
-		const size_t read_result = std::fread(m_currentdata.data(), size, 1, mcfp);
-		if (read_result == 0)
-			Host::ReportErrorAsync("Memory Card Read Failed", "Error reading memory card.");
-
-		for (int i = 0; i < size; i++)
+		for (int i = 0; i < size; ++i)
 		{
-			if ((m_currentdata[i] & src[i]) != src[i])
+			if ((data[i] & src[i]) != src[i])
 				Console.Warning("(FileMcd) Warning: writing to uncleared data. (%d) [%08X]", slot, adr);
-			m_currentdata[i] &= src[i];
+			data[i] &= src[i];
 		}
 
-		// Checksumness
+		if (adr == m_chkaddr)
+			Console.Warning("(FileMcd) Warning: checksum sector overwritten. (%d)", slot);
+
+		for (int i = 0; i + 8 <= size; i += 8)
 		{
-			if (adr == m_chkaddr)
-				Console.Warning("(FileMcd) Warning: checksum sector overwritten. (%d)", slot);
-
-			u64* pdata = (u64*)&m_currentdata[0];
-			u32 loops = size / 8;
-
-			for (u32 i = 0; i < loops; i++)
-				m_chksum[slot] ^= pdata[i];
+			u64 word;
+			std::memcpy(&word, data + i, sizeof(word));
+			m_chksum[slot] ^= word;
 		}
+		m_checksumChanged[slot] = true;
 	}
 
-	if (!Seek(mcfp, adr))
-		return 0;
-
-	if (std::fwrite(m_currentdata.data(), size, 1, mcfp) == 1)
+	MarkDirty(slot, adr, size);
+	static auto last = std::chrono::time_point<std::chrono::system_clock>();
+	const auto elapsed = std::chrono::system_clock::now() - last;
+	if (elapsed > std::chrono::seconds(5))
 	{
-		static auto last = std::chrono::time_point<std::chrono::system_clock>();
-
-		std::chrono::duration<float> elapsed = std::chrono::system_clock::now() - last;
-		if (elapsed > std::chrono::seconds(5))
-		{
-			Host::AddIconOSDMessage(fmt::format("MemoryCardSave{}", slot), ICON_PF_MEMORY_CARD,
-				fmt::format(TRANSLATE_FS("MemoryCard", "Memory Card '{}' was saved to storage."),
-					Path::GetFileName(m_filenames[slot])),
-				Host::OSD_INFO_DURATION);
-			last = std::chrono::system_clock::now();
-		}
-		return 1;
+		Host::AddIconOSDMessage(fmt::format("MemoryCardSave{}", slot), ICON_PF_MEMORY_CARD,
+			fmt::format(TRANSLATE_FS("MemoryCard", "Memory Card '{}' was saved to storage."),
+				Path::GetFileName(m_filenames[slot])), Host::OSD_INFO_DURATION);
+		last = std::chrono::system_clock::now();
 	}
-
-	return 0;
+	return 1;
 }
 
 s32 FileMemoryCard::EraseBlock(uint slot, u32 adr)
 {
-	std::FILE* mcfp = m_file[slot];
-	if (!mcfp)
+	if (!m_file[slot])
 	{
 		DevCon.Error("MemoryCard: Ignoring erase for disabled slot.");
 		return 1;
 	}
-
-	if (!Seek(mcfp, adr))
+	if (!EnsureLoaded(slot) || m_failed[slot] ||
+		static_cast<u64>(adr) + MC2_ERASE_SIZE > m_image[slot].size())
 		return 0;
+	if (!CheckBackingUnchanged(slot))
+	{
+		FailCard(slot, "Backing image changed before a guest erase");
+		return 0;
+	}
 
-	u8 buf[MC2_ERASE_SIZE];
-	std::memset(buf, 0xff, sizeof(buf));
-	return std::fwrite(buf, sizeof(buf), 1, mcfp) == 1;
+	std::memset(m_image[slot].data() + adr, 0xff, MC2_ERASE_SIZE);
+	MarkDirty(slot, adr, MC2_ERASE_SIZE);
+	return 1;
 }
 
 u64 FileMemoryCard::GetCRC(uint slot)
 {
-	std::FILE* mcfp = m_file[slot];
-	if (!mcfp)
+	if (!m_file[slot] || !EnsureLoaded(slot))
 		return 0;
+	if (!m_ispsx[slot])
+		return m_chksum[slot];
 
-	u64 retval = 0;
-
-	if (m_ispsx[slot])
+	// Preserve the original PS1 CRC behavior, including its full-chunk limit.
+	constexpr size_t chunkSize = sizeof(u64) * 528 * 8;
+	const size_t bytes = (m_image[slot].size() / chunkSize) * chunkSize;
+	u64 result = 0;
+	for (size_t i = 0; i < bytes; i += sizeof(u64))
 	{
-		if (!Seek(mcfp, 0))
-			return 0;
-
-		const s64 mcfpsize = m_fileSize[slot];
-		if (mcfpsize < 0)
-			return 0;
-
-		// Process the file in 4k chunks.  Speeds things up significantly.
-
-		u64 buffer[528 * 8]; // use 528 (sector size), ensures even divisibility
-
-		const uint filesize = static_cast<uint>(mcfpsize) / sizeof(buffer);
-		for (uint i = filesize; i; --i)
-		{
-			if (std::fread(buffer, sizeof(buffer), 1, mcfp) != 1)
-				return 0;
-
-			for (uint t = 0; t < std::size(buffer); ++t)
-				retval ^= buffer[t];
-		}
+		u64 word;
+		std::memcpy(&word, m_image[slot].data() + i, sizeof(word));
+		result ^= word;
 	}
-	else
-	{
-		retval = m_chksum[slot];
-	}
-
-	return retval;
+	return result;
 }
 
 // --------------------------------------------------------------------------------------
@@ -803,9 +1020,9 @@ void FileMcd_NextFrame(uint port, uint slot)
 	const uint combinedSlot = FileMcd_ConvertToSlot(port, slot);
 	switch (EmuConfig.Mcd[combinedSlot].Type)
 	{
-		//case MemoryCardType::MemoryCard_File:
-		//	Mcd::impl.NextFrame( combinedSlot );
-		//	break;
+		case MemoryCardType::File:
+			Mcd::impl.NextFrame(combinedSlot);
+			break;
 		case MemoryCardType::Folder:
 			Mcd::implFolder.NextFrame(combinedSlot);
 			break;
