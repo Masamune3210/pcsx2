@@ -18,9 +18,9 @@ Direct memory-card image reads, read/modify/writes, and erases block emulation o
 - Keep the existing non-ECC conversion path and legacy checksum behavior.
 
 ## Current state / verification
-- Initial implementation committed on this branch only; do not merge into testing before compilation and an end-to-end save/load test.
+- Implemented on this branch only (initial commit dd7eab7e; follow-up fixes for save notifications, recovery checksum and partial-write errors). Do not merge into testing before compilation and an end-to-end save/load test.
 - Static review only. No local Windows/PCSX2 compiler or rclone mount available in this environment.
-- Important limitation: deferred flush occurs on the emulation thread and can still cause one stall per batch. It removes repeated tiny filesystem reads/writes, but fully asynchronous writeback is a possible subsequent improvement.
+- Important limitation: deferred flush occurs on the emulation thread and can still cause one stall per batch. It removes repeated tiny filesystem reads/writes, but fully asynchronous writeback is a possible subsequent improvement. Emulation pause stops the per-frame timer; close/eject flush still runs. On rclone VFS mounts, fflush may reach the VFS cache rather than the remote backend until the file is closed.
 - Metadata verification on every write may still be expensive on some remote mounts. Existing Win32 write-share denial only protects other writers using the same local mount, not remote-side changes. Remote VFS caching may also hide direct remote edits.
 
 ## Next
