@@ -3084,7 +3084,8 @@ void VMManager::CheckForDEV9ConfigChanges(const Pcsx2Config& old_config)
 
 void VMManager::CheckForMemoryCardConfigChanges(const Pcsx2Config& old_config)
 {
-	bool changed = false;
+	const bool filteringChanged = (EmuConfig.McdFolderAutoManage != old_config.McdFolderAutoManage);
+	bool changed = filteringChanged;
 
 	for (size_t i = 0; i < std::size(EmuConfig.Mcd); i++)
 	{
@@ -3107,10 +3108,10 @@ void VMManager::CheckForMemoryCardConfigChanges(const Pcsx2Config& old_config)
 		for (u32 slot = 0; slot < 4; slot++)
 		{
 			const uint index = FileMcd_ConvertToSlot(port, slot);
-			if (EmuConfig.Mcd[index].Enabled != old_config.Mcd[index].Enabled ||
+			if (filteringChanged || EmuConfig.Mcd[index].Enabled != old_config.Mcd[index].Enabled ||
 				EmuConfig.Mcd[index].Filename != old_config.Mcd[index].Filename)
 			{
-				Console.WriteLn("Ejecting memory card %u (port %u slot %u) due to source change", index, port, slot);
+				Console.WriteLn("Ejecting memory card %u (port %u slot %u) due to source or filtering change", index, port, slot);
 				AutoEject::Set(port, slot);
 			}
 		}

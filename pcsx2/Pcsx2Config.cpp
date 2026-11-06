@@ -1971,6 +1971,7 @@ Pcsx2Config::Pcsx2Config()
 	UseSavestateSelector = true;
 	BackupSavestate = true;
 	WarnAboutUnsafeSettings = true;
+	McdFolderAutoManage = true;
 	EnableDiscordPresence = false;
 	ManuallySetRealTimeClock = false;
 	UseSystemLocaleFormat = false;
@@ -2020,6 +2021,7 @@ void Pcsx2Config::LoadSaveCore(SettingsWrapper& wrap)
 	SettingsWrapBitBool(BackupSavestate);
 
 	SettingsWrapBitBool(WarnAboutUnsafeSettings);
+	SettingsWrapBitBool(McdFolderAutoManage);
 
 	SettingsWrapBitBool(ManuallySetRealTimeClock);
 	SettingsWrapBitBool(UseSystemLocaleFormat);

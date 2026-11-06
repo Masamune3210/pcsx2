@@ -53,6 +53,9 @@ MemoryCardSettingsWidget::MemoryCardSettingsWidget(SettingsWindow* settings_dial
 	SettingWidgetBinder::BindWidgetToFolderSetting(sif, m_ui.directory, m_ui.browse, m_ui.open, m_ui.reset, "Folders",
 		"MemoryCards", Path::Combine(EmuFolders::DataRoot, "memcards"));
 
+	SettingWidgetBinder::BindWidgetToBoolSetting(
+		sif, m_ui.folderCardAutoManage, "EmuCore", "McdFolderAutoManage", true);
+
 	setupAdditionalUi();
 
 	connect(m_ui.directory, &QLineEdit::textChanged, this, &MemoryCardSettingsWidget::refresh);

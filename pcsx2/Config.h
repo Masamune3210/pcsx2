@@ -1377,7 +1377,8 @@ struct Pcsx2Config
 
 		HostFs : 1,
 
-		WarnAboutUnsafeSettings : 1;
+		WarnAboutUnsafeSettings : 1,
+		McdFolderAutoManage : 1; // show only saves for the running game on folder memory cards
 	BITFIELD_END
 
 	CpuOptions Cpu;

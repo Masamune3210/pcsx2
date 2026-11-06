@@ -94,6 +94,16 @@
        </layout>
       </item>
       <item>
+       <widget class="QCheckBox" name="folderCardAutoManage">
+        <property name="toolTip">
+         <string>When enabled, only saves for the running game are shown on folder memory cards. All saves remain visible when no game is identified.</string>
+        </property>
+        <property name="text">
+         <string>Automatically manage folder memory card saves by game</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="MemoryCardListWidget" name="cardList">
         <property name="rootIsDecorated">
          <bool>false</bool>
@@ -189,6 +199,7 @@
   <tabstop>browse</tabstop>
   <tabstop>open</tabstop>
   <tabstop>reset</tabstop>
+  <tabstop>folderCardAutoManage</tabstop>
   <tabstop>cardList</tabstop>
   <tabstop>refreshCard</tabstop>
   <tabstop>createCard</tabstop>

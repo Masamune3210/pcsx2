@@ -612,7 +612,7 @@ void FileMcd_EmuOpen()
 
 
 	Mcd::impl.Open();
-	Mcd::implFolder.SetFiltering(true);
+	Mcd::implFolder.SetFiltering(EmuConfig.McdFolderAutoManage);
 	Mcd::implFolder.Open();
 }
 
@@ -824,7 +824,8 @@ int FileMcd_ReIndex(uint port, uint slot, const std::string& filter)
 		//	return Mcd::impl.ReIndex( combinedSlot, filter );
 		//	break;
 		case MemoryCardType::Folder:
-			if (!Mcd::implFolder.ReIndex(combinedSlot, true, filter))
+			const bool enableFiltering = EmuConfig.McdFolderAutoManage && !filter.empty();
+			if (!Mcd::implFolder.ReIndex(combinedSlot, enableFiltering, enableFiltering ? filter : std::string()))
 				return -1;
 			break;
 		default:

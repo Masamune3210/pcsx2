@@ -483,7 +483,7 @@ bool FolderMemoryCard::AddFolder(MemoryCardFileEntry* const dirEntry, const std:
 				// if possible filter added directories by game serial
 				// this has the effective result of only files relevant to the current game being loaded into the memory card
 				// which means every game essentially sees the memory card as if no other files exist
-				if (enableFiltering && !FilterMatches(file.m_fileName, localFilter))
+				if (enableFiltering && !filter.empty() && !FilterMatches(file.m_fileName, localFilter))
 				{
 					continue;
 				}
