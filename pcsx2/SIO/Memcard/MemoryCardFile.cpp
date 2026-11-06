@@ -597,7 +597,7 @@ void FileMemoryCard::FailCard(uint slot, const char* reason)
 			recovery.clear();
 	}
 	Host::ReportErrorAsync("Memory Card Image Writeback Stopped",
-		fmt::format("{}: {}. The backing image has not been intentionally overwritten.{}",
+		fmt::format("{}: {}. Further writeback was stopped. A previous partial write may have reached the backing image.{}",
 			m_filenames[slot], reason,
 			recovery.empty() ? " No local recovery image could be created." :
 			fmt::format(" A recovery copy was saved to: {}", recovery)));
