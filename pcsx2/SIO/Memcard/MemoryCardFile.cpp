@@ -824,10 +824,12 @@ int FileMcd_ReIndex(uint port, uint slot, const std::string& filter)
 		//	return Mcd::impl.ReIndex( combinedSlot, filter );
 		//	break;
 		case MemoryCardType::Folder:
+		{
 			const bool enableFiltering = EmuConfig.McdFolderAutoManage && !filter.empty();
 			if (!Mcd::implFolder.ReIndex(combinedSlot, enableFiltering, enableFiltering ? filter : std::string()))
 				return -1;
 			break;
+		}
 		default:
 			return -1;
 			break;
