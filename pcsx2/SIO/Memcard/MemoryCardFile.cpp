@@ -585,7 +585,15 @@ void FileMemoryCard::FailCard(uint slot, const char* reason)
 		const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
 		recovery = Path::Combine(EmuFolders::Cache,
 			fmt::format("memcard-recovery-slot{}-{}{}", slot + 1, stamp, m_ispsx[slot] ? ".mcr" : ".ps2"));
-		if (!FileSystem::WriteBinaryFile(recovery.c_str(), m_image[slot].data(), m_image[slot].size()))
+		// Match the final-close checksum semantics in the recovery file without
+		// altering the guest-visible in-memory sector.
+		std::vector<u8> recoveryImage(m_image[slot]);
+		if (m_checksumChanged[slot] && !m_ispsx[slot] &&
+			recoveryImage.size() >= m_chkaddr + sizeof(m_chksum[slot]))
+		{
+			std::memcpy(recoveryImage.data() + m_chkaddr, &m_chksum[slot], sizeof(m_chksum[slot]));
+		}
+		if (!FileSystem::WriteBinaryFile(recovery.c_str(), recoveryImage.data(), recoveryImage.size()))
 			recovery.clear();
 	}
 	Host::ReportErrorAsync("Memory Card Image Writeback Stopped",
@@ -651,6 +659,16 @@ bool FileMemoryCard::Flush(uint slot)
 	m_diskHashes[slot] = HashBytes(image.data(), image.size());
 	std::fill(m_dirtyPages[slot].begin(), m_dirtyPages[slot].end(), 0);
 	m_dirty[slot] = false;
+
+	static auto lastNotification = std::chrono::time_point<std::chrono::system_clock>();
+	const auto currentTime = std::chrono::system_clock::now();
+	if (currentTime - lastNotification > std::chrono::seconds(5))
+	{
+		Host::AddIconOSDMessage(fmt::format("MemoryCardSave{}", slot), ICON_PF_MEMORY_CARD,
+			fmt::format(TRANSLATE_FS("MemoryCard", "Memory Card '{}' was saved to storage."),
+				Path::GetFileName(m_filenames[slot])), Host::OSD_INFO_DURATION);
+		lastNotification = currentTime;
+	}
 	return true;
 }
 
@@ -728,15 +746,6 @@ s32 FileMemoryCard::Save(uint slot, const u8* src, u32 adr, int size)
 	}
 
 	MarkDirty(slot, adr, size);
-	static auto last = std::chrono::time_point<std::chrono::system_clock>();
-	const auto elapsed = std::chrono::system_clock::now() - last;
-	if (elapsed > std::chrono::seconds(5))
-	{
-		Host::AddIconOSDMessage(fmt::format("MemoryCardSave{}", slot), ICON_PF_MEMORY_CARD,
-			fmt::format(TRANSLATE_FS("MemoryCard", "Memory Card '{}' was saved to storage."),
-				Path::GetFileName(m_filenames[slot])), Host::OSD_INFO_DURATION);
-		last = std::chrono::system_clock::now();
-	}
 	return 1;
 }
 
