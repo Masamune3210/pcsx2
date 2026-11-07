@@ -188,7 +188,7 @@ public class AuditDarkCloud2MidiModules_v1 extends GhidraScript {
                 new FileOutputStream(output), StandardCharsets.UTF_8))) {
             out.println("Dark Cloud 2 guest sound module audit");
             out.println("Program: " + currentProgram.getName());
-            out.println("Language: " + currentProgram.getLanguageID());
+            out.println("Language: " + currentProgram.getLanguage().getLanguageID());
             out.println("Image base: " + currentProgram.getImageBase());
             out.println("No types or parameter names were guessed by this script.");
             out.println();
