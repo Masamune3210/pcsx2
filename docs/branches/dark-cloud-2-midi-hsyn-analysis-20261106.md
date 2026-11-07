@@ -22,8 +22,19 @@ When Dark Cloud 2 changes music upon entering menus or other scenes, the first n
 ## Artifacts
 - `ghidra_scripts/AuditDarkCloud2MidiModules_v1.java`: apply proven API names without altering unresolved signatures, collect caller/callee relationships and data references, and export decompiled transition functions to `G:\Users\Johnny\Downloads\2`.
 
+## Follow-up findings from existing Ghidra reports
+- `sceMidi_SelectSong` stops active playback using `sceMidi_SongPlaySwitch(..., 0)` and resets song sequencing fields, then initializes a new song. This does **not** by itself demonstrate controller reset.
+- `sceMidi_SongPlaySwitch(..., 0)` delegates to `sceMidi_MidiPlaySwitch(..., 0)`; `sceMidi_MidiPlaySwitch` in turn calls `FUN_000014cc` on stop and `FUN_00001630` on start.
+- `sceHSyn_AllNoteOff`, `sceHSyn_AllSoundOff`, and `sceHSyn_ResetAllControler` delegate independently to per-channel helpers `FUN_000060d4`, `FUN_00006214`, `FUN_000010b0`. Each traverses 16 channels at stride `0x38` bytes.
+- The existing report does not decompile the helpers above; no conclusive causal inference or generic helper rename is justified yet.
+- `sceHSyn_GetChStat` writes 16 bytes to its third argument, one per channel, using bits 0x01, 0x02, and 0x04 to report state. Third parameter can be partially refined to `byte * outChannelStateFlags`.
+- `sceMidi_MidiPlaySwitch`'s final int parameter uses 0 for stop and 1 for start/play.
+
+## New script
+- `ghidra_scripts/TraceDC2MidiHsynState_v2.java`: read-only follow-up script run on the existing projects. Exports the 26 helper/wrapper bodies, call graphs and data references to `G:\\Users\\Johnny\\Downloads\\2`. No reimport required.
+
 ## Verification and next step
 - Names and addresses extracted from archived GZF symbol strings; cross-checked against the repository's ordinal definitions.
 - Java script has not been executed inside Ghidra; verify compile and runtime on each archive.
-- Import both archives, run the script on each, then inspect its two report files, especially reset/stop/start ordering and event dispatch via ATick. Compare register writes/timing against SPU2 on a reproduced transition before modifying emulator behavior.
+- Open the existing Ghidra projects (already analyzed); run the follow-up script on each and inspect its two report files, especially reset/stop/start ordering and event dispatch via ATick. Compare register writes/timing against SPU2 on a reproduced transition before modifying emulator behavior.
 - This branch contains analysis tooling only. No functional `testing` changes.
